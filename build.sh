@@ -52,12 +52,23 @@ fi
 
 # --- AUTOMATIC VERSION CONFIGURATION ---
 MAJOR="2"
-MINOR="0"
+MINOR="1"
 PATCH="0"
 REVISION="0"
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    PATCH=$(git rev-list --count HEAD | xargs)
+    GIT_TAG=$(git describe --tags --exact-match HEAD 2>/dev/null)
+    
+    REGEX="^v?([0-9]+)\.([0-9]+)\.([0-9]+)$"
+    
+    if [[ $GIT_TAG =~ $REGEX ]]; then
+        MAJOR="${BASH_REMATCH[1]}"
+        MINOR="${BASH_REMATCH[2]}"
+        PATCH="${BASH_REMATCH[3]}"
+    else
+        PATCH=$(git rev-list --count HEAD | xargs)
+    fi
+
     REVISION=$(git rev-parse --short HEAD | xargs)
 else
     echo -e "\033[1;33mGit not found or not a valid repository. Using default versioning.\033[0m"
@@ -83,7 +94,7 @@ write_warn() { echo -e "${YELLOW}$1${NC}"; }
 # Script header
 echo ""
 echo -e "${MAGENTA}=======================================================${NC}"
-echo -e " ${WHITE} G3Pix AxonASP Build Script${NC}"
+echo -e " ${WHITE} G3Pix ❖ AxonASP Build Script${NC}"
 echo -e " ${CYAN} Version: $FULL_VERSION${NC}"
 echo -e "${MAGENTA}=======================================================${NC}"
 echo ""

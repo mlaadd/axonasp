@@ -38,13 +38,31 @@ param(
 
 # --- AUTOMATIC VERSION CONFIGURATION ---
 $Major = "2"
-$Minor = "0"
+$Minor = "1"
+$Patch = "0"
+$Revision = "0"
+
+# --- AUTOMATIC VERSION CONFIGURATION ---
+$Major = "2"
+$Minor = "1"
 $Patch = "0"
 $Revision = "0"
 
 try {
-    $GitCount = git rev-list --count HEAD 2>$null
-    if ($LASTEXITCODE -eq 0) { $Patch = $GitCount.Trim() }
+    # Procura uma tag APENAS se ela estiver exatamente no commit atual (HEAD)
+    $GitTag = git describe --tags --exact-match HEAD 2>$null
+    
+    # Se encontrou a tag no commit atual e ela segue o padrão
+    if ($LASTEXITCODE -eq 0 -and $GitTag -match '^v?(\d+)\.(\d+)\.(\d+)$') {
+        $Major = $matches[1]
+        $Minor = $matches[2]
+        $Patch = $matches[3]
+    }
+    else {
+        # Fallback: Mantém o Major (2) e Minor (1) originais e usa o total de commits no Patch
+        $GitCount = git rev-list --count HEAD 2>$null
+        if ($LASTEXITCODE -eq 0) { $Patch = $GitCount.Trim() }
+    }
 
     $GitHash = git rev-parse --short HEAD 2>$null
     if ($LASTEXITCODE -eq 0) { $Revision = $GitHash.Trim() }
@@ -64,7 +82,7 @@ function Write-Warn { param([string]$Message); Write-Host $Message -ForegroundCo
 # Script header
 Write-Host ""
 Write-Host "=======================================================" -ForegroundColor Magenta
-Write-Host "  G3Pix AxonASP Build Script" -ForegroundColor White
+Write-Host "  G3Pix ❖ AxonASP Build Script" -ForegroundColor White
 Write-Host "  Version: $FullVersion" -ForegroundColor Cyan
 Write-Host "=======================================================" -ForegroundColor Magenta
 Write-Host ""
