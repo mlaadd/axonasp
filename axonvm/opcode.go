@@ -263,6 +263,15 @@ const (
 	OpJSForIterExit     // [OpCode, NumVarsHigh, NumVarsLow, NameIdx1Hi, NameIdx1Lo, ...] - per-iteration env exit+writeback
 )
 
+const (
+	// OpIncLocalInt increments one local numeric slot in place.
+	// [OpCode, OffsetHigh, OffsetLow]
+	OpIncLocalInt OpCode = iota + OpJSForIterExit + 1
+	// OpDecLocalInt decrements one local numeric slot in place.
+	// [OpCode, OffsetHigh, OffsetLow]
+	OpDecLocalInt
+)
+
 func (op OpCode) String() string {
 	switch op {
 	case OpHalt:
@@ -361,6 +370,10 @@ func (op OpCode) String() string {
 		return "OpLetLocal"
 	case OpLetClassMember:
 		return "OpLetClassMember"
+	case OpIncLocalInt:
+		return "OpIncLocalInt"
+	case OpDecLocalInt:
+		return "OpDecLocalInt"
 	case OpCoerceToValue:
 		return "OpCoerceToValue"
 	case OpJSDeclareName:

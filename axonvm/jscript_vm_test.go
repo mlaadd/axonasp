@@ -235,6 +235,35 @@ func TestJScriptForLoopBytecodeContainsUpdateOpcodes(t *testing.T) {
 	}
 }
 
+func TestJScriptForLoopAssignmentUpdateUsesIncrementFastPath(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`var sum = 0;` +
+		`for (var i = 0; i < 4; i = i + 1) { sum = sum + i; }` +
+		`Response.Write(sum);` +
+		`</script>`
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	bytecode := compiler.Bytecode()
+	hasPreIncrement := false
+	for i := 0; i < len(bytecode); i++ {
+		if OpCode(bytecode[i]) == OpJSPreIncrement {
+			hasPreIncrement = true
+			break
+		}
+	}
+	if !hasPreIncrement {
+		t.Fatalf("expected OpJSPreIncrement in bytecode, got %v", bytecode)
+	}
+
+	out := runASPSourceForTest(t, source)
+	if out != "6" {
+		t.Fatalf("unexpected for-loop output: %q", out)
+	}
+}
+
 func TestJScriptSimpleForLoop(t *testing.T) {
 	source := `<script runat="server" language="JScript">var sum = 0; for (var i = 0; i < 3; i++) { sum = sum + i; } Response.Write(sum);</script>`
 	out := runASPSourceForTest(t, source)

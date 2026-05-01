@@ -169,6 +169,153 @@ Response.Write CStr(aspl.json.recordsetPaging)
 	}
 }
 
+// TestASPSetLetAssignmentsObjectPrimitiveTransitions verifies Set/Let assignment
+// semantics remain stable for both global and local slots across object and primitive writes.
+func TestASPSetLetAssignmentsObjectPrimitiveTransitions(t *testing.T) {
+	source := `<%
+Class Box
+	Public Name
+End Class
+
+Sub LocalOps()
+	Dim lSet, lLet, lMix
+	Set lSet = New Box
+	lSet.Name = "L"
+	lLet = 1
+	lLet = lLet + 2
+	Set lMix = New Box
+	lMix = "local-text"
+	Response.Write lSet.Name & ":" & lLet & ":" & TypeName(lMix) & ":" & lMix & "|"
+End Sub
+
+Dim gSet, gLet, gMix
+Set gSet = New Box
+gSet.Name = "G"
+gLet = 10
+gLet = gLet + 5
+Set gMix = New Box
+gMix = 42
+
+Call LocalOps()
+Response.Write gSet.Name & ":" & gLet & ":" & TypeName(gMix) & ":" & gMix
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	var output bytes.Buffer
+	host.SetOutput(&output)
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+	host.Response().Flush()
+
+	expected := "L:3:String:local-text|G:15:Integer:42"
+	if output.String() != expected {
+		t.Fatalf("unexpected output for Set/Let transitions:\nexpected: %q\nactual:   %q", expected, output.String())
+	}
+}
+
+// TestASPForLoopEmitsIncLocalInt verifies that local For...Next loops with default
+// step compile to OpIncLocalInt and still execute correctly.
+func TestASPForLoopEmitsIncLocalInt(t *testing.T) {
+	source := `<%
+Sub RunLoop()
+	Dim i, total
+	total = 0
+	For i = 1 To 3
+		total = total + i
+	Next
+	Response.Write total
+End Sub
+Call RunLoop()
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	hasIncLocalInt := false
+	for _, raw := range compiler.Bytecode() {
+		if OpCode(raw) == OpIncLocalInt {
+			hasIncLocalInt = true
+			break
+		}
+	}
+	if !hasIncLocalInt {
+		t.Fatalf("expected OpIncLocalInt in bytecode, got %v", compiler.Bytecode())
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	var output bytes.Buffer
+	host.SetOutput(&output)
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+	host.Response().Flush()
+
+	if output.String() != "6" {
+		t.Fatalf("expected 6 output, got %q", output.String())
+	}
+}
+
+// TestASPForLoopEmitsDecLocalInt verifies that local For...Next loops with
+// constant Step -1 compile to OpDecLocalInt and still execute correctly.
+func TestASPForLoopEmitsDecLocalInt(t *testing.T) {
+	source := `<%
+Sub RunLoop()
+	Dim i, total
+	total = 0
+	For i = 3 To 1 Step -1
+		total = total + i
+	Next
+	Response.Write total
+End Sub
+Call RunLoop()
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	hasDecLocalInt := false
+	for _, raw := range compiler.Bytecode() {
+		if OpCode(raw) == OpDecLocalInt {
+			hasDecLocalInt = true
+			break
+		}
+	}
+	if !hasDecLocalInt {
+		t.Fatalf("expected OpDecLocalInt in bytecode, got %v", compiler.Bytecode())
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	var output bytes.Buffer
+	host.SetOutput(&output)
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+	host.Response().Flush()
+
+	if output.String() != "6" {
+		t.Fatalf("expected 6 output, got %q", output.String())
+	}
+}
+
 // TestASPClassPropertyExitPropertyKeywordLike verifies Exit Property inside a
 // class Property Get compiles and executes when Property is parsed as a
 // keyword-like identifier token.

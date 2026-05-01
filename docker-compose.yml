@@ -34,9 +34,13 @@ services:
     container_name: axonasp
     ports:
       - "8801:8801"
+      - "8000:8000"
+      - "9000:9000"
     volumes:
       # Bind-mount source for Go rebuilds on restart
       - .:/app
+      - ./www:/opt/axonasp/www
+      - ./temp:/opt/axonasp/temp
       # Exclude generated artifacts from the bind-mount overlay
       - /app/temp
     environment:

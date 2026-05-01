@@ -57,35 +57,45 @@ RUN if [ -z "$VERSION" ]; then \
 FROM alpine:3.21
 
 LABEL org.opencontainers.image.title="AxonASP Server"
-LABEL org.opencontainers.image.description="AxonASP Server - ASP Classic web server written in Go with Proxy, FastCGI, CLI, TestSuite and MCP support. Small, fast and secure alternative to IIS for hosting legacy ASP applications on modern platforms."
+LABEL org.opencontainers.image.description="AxonASP Server - ASP Classic web server with Proxy, FastCGI, CLI, TestSuite and MCP support. VBScript and Javascript support. Small, fast and secure alternative to IIS for hosting ASP applications on modern platforms."
 LABEL org.opencontainers.image.url="https://g3pix.com.br/axonasp"
 LABEL org.opencontainers.image.source="https://github.com/guimaraeslucas/axonasp"
 LABEL org.opencontainers.image.licenses="MPL-2.0"
 
-# Combine package installation and user creation to reduce layers
-RUN apk add --no-cache ca-certificates tzdata && \
+# Adicionamos o su-exec para fazer o drop de privilégios dinamicamente
+RUN apk add --no-cache ca-certificates tzdata su-exec && \
     update-ca-certificates && \
     addgroup -S axonasp && adduser -S axonasp -G axonasp
 
 WORKDIR /opt/axonasp
 
 # Copy binaries and assets directly with the correct ownership
-COPY --from=builder --chown=axonasp:axonasp /build/axonasp-http ./axonasp-http
-COPY --from=builder --chown=axonasp:axonasp /build/axonasp-fastcgi ./axonasp-fastcgi
-COPY --from=builder --chown=axonasp:axonasp /build/axonasp-cli ./axonasp-cli
-COPY --from=builder --chown=axonasp:axonasp /build/axonasp-mcp ./axonasp-mcp
-COPY --from=builder --chown=axonasp:axonasp /build/axonasp-testsuite ./axonasp-testsuite
+COPY --from=builder /build/axonasp-http ./axonasp-http
+COPY --from=builder /build/axonasp-fastcgi ./axonasp-fastcgi
+COPY --from=builder /build/axonasp-cli ./axonasp-cli
+COPY --from=builder /build/axonasp-mcp ./axonasp-mcp
+COPY --from=builder /build/axonasp-testsuite ./axonasp-testsuite
 
-COPY --from=builder --chown=axonasp:axonasp /build/config/ ./config/
-COPY --from=builder --chown=axonasp:axonasp /build/www/ ./www/
-COPY --from=builder --chown=axonasp:axonasp /build/mcp/ ./mcp/
-COPY --from=builder --chown=axonasp:axonasp /build/LICENSE.txt ./LICENSE.txt
-COPY --from=builder --chown=axonasp:axonasp /build/global.asa ./global.asa
+COPY --from=builder /build/config/ ./config/
+COPY --from=builder /build/mcp/ ./mcp/
+COPY --from=builder /build/LICENSE.txt ./LICENSE.txt
+COPY --from=builder /build/global.asa ./global.asa
+COPY --from=builder  /build/www/ ./default_www/
 
 # Create required runtime directories
-RUN mkdir -p temp/ && chown axonasp:axonasp temp/
+RUN mkdir -p temp/ www/
 
-USER axonasp
+RUN printf '#!/bin/sh\n\
+    set -e\n\
+    if [ -z "$(ls -A /opt/axonasp/www 2>/dev/null)" ]; then\n\
+    echo "--> Initializing /opt/axonasp/www with the default AxonASP content..."\n\
+    cp -a /opt/axonasp/default_www/. /opt/axonasp/www/\n\
+    fi\n\
+    # 2. Ensure the directories belong to the axonasp user\n\
+    chown -R axonasp:axonasp /opt/axonasp/www\n\
+    chown -R axonasp:axonasp /opt/axonasp/temp\n\
+    # 3. Switch from root to axonasp user and execute the main binary\n\
+    exec su-exec axonasp "$@"\n' > /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Expose requested ports
 # 8801: HTTP Server
@@ -99,4 +109,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 # Default command runs the HTTP server. 
 # Override this command when running the container to start FastCGI or MCP instead.
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["./axonasp-http"]

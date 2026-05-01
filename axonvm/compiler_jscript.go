@@ -570,7 +570,9 @@ func (c *Compiler) compileJScriptForStatement(node *jsast.ForStatement) {
 
 	// Compile update expression
 	if node.Update != nil {
-		c.compileJScriptExpression(node.Update)
+		if !c.compileJScriptForUpdateFastPath(node.Update) {
+			c.compileJScriptExpression(node.Update)
+		}
 		c.emit(OpJSPop)
 	}
 
@@ -1071,6 +1073,86 @@ func (c *Compiler) compileJScriptAssignment(node *jsast.AssignExpression) {
 		}
 	default:
 		c.emit(OpJSLoadUndefined)
+	}
+}
+
+// compileJScriptForUpdateFastPath emits optimized update bytecode for common loop
+// forms that increment or decrement one identifier by one.
+func (c *Compiler) compileJScriptForUpdateFastPath(expr jsast.Expression) bool {
+	assign, ok := expr.(*jsast.AssignExpression)
+	if !ok {
+		return false
+	}
+
+	leftID, ok := assign.Left.(*jsast.Identifier)
+	if !ok {
+		return false
+	}
+
+	name := leftID.Name.String()
+	nameIdx := c.addConstant(NewString(name))
+
+	// i += 1 / i -= 1
+	if assign.Operator == jstoken.ADD_ASSIGN || assign.Operator == jstoken.SUBTRACT_ASSIGN {
+		if !jsIsNumericOneLiteral(assign.Right) {
+			return false
+		}
+		if assign.Operator == jstoken.ADD_ASSIGN {
+			c.emit(OpJSPreIncrement, nameIdx)
+		} else {
+			c.emit(OpJSPreDecrement, nameIdx)
+		}
+		return true
+	}
+
+	// i = i + 1 / i = i - 1
+	if assign.Operator != jstoken.ASSIGN {
+		return false
+	}
+
+	rightBin, ok := assign.Right.(*jsast.BinaryExpression)
+	if !ok {
+		return false
+	}
+	rightLeftID, ok := rightBin.Left.(*jsast.Identifier)
+	if !ok || rightLeftID.Name.String() != name {
+		return false
+	}
+	if !jsIsNumericOneLiteral(rightBin.Right) {
+		return false
+	}
+
+	if rightBin.Operator == jstoken.PLUS {
+		c.emit(OpJSPreIncrement, nameIdx)
+		return true
+	}
+	if rightBin.Operator == jstoken.MINUS {
+		c.emit(OpJSPreDecrement, nameIdx)
+		return true
+	}
+
+	return false
+}
+
+// jsIsNumericOneLiteral returns true when expr is a numeric literal with value 1.
+func jsIsNumericOneLiteral(expr jsast.Expression) bool {
+	num, ok := expr.(*jsast.NumberLiteral)
+	if !ok {
+		return false
+	}
+	switch v := num.Value.(type) {
+	case int:
+		return v == 1
+	case int32:
+		return v == 1
+	case int64:
+		return v == 1
+	case float32:
+		return v == 1
+	case float64:
+		return v == 1
+	default:
+		return false
 	}
 }
 

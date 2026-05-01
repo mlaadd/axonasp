@@ -82,6 +82,34 @@ func TestVMSupportsUnaryAndBinaryOperators(t *testing.T) {
 	}
 }
 
+// TestVMBinaryOperatorsStackReductionRegression verifies chained binary operators
+// still produce correct results after in-place stack reduction changes in the VM run loop.
+func TestVMBinaryOperatorsStackReductionRegression(t *testing.T) {
+	source := `<%
+Dim n
+n = Null
+%><%= (((((10 + 5) - 3) * 2) \ 4) Mod 5) ^ 2 %>|<%= ("A" & "x") = "Ax" %>|<%= (5 > 3) And (2 < 4) %>|<%= 7 <> 7 %>|<%= 2 + 3 + 4 + 5 %>|<%= ((1 + 2) + (3 + 4)) + (5 + 6) %>|<%= (True Xor False) Eqv True %>|<%= False Imp True %>|<%= n >= 1 %>`
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	var output bytes.Buffer
+	host.SetOutput(&output)
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	expected := "1|True|True|False|14|21|True|True|Null"
+	if output.String() != expected {
+		t.Fatalf("unexpected chained binary output:\nexpected: %q\nactual:   %q", expected, output.String())
+	}
+}
+
 // TestVMSupportsBitwiseNumericOperators verifies numeric logical operators execute in bitwise mode.
 func TestVMSupportsBitwiseNumericOperators(t *testing.T) {
 	source := `<%= 6 And 3 %>|<%= 6 Or 3 %>|<%= 6 Xor 3 %>|<%= 6 Eqv 3 %>|<%= 6 Imp 3 %>|<%= Not 6 %>`

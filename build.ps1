@@ -82,7 +82,7 @@ function Write-Warn { param([string]$Message); Write-Host $Message -ForegroundCo
 # Script header
 Write-Host ""
 Write-Host "=======================================================" -ForegroundColor Magenta
-Write-Host "  G3Pix ❖ AxonASP Build Script" -ForegroundColor White
+Write-Host "  G3Pix AxonASP Build Script" -ForegroundColor White
 Write-Host "  Version: $FullVersion" -ForegroundColor Cyan
 Write-Host "=======================================================" -ForegroundColor Magenta
 Write-Host ""

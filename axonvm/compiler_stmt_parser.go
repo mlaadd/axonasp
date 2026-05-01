@@ -2237,6 +2237,78 @@ func (c *Compiler) parseForEachStatement() {
 	c.popLoopContextAndPatch(len(c.bytecode))
 }
 
+// detectUnitStepLiteralFromEmission inspects one freshly emitted step expression and
+// reports whether it is a compile-time numeric unit step (+1 or -1).
+func (c *Compiler) detectUnitStepLiteralFromEmission(exprStart int) (bool, int64) {
+	if c == nil || exprStart < 0 || exprStart >= len(c.bytecode) {
+		return false, 0
+	}
+
+	emitted := c.bytecode[exprStart:]
+	if len(emitted) < 3 || OpCode(emitted[0]) != OpConstant {
+		return false, 0
+	}
+
+	constIdx := int(binary.BigEndian.Uint16(emitted[1:3]))
+	if constIdx < 0 || constIdx >= len(c.constants) {
+		return false, 0
+	}
+
+	step := int64(0)
+	constVal := c.constants[constIdx]
+	switch constVal.Type {
+	case VTInteger:
+		step = constVal.Num
+	case VTDouble:
+		if constVal.Flt == 1 {
+			step = 1
+		} else if constVal.Flt == -1 {
+			step = -1
+		} else {
+			return false, 0
+		}
+	default:
+		return false, 0
+	}
+
+	if len(emitted) == 4 {
+		if OpCode(emitted[3]) != OpNeg {
+			return false, 0
+		}
+		step = -step
+	} else if len(emitted) != 3 {
+		return false, 0
+	}
+
+	if step == 1 || step == -1 {
+		return true, step
+	}
+	return false, 0
+}
+
+// emitForLoopStepUpdate emits the loop variable update for one For...Next iteration.
+// It uses a dedicated local increment/decrement opcode when the loop variable is local
+// and the step is known to be +1 or -1 at compile time.
+func (c *Compiler) emitForLoopStepUpdate(loopVarName string, hasUnitStep bool, unitStep int64, stepName string) {
+	opLoopGet, idxLoopGet := c.resolveVar(loopVarName)
+	if hasUnitStep && opLoopGet == OpGetLocal {
+		if unitStep == 1 {
+			c.emit(OpIncLocalInt, idxLoopGet)
+			return
+		}
+		if unitStep == -1 {
+			c.emit(OpDecLocalInt, idxLoopGet)
+			return
+		}
+	}
+
+	c.emit(opLoopGet, idxLoopGet)
+	opStepGet, idxStepGet := c.resolveVar(stepName)
+	c.emit(opStepGet, idxStepGet)
+	c.emit(OpAdd)
+	c.emitSetForName(loopVarName)
+}
+
 // parseForToStatement compiles numeric For...Next loops with optional Step expressions.
 func (c *Compiler) parseForToStatement() {
 	c.pushLoopContext("for")
@@ -2259,13 +2331,18 @@ func (c *Compiler) parseForToStatement() {
 
 	c.parseExpression(PrecNone)
 	c.emitSetForName(endName)
+	hasUnitStep := false
+	unitStep := int64(0)
 
 	if c.matchKeywordOrIdentifier(vbscript.KeywordStep, "step") {
 		c.move()
+		stepExprStart := len(c.bytecode)
 		c.parseExpression(PrecNone)
+		hasUnitStep, unitStep = c.detectUnitStepLiteralFromEmission(stepExprStart)
 	} else {
 		oneIdx := c.addConstant(NewInteger(1))
 		c.emit(OpConstant, oneIdx)
+		hasUnitStep, unitStep = true, 1
 	}
 	c.emitSetForName(stepName)
 
@@ -2300,12 +2377,7 @@ func (c *Compiler) parseForToStatement() {
 		c.parseStatement()
 	}
 
-	opLoopGet, idxLoopGet = c.resolveVar(loopVarName)
-	c.emit(opLoopGet, idxLoopGet)
-	opStepGet, idxStepGet = c.resolveVar(stepName)
-	c.emit(opStepGet, idxStepGet)
-	c.emit(OpAdd)
-	c.emitSetForName(loopVarName)
+	c.emitForLoopStepUpdate(loopVarName, hasUnitStep, unitStep, stepName)
 	c.emitLoop(loopStart)
 
 	c.patchJump(jumpLoopEndPositive)

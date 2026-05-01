@@ -33,7 +33,7 @@ import (
 )
 
 const StackSize = 4096
-const jsBackJumpLimit = 50000
+const jsBackJumpLimit = 1000000
 
 const staticObjectProgIDPrefix = "__AXON_STATIC_OBJECT_PROGID__:"
 
@@ -801,7 +801,7 @@ func opcodeOperandSize(op OpCode) int {
 		OpRegisterClass,
 		OpGetGlobal, OpSetGlobal, OpEraseGlobal, OpGetLocal, OpSetLocal, OpEraseLocal,
 		OpArgGlobalRef, OpArgLocalRef,
-		OpLetGlobal, OpLetLocal,
+		OpLetGlobal, OpLetLocal, OpIncLocalInt, OpDecLocalInt,
 		OpCall,
 		OpJSDeclareName, OpJSGetName, OpJSSetName, OpJSMemberGet, OpJSMemberSet,
 		OpJSCreateClosure, OpJSCall, OpJSNewArray, OpJSDelete,
@@ -919,7 +919,7 @@ func remapExecuteGlobalBytecode(bytecode []byte, constBase int, bytecodeBase int
 			userSubIdx := int(binary.BigEndian.Uint16(bytecode[ip:])) + constBase
 			binary.BigEndian.PutUint16(bytecode[ip:], uint16(userSubIdx))
 			ip += 6
-		case OpGetGlobal, OpSetGlobal, OpGetLocal, OpSetLocal, OpLabel, OpArgGlobalRef, OpArgLocalRef, OpLetGlobal, OpLetLocal, OpCall:
+		case OpGetGlobal, OpSetGlobal, OpGetLocal, OpSetLocal, OpLabel, OpArgGlobalRef, OpArgLocalRef, OpLetGlobal, OpLetLocal, OpCall, OpIncLocalInt, OpDecLocalInt:
 			ip += 2
 		case OpJSForIterEnter, OpJSForIterExit:
 			// Variable-length: [numVars(2), nameIdx1(2), nameIdx2(2), ...]
@@ -1277,12 +1277,16 @@ aspExecLoop:
 			idx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
 			vm.ip += 2
 			newVal := vm.pop()
-			// Decrement reference count of previous value in this slot (if it's an object).
-			vm.decrementObjectRefCount(vm.Globals[idx])
+			// Decrement reference count only for object slots to avoid hot-path call overhead.
+			if vm.Globals[idx].Type == VTObject {
+				vm.decrementObjectRefCount(vm.Globals[idx])
+			}
 			// Assign new value.
 			vm.Globals[idx] = newVal
-			// Increment reference count of new value (if it's an object).
-			vm.incrementObjectRefCount(newVal)
+			// Increment reference count only for object values to avoid hot-path call overhead.
+			if newVal.Type == VTObject {
+				vm.incrementObjectRefCount(newVal)
+			}
 
 		case OpEraseGlobal:
 			idx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
@@ -1346,12 +1350,16 @@ aspExecLoop:
 			idx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
 			vm.ip += 2
 			newVal := vm.pop()
-			// Decrement reference count of previous value in this slot.
-			vm.decrementObjectRefCount(vm.Globals[idx])
+			// Decrement reference count only for object slots to avoid hot-path call overhead.
+			if vm.Globals[idx].Type == VTObject {
+				vm.decrementObjectRefCount(vm.Globals[idx])
+			}
 			// Assign new value.
 			vm.Globals[idx] = newVal
-			// Increment reference count of new value.
-			vm.incrementObjectRefCount(newVal)
+			// Increment reference count only for object values to avoid hot-path call overhead.
+			if newVal.Type == VTObject {
+				vm.incrementObjectRefCount(newVal)
+			}
 
 		// OpLetLocal: plain VBScript "name = value" for a local variable.
 		// Local slots are mutable Variants and must be overwritten directly.
@@ -1360,12 +1368,16 @@ aspExecLoop:
 			vm.ip += 2
 			slot := vm.fp + int(offset)
 			newVal := vm.pop()
-			// Decrement reference count of previous value in this slot.
-			vm.decrementObjectRefCount(vm.stack[slot])
+			// Decrement reference count only for object slots to avoid hot-path call overhead.
+			if vm.stack[slot].Type == VTObject {
+				vm.decrementObjectRefCount(vm.stack[slot])
+			}
 			// Assign new value.
 			vm.stack[slot] = newVal
-			// Increment reference count of new value.
-			vm.incrementObjectRefCount(newVal)
+			// Increment reference count only for object values to avoid hot-path call overhead.
+			if newVal.Type == VTObject {
+				vm.incrementObjectRefCount(newVal)
+			}
 
 		case OpEraseLocal:
 			offset := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
@@ -1441,117 +1453,168 @@ aspExecLoop:
 			vm.ip += 2
 			slot := vm.fp + int(offset)
 			newVal := vm.pop()
-			// Decrement reference count of previous value in this slot (if it's an object).
-			vm.decrementObjectRefCount(vm.stack[slot])
+			// Decrement reference count only for object slots to avoid hot-path call overhead.
+			if vm.stack[slot].Type == VTObject {
+				vm.decrementObjectRefCount(vm.stack[slot])
+			}
 			// Assign new value.
 			vm.stack[slot] = newVal
-			// Increment reference count of new value (if it's an object).
-			vm.incrementObjectRefCount(newVal)
+			// Increment reference count only for object values to avoid hot-path call overhead.
+			if newVal.Type == VTObject {
+				vm.incrementObjectRefCount(newVal)
+			}
+
+		case OpIncLocalInt:
+			offset := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			vm.ip += 2
+			slot := vm.fp + int(offset)
+			current := vm.stack[slot]
+			switch current.Type {
+			case VTInteger:
+				current.Num++
+				vm.stack[slot] = current
+			case VTDouble:
+				current.Flt++
+				vm.stack[slot] = current
+			default:
+				vm.stack[slot] = vm.addValues(current, NewInteger(1))
+			}
+
+		case OpDecLocalInt:
+			offset := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			vm.ip += 2
+			slot := vm.fp + int(offset)
+			current := vm.stack[slot]
+			switch current.Type {
+			case VTInteger:
+				current.Num--
+				vm.stack[slot] = current
+			case VTDouble:
+				current.Flt--
+				vm.stack[slot] = current
+			default:
+				vm.stack[slot] = vm.subtractValues(current, NewInteger(1))
+			}
 
 		case OpAdd:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.addValues(a, b))
+			// Reduce the top two stack values in-place to avoid extra Value copies.
+			vm.stack[vm.sp-1] = vm.addValues(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpSub:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.subtractValues(a, b))
+			vm.stack[vm.sp-1] = vm.subtractValues(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpMul:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.multiplyValues(a, b))
+			vm.stack[vm.sp-1] = vm.multiplyValues(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpDiv:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.divideValues(a, b))
+			vm.stack[vm.sp-1] = vm.divideValues(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpMod:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.modValues(a, b))
+			vm.stack[vm.sp-1] = vm.modValues(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpPow:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.powValues(a, b))
+			vm.stack[vm.sp-1] = vm.powValues(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpIAdd:
-			b, a := vm.pop(), vm.pop()
-			vm.push(NewInteger(vm.coerceInt64(a) + vm.coerceInt64(b)))
+			vm.stack[vm.sp-1] = NewInteger(vm.coerceInt64(vm.stack[vm.sp-1]) + vm.coerceInt64(vm.stack[vm.sp]))
+			vm.sp--
 
 		case OpISub:
-			b, a := vm.pop(), vm.pop()
-			vm.push(NewInteger(vm.coerceInt64(a) - vm.coerceInt64(b)))
+			vm.stack[vm.sp-1] = NewInteger(vm.coerceInt64(vm.stack[vm.sp-1]) - vm.coerceInt64(vm.stack[vm.sp]))
+			vm.sp--
 
 		case OpIMul:
-			b, a := vm.pop(), vm.pop()
-			vm.push(NewInteger(vm.coerceInt64(a) * vm.coerceInt64(b)))
+			vm.stack[vm.sp-1] = NewInteger(vm.coerceInt64(vm.stack[vm.sp-1]) * vm.coerceInt64(vm.stack[vm.sp]))
+			vm.sp--
 
 		case OpIDiv:
 			// VBScript integer division: a \ b
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.intDivideValues(a, b))
+			vm.stack[vm.sp-1] = vm.intDivideValues(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpNeq:
-			b, a := vm.pop(), vm.pop()
+			a := vm.stack[vm.sp-1]
+			b := vm.stack[vm.sp]
 			if isNull(a) || isNull(b) {
-				vm.push(NewNull())
+				vm.stack[vm.sp-1] = NewNull()
 			} else if vm.optionCompare == 1 {
-				vm.push(NewBool(!strings.EqualFold(a.String(), b.String())))
+				vm.stack[vm.sp-1] = NewBool(!strings.EqualFold(a.String(), b.String()))
 			} else {
-				vm.push(NewBool(vm.compareValues(a, b) != 0))
+				vm.stack[vm.sp-1] = NewBool(vm.compareValues(a, b) != 0)
 			}
+			vm.sp--
 
 		case OpIsRef:
-			b, a := vm.pop(), vm.pop()
+			a := vm.stack[vm.sp-1]
+			b := vm.stack[vm.sp]
 			if !isObjectReferenceValue(a) || !isObjectReferenceValue(b) {
 				vm.raise(vbscript.TypeMismatch, vbscript.TypeMismatch.String())
-				vm.push(NewEmpty())
+				vm.stack[vm.sp-1] = NewEmpty()
+				vm.sp--
 				continue
 			}
-			vm.push(NewBool(a.Num == b.Num))
+			vm.stack[vm.sp-1] = NewBool(a.Num == b.Num)
+			vm.sp--
 
 		case OpIsNotRef:
-			b, a := vm.pop(), vm.pop()
+			a := vm.stack[vm.sp-1]
+			b := vm.stack[vm.sp]
 			if !isObjectReferenceValue(a) || !isObjectReferenceValue(b) {
 				vm.raise(vbscript.TypeMismatch, vbscript.TypeMismatch.String())
-				vm.push(NewEmpty())
+				vm.stack[vm.sp-1] = NewEmpty()
+				vm.sp--
 				continue
 			}
-			vm.push(NewBool(a.Num != b.Num))
+			vm.stack[vm.sp-1] = NewBool(a.Num != b.Num)
+			vm.sp--
 
 		case OpGt:
-			b, a := vm.pop(), vm.pop()
+			a := vm.stack[vm.sp-1]
+			b := vm.stack[vm.sp]
 			if isNull(a) || isNull(b) {
-				vm.push(NewNull())
+				vm.stack[vm.sp-1] = NewNull()
 			} else {
-				vm.push(NewBool(vm.compareValues(a, b) > 0))
+				vm.stack[vm.sp-1] = NewBool(vm.compareValues(a, b) > 0)
 			}
+			vm.sp--
 
 		case OpLte:
-			b, a := vm.pop(), vm.pop()
+			a := vm.stack[vm.sp-1]
+			b := vm.stack[vm.sp]
 			if isNull(a) || isNull(b) {
-				vm.push(NewNull())
+				vm.stack[vm.sp-1] = NewNull()
 			} else {
-				vm.push(NewBool(vm.compareValues(a, b) <= 0))
+				vm.stack[vm.sp-1] = NewBool(vm.compareValues(a, b) <= 0)
 			}
+			vm.sp--
 
 		case OpGte:
-			b, a := vm.pop(), vm.pop()
+			a := vm.stack[vm.sp-1]
+			b := vm.stack[vm.sp]
 			if isNull(a) || isNull(b) {
-				vm.push(NewNull())
+				vm.stack[vm.sp-1] = NewNull()
 			} else {
-				vm.push(NewBool(vm.compareValues(a, b) >= 0))
+				vm.stack[vm.sp-1] = NewBool(vm.compareValues(a, b) >= 0)
 			}
+			vm.sp--
 
 		case OpAnd:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.logicalAnd(a, b))
+			vm.stack[vm.sp-1] = vm.logicalAnd(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpOr:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.logicalOr(a, b))
+			vm.stack[vm.sp-1] = vm.logicalOr(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpXor:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.logicalXor(a, b))
+			vm.stack[vm.sp-1] = vm.logicalXor(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpNot:
 			v := vm.pop()
@@ -1572,12 +1635,12 @@ aspExecLoop:
 			}
 
 		case OpEqv:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.logicalEqv(a, b))
+			vm.stack[vm.sp-1] = vm.logicalEqv(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpImp:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.logicalImp(a, b))
+			vm.stack[vm.sp-1] = vm.logicalImp(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpJumpIfTrue:
 			target := binary.BigEndian.Uint32(vm.bytecode[vm.ip:])
@@ -1653,8 +1716,8 @@ aspExecLoop:
 			vm.ip = int(binary.BigEndian.Uint32(vm.bytecode[vm.ip:]))
 
 		case OpConcat:
-			b, a := vm.pop(), vm.pop()
-			vm.push(vm.concatValues(a, b))
+			vm.stack[vm.sp-1] = vm.concatValues(vm.stack[vm.sp-1], vm.stack[vm.sp])
+			vm.sp--
 
 		case OpWriteStatic:
 			idx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
@@ -1907,18 +1970,20 @@ aspExecLoop:
 			}
 
 		case OpEq:
-			b, a := vm.pop(), vm.pop()
+			a := vm.stack[vm.sp-1]
+			b := vm.stack[vm.sp]
 			if isNull(a) || isNull(b) {
-				vm.push(NewNull())
+				vm.stack[vm.sp-1] = NewNull()
 			} else if vm.optionCompare == 1 { // Text
-				vm.push(NewBool(strings.EqualFold(a.String(), b.String())))
+				vm.stack[vm.sp-1] = NewBool(strings.EqualFold(a.String(), b.String()))
 			} else {
-				vm.push(NewBool(vm.compareValues(a, b) == 0))
+				vm.stack[vm.sp-1] = NewBool(vm.compareValues(a, b) == 0)
 			}
+			vm.sp--
 
 		case OpLt:
-			b, a := vm.pop(), vm.pop()
-			vm.push(NewBool(vm.asFloat(a) < vm.asFloat(b)))
+			vm.stack[vm.sp-1] = NewBool(vm.asFloat(vm.stack[vm.sp-1]) < vm.asFloat(vm.stack[vm.sp]))
+			vm.sp--
 
 		case OpNeg:
 			val := vm.pop()
