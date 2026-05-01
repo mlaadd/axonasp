@@ -43,7 +43,7 @@ We didn't just update Classic ASP. We completely reimagined it for the modern we
 
 ---
 
-## What's New in Version 2.0?
+## What's New in Version 2.1?
 
 - **Unified Configuration:** Centralized `axonasp.toml` configuration with `.env` support via Viper. Single source of truth for all settings.
 - **Modern Architecture Examples:** Complete, production-ready examples for REST, RESTful, MVC, and MVVM—all written in pure ASP.
@@ -51,6 +51,8 @@ We didn't just update Classic ASP. We completely reimagined it for the modern we
 - **Intelligent Port Defaults:** Updated default proxy port (8801) to avoid firewall conflicts and system port contention out of the box.
 - **Native Docker Support:** Containerization with included `Dockerfile` and `docker-compose.yml`. Deploy in seconds.
 - **Database Migration Tool:** Built-in converter to migrate legacy Access databases to modern formats (SQLite, MySQL, PostgreSQL, MSSQL).
+- **Enhanced Logging and Diagnostics:** Structured logging with log levels, request tracing, and performance metrics for easier debugging and monitoring in production.
+- **JavaScript (JScript) Support:** Execute ASP pages using JScript with the `<%@ Language=JScript %>` directive. Full compatibility with JScript syntax and semantics.
 
 ---
 

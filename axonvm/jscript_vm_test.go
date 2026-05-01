@@ -1180,6 +1180,39 @@ func TestJScriptES5ParseIntParseFloatNuances(t *testing.T) {
 	}
 }
 
+func TestJScriptES5NumberPrimitiveMethods(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`var n = 12.3456;` +
+		`Response.Write(n.toFixed(2) + "|");` +
+		`Response.Write(n.toLocaleString() + "|");` +
+		`Response.Write(n.toExponential(2) + "|");` +
+		`Response.Write(n.toPrecision(4) + "|");` +
+		`Response.Write(n.toString() + "|");` +
+		`Response.Write((typeof n.valueOf()) + "|");` +
+		`Response.Write((123).toString(16));` +
+		`</script>`
+	out := runASPSourceForTest(t, source)
+	if out != "12.35|12.3456|1.23e+1|12.35|12.3456|number|7b" {
+		t.Fatalf("unexpected Number primitive method output: %q", out)
+	}
+}
+
+func TestJScriptES5NumberToFixedNoUndefinedRegression(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`var start = new Date().getTime();` +
+		`for (var i = 1; i <= 100000; i++) {}` +
+		`var elapsed = (new Date().getTime() - start) / 1000;` +
+		`Response.Write("Tempo levado: " + elapsed.toFixed(2) + " segundos.");` +
+		`</script>`
+	out := runASPSourceForTest(t, source)
+	if strings.Contains(out, "undefined") {
+		t.Fatalf("toFixed regression: got undefined output: %q", out)
+	}
+	if !strings.HasPrefix(out, "Tempo levado: ") || !strings.HasSuffix(out, " segundos.") {
+		t.Fatalf("unexpected loop timing output shape: %q", out)
+	}
+}
+
 func TestJScriptES5ArrayMethodsGenericOnArguments(t *testing.T) {
 	source := `<script runat="server" language="JScript">` +
 		`function probe(a, b, c) {` +

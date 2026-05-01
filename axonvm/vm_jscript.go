@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"g3pix.com.br/axonasp/jscript/ftoa"
 	"g3pix.com.br/axonasp/vbscript"
 )
 
@@ -1931,6 +1932,75 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 	}
 
 	switch target.Type {
+	case VTInteger, VTDouble:
+		number := vm.jsToNumber(target).Flt
+		switch {
+		case strings.EqualFold(member, "toString"):
+			if len(args) > 0 && args[0].Type != VTJSUndefined {
+				radix := int(vm.jsToNumber(args[0]).Flt)
+				if radix < 2 || radix > 36 {
+					return Value{Type: VTJSUndefined}, true
+				}
+				text := vm.jsNumberToStringRadix(number, radix)
+				if !vm.jsEnsureStringSize(len(text)) || !vm.jsChargeStringWork(len(text)) {
+					return Value{Type: VTJSUndefined}, true
+				}
+				return NewString(text), true
+			}
+			text := vm.jsNumberToString(number)
+			if !vm.jsEnsureStringSize(len(text)) || !vm.jsChargeStringWork(len(text)) {
+				return Value{Type: VTJSUndefined}, true
+			}
+			return NewString(text), true
+		case strings.EqualFold(member, "toLocaleString"):
+			text := vm.jsNumberToString(number)
+			if !vm.jsEnsureStringSize(len(text)) || !vm.jsChargeStringWork(len(text)) {
+				return Value{Type: VTJSUndefined}, true
+			}
+			return NewString(text), true
+		case strings.EqualFold(member, "valueOf"):
+			return NewDouble(number), true
+		case strings.EqualFold(member, "toFixed"):
+			digits := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+			if digits < 0 || digits > 20 {
+				return Value{Type: VTJSUndefined}, true
+			}
+			text := vm.jsNumberToFixed(number, digits)
+			if !vm.jsEnsureStringSize(len(text)) || !vm.jsChargeStringWork(len(text)) {
+				return Value{Type: VTJSUndefined}, true
+			}
+			return NewString(text), true
+		case strings.EqualFold(member, "toExponential"):
+			digits := -1
+			if len(args) > 0 && args[0].Type != VTJSUndefined {
+				digits = int(vm.jsToNumber(args[0]).Flt)
+				if digits < 0 || digits > 20 {
+					return Value{Type: VTJSUndefined}, true
+				}
+			}
+			text := vm.jsNumberToExponential(number, digits)
+			if !vm.jsEnsureStringSize(len(text)) || !vm.jsChargeStringWork(len(text)) {
+				return Value{Type: VTJSUndefined}, true
+			}
+			return NewString(text), true
+		case strings.EqualFold(member, "toPrecision"):
+			if len(args) == 0 || args[0].Type == VTJSUndefined {
+				text := vm.jsNumberToString(number)
+				if !vm.jsEnsureStringSize(len(text)) || !vm.jsChargeStringWork(len(text)) {
+					return Value{Type: VTJSUndefined}, true
+				}
+				return NewString(text), true
+			}
+			precision := int(vm.jsToNumber(args[0]).Flt)
+			if precision < 1 || precision > 21 {
+				return Value{Type: VTJSUndefined}, true
+			}
+			text := vm.jsNumberToPrecision(number, precision)
+			if !vm.jsEnsureStringSize(len(text)) || !vm.jsChargeStringWork(len(text)) {
+				return Value{Type: VTJSUndefined}, true
+			}
+			return NewString(text), true
+		}
 	case VTString:
 		text := target.Str
 		runes := []rune(text)
@@ -2861,6 +2931,110 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 	}
 
 	return Value{Type: VTJSUndefined}, false
+}
+
+// jsNumberToString formats a numeric primitive using JScript-compatible defaults.
+func (vm *VM) jsNumberToString(n float64) string {
+	if math.IsNaN(n) {
+		return "NaN"
+	}
+	if math.IsInf(n, 1) {
+		return "Infinity"
+	}
+	if math.IsInf(n, -1) {
+		return "-Infinity"
+	}
+	if n == 0 {
+		return "0"
+	}
+	return vm.jsNormalizeExponent(strconv.FormatFloat(n, 'g', -1, 64))
+}
+
+// jsNumberToStringRadix formats integral numbers in the requested radix.
+func (vm *VM) jsNumberToStringRadix(n float64, radix int) string {
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return vm.jsNumberToString(n)
+	}
+	if n == 0 {
+		return "0"
+	}
+	truncated := math.Trunc(n)
+	if truncated != n {
+		return vm.jsNumberToString(n)
+	}
+	sign := ""
+	if truncated < 0 {
+		sign = "-"
+		truncated = -truncated
+	}
+	const digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+	value := uint64(truncated)
+	buf := [65]byte{}
+	idx := len(buf)
+	for value > 0 {
+		idx--
+		buf[idx] = digits[value%uint64(radix)]
+		value /= uint64(radix)
+	}
+	if idx == len(buf) {
+		return "0"
+	}
+	return sign + string(buf[idx:])
+}
+
+// jsNumberToFixed implements Number.prototype.toFixed with bounded precision.
+func (vm *VM) jsNumberToFixed(n float64, digits int) string {
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return vm.jsNumberToString(n)
+	}
+	if n >= 1e21 || n <= -1e21 {
+		return vm.jsNumberToString(n)
+	}
+	if n == 0 {
+		n = 0
+	}
+	return string(ftoa.FToStr(n, ftoa.ModeFixed, digits, nil))
+}
+
+// jsNumberToExponential implements Number.prototype.toExponential.
+func (vm *VM) jsNumberToExponential(n float64, digits int) string {
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return vm.jsNumberToString(n)
+	}
+	if n == 0 {
+		n = 0
+	}
+	if digits < 0 {
+		return vm.jsNormalizeExponent(strconv.FormatFloat(n, 'e', -1, 64))
+	}
+	return vm.jsNormalizeExponent(strconv.FormatFloat(n, 'e', digits, 64))
+}
+
+// jsNumberToPrecision implements Number.prototype.toPrecision.
+func (vm *VM) jsNumberToPrecision(n float64, precision int) string {
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return vm.jsNumberToString(n)
+	}
+	if n == 0 {
+		n = 0
+	}
+	return vm.jsNormalizeExponent(strconv.FormatFloat(n, 'g', precision, 64))
+}
+
+// jsNormalizeExponent removes zero-padding in exponent suffix to match JS formatting.
+func (vm *VM) jsNormalizeExponent(text string) string {
+	ePos := strings.IndexAny(text, "eE")
+	if ePos < 0 || ePos+2 >= len(text) {
+		return text
+	}
+	base := text[:ePos]
+	exp := text[ePos+1:]
+	sign := exp[0:1]
+	digits := strings.TrimLeft(exp[1:], "0")
+	if digits == "" {
+		digits = "0"
+	}
+	return base + "e" + sign + digits
 }
 
 // jsArgOrUndefined returns args[idx] or undefined for missing arguments.
