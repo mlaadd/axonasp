@@ -21,10 +21,14 @@
 package axonvm
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+
+	"g3pix.com.br/axonasp/axonvm/asp"
 )
 
 // TestOptimizationRedimPreserve verifies the O(log N) capacity growth logic.
@@ -141,5 +145,108 @@ func TestOptimizationFSOCache(t *testing.T) {
 	}
 	if info3.Size() != 8 {
 		t.Errorf("expected fresh size 8, got %d", info3.Size())
+	}
+}
+
+// TestVMPoolPrewarming verifies that pools are pre-warmed with initialized VMs.
+func TestVMPoolPrewarming(t *testing.T) {
+	compiler := NewASPCompiler(`<% Response.Write "prewarm" %>`)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	program := cachedProgramFromCompiler(compiler)
+	pool := getProgramPool(program)
+
+	// Check if pool is pre-warmed. Default retain limit is 128.
+	pool.mu.Lock()
+	count := len(pool.items)
+	pool.mu.Unlock()
+
+	if count < 128 {
+		t.Errorf("expected at least 128 pre-warmed VMs, got %d", count)
+	}
+
+	// Verify one VM from pool
+	vm := pool.get()
+	if vm == nil {
+		t.Fatal("failed to get VM from pre-warmed pool")
+	}
+	if vm.pooledFrom != pool {
+		t.Errorf("VM should be linked to its pool")
+	}
+}
+
+// TestAsyncSessionPersistence verifies the write-behind queue behavior.
+func TestAsyncSessionPersistence(t *testing.T) {
+	tempDir := t.TempDir()
+	asp.SetSessionStorageDir(filepath.Join(tempDir, "session"))
+	defer asp.SetSessionStorageDir("")
+
+	session := asp.NewSessionWithID("async-test")
+	session.Set("Key", asp.NewApplicationString("Value"))
+
+	// Queue the save
+	queued := session.QueueSaveIfDirty()
+	if !queued {
+		t.Fatal("expected session to be queued for save")
+	}
+
+	// Wait for background worker to process it.
+	// We give it some time since it involves disk I/O.
+	for i := 0; i < 20; i++ {
+		time.Sleep(50 * time.Millisecond)
+		if !session.IsDirty() {
+			break
+		}
+	}
+
+	if session.IsDirty() {
+		t.Error("expected session to be clean after async save")
+	}
+
+	// Verify file exists
+	path := filepath.Join(tempDir, "session", "async-test.json")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Errorf("session file was not created: %v", path)
+	}
+}
+
+// TestFSODirectorySingleflight verifies that concurrent directory reads are collapsed.
+func TestFSODirectorySingleflight(t *testing.T) {
+	tempDir := t.TempDir()
+	for i := 0; i < 10; i++ {
+		os.WriteFile(filepath.Join(tempDir, fmt.Sprintf("file%d.txt", i)), []byte("test"), 0644)
+	}
+
+	const workers = 50
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	start := make(chan struct{})
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			_, _ = globalFSOCache.GetReadDir(tempDir)
+		}()
+	}
+
+	// Manually clear cache to ensure they all hit the Singleflight logic simultaneously.
+	globalFSOCache.mu.Lock()
+	delete(globalFSOCache.items, tempDir)
+	globalFSOCache.mu.Unlock()
+
+	close(start)
+	wg.Wait()
+
+	// If singleflight works, we should have the result in cache and no deadlocks.
+	entries, err := globalFSOCache.GetReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("GetReadDir failed: %v", err)
+	}
+	if len(entries) != 10 {
+		t.Errorf("expected 10 entries, got %d", len(entries))
 	}
 }

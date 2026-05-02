@@ -37,11 +37,17 @@ type fsoCacheItem struct {
 type fsoCacheManager struct {
 	mu    sync.RWMutex
 	items map[string]*fsoCacheItem
+
+	// inflightMu and inflight map implement a simple Singleflight-like mechanism.
+	// This ensures that concurrent requests for the same path only trigger one disk I/O.
+	inflightMu sync.Mutex
+	inflight   map[string]*sync.WaitGroup
 }
 
 // globalFSOCache provides process-wide caching for FSO operations.
 var globalFSOCache = &fsoCacheManager{
-	items: make(map[string]*fsoCacheItem),
+	items:    make(map[string]*fsoCacheItem),
+	inflight: make(map[string]*sync.WaitGroup),
 }
 
 // GetStat returns cached FileInfo for a path or performs os.Stat and caches it.
@@ -54,6 +60,26 @@ func (c *fsoCacheManager) GetStat(path string) (os.FileInfo, error) {
 	if ok && item.stat != nil && now.Before(item.expires) {
 		return item.stat, nil
 	}
+
+	// Simple Singleflight for Stat
+	c.inflightMu.Lock()
+	wg, inProgress := c.inflight["stat:"+path]
+	if inProgress {
+		c.inflightMu.Unlock()
+		wg.Wait()
+		return c.GetStat(path) // Recurse to get the value cached by the winner.
+	}
+	wg = &sync.WaitGroup{}
+	wg.Add(1)
+	c.inflight["stat:"+path] = wg
+	c.inflightMu.Unlock()
+
+	defer func() {
+		c.inflightMu.Lock()
+		delete(c.inflight, "stat:"+path)
+		c.inflightMu.Unlock()
+		wg.Done()
+	}()
 
 	info, err := os.Stat(path)
 	if err != nil {
@@ -74,11 +100,11 @@ func (c *fsoCacheManager) GetStat(path string) (os.FileInfo, error) {
 
 	if item, ok = c.items[path]; ok {
 		item.stat = info
-		item.expires = now.Add(1 * time.Minute)
+		item.expires = now.Add(5 * time.Second) // Shorter TTL for burst absorption
 	} else {
 		c.items[path] = &fsoCacheItem{
 			stat:    info,
-			expires: now.Add(1 * time.Minute),
+			expires: now.Add(5 * time.Second),
 		}
 	}
 
@@ -95,6 +121,26 @@ func (c *fsoCacheManager) GetReadDir(path string) ([]os.DirEntry, error) {
 	if ok && item.entries != nil && now.Before(item.expires) {
 		return item.entries, nil
 	}
+
+	// Singleflight: Only allow one os.ReadDir for this path at a time.
+	c.inflightMu.Lock()
+	wg, inProgress := c.inflight["readdir:"+path]
+	if inProgress {
+		c.inflightMu.Unlock()
+		wg.Wait()
+		return c.GetReadDir(path)
+	}
+	wg = &sync.WaitGroup{}
+	wg.Add(1)
+	c.inflight["readdir:"+path] = wg
+	c.inflightMu.Unlock()
+
+	defer func() {
+		c.inflightMu.Lock()
+		delete(c.inflight, "readdir:"+path)
+		c.inflightMu.Unlock()
+		wg.Done()
+	}()
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -115,11 +161,11 @@ func (c *fsoCacheManager) GetReadDir(path string) ([]os.DirEntry, error) {
 
 	if item, ok = c.items[path]; ok {
 		item.entries = entries
-		item.expires = now.Add(1 * time.Minute)
+		item.expires = now.Add(5 * time.Second) // 5s TTL for micro-burst absorption
 	} else {
 		c.items[path] = &fsoCacheItem{
 			entries: entries,
-			expires: now.Add(1 * time.Minute),
+			expires: now.Add(5 * time.Second),
 		}
 	}
 

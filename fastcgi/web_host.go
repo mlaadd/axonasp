@@ -246,7 +246,9 @@ func (h *FastCGIHost) PersistSession() {
 		return
 	}
 
-	_ = h.session.SaveIfDirty()
+	// Optimization: Use asynchronous write-behind for session persistence
+	// to avoid blocking the handler and release the VM back to pool faster.
+	h.session.QueueSaveIfDirty()
 	h.setSessionCookie()
 }
 

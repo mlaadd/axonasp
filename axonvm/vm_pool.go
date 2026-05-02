@@ -35,7 +35,8 @@ type vmProgramPool struct {
 	program     CachedProgram
 }
 
-const vmProgramPoolDefaultRetained = 128
+// vmProgramPool manages a pool of VM instances for a specific compiled program, allowing for efficient reuse and reduced allocation overhead. This limit can be changed in axonasp.toml
+const vmProgramPoolDefaultRetained = 50
 
 var cachedProgramPools sync.Map
 var vmPoolLimitMu sync.RWMutex
@@ -117,11 +118,21 @@ func getProgramPool(program CachedProgram) *vmProgramPool {
 		return existing.(*vmProgramPool)
 	}
 
+	limit := vmProgramPoolRetainLimit()
 	entry := &vmProgramPool{
-		items:       make([]*VM, 0, vmProgramPoolRetainLimit()),
-		maxRetained: vmProgramPoolRetainLimit(),
+		items:       make([]*VM, 0, limit),
+		maxRetained: limit,
 		program:     immutableCachedProgramView(program),
 	}
+
+	// Pre-warming: Fill the pool with pre-allocated VMs to handle sudden traffic spikes
+	// without triggering expensive on-the-fly allocations and deep state cloning.
+	for i := 0; i < limit; i++ {
+		vm := NewVMFromCachedProgram(entry.program)
+		vm.pooledFrom = entry
+		entry.items = append(entry.items, vm)
+	}
+
 	actual, _ := cachedProgramPools.LoadOrStore(key, entry)
 	return actual.(*vmProgramPool)
 }
@@ -280,7 +291,11 @@ func (vm *VM) resetForReuse() {
 		vm.constGlobals[key] = value
 	}
 	vm.sourceName = vm.baseSourceName
-	vm.errObject = asp.NewASPError()
+	if vm.errObject != nil {
+		vm.errObject.Reset()
+	} else {
+		vm.errObject = asp.NewASPError()
+	}
 	vm.errASPCodeRaw = ""
 	vm.errASPCodeRawSet = false
 	vm.lastLine = 0
@@ -304,8 +319,11 @@ func (vm *VM) resetForReuse() {
 	vm.withStack = vm.withStack[:0]
 	clear(vm.classInstanceOrder)
 	vm.classInstanceOrder = vm.classInstanceOrder[:0]
+	clear(vm.argBuffer)
 	vm.argBuffer = vm.argBuffer[:0]
+	clear(vm.indexBuffer)
 	vm.indexBuffer = vm.indexBuffer[:0]
+	clear(vm.combineBuffer)
 	vm.combineBuffer = vm.combineBuffer[:0]
 	clear(vm.runtimeClasses)
 	clear(vm.runtimeClassItems)

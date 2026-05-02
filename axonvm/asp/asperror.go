@@ -48,6 +48,24 @@ func NewASPError() *ASPError {
 	return (&ASPError{Category: "ASP"}).Normalize()
 }
 
+// Reset clears all fields to their default state for object reuse.
+func (e *ASPError) Reset() {
+	if e == nil {
+		return
+	}
+	e.ASPCode = 0
+	e.ASPDescription = ""
+	e.Number = 0
+	e.Source = "ASP"
+	e.Description = ""
+	e.HelpFile = ""
+	e.HelpContext = 0
+	e.File = ""
+	e.Line = 0
+	e.Column = 0
+	e.Category = "ASP"
+}
+
 // Normalize fills empty ASPError fields with ASP-compatible defaults.
 func (e *ASPError) Normalize() *ASPError {
 	if e == nil {

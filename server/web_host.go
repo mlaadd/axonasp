@@ -185,7 +185,9 @@ func (h *WebHost) PersistSession() {
 		return
 	}
 
-	_ = h.session.SaveIfDirty()
+	// Optimization: Use asynchronous write-behind for session persistence
+	// to avoid blocking the HTTP handler and release the VM back to pool faster.
+	h.session.QueueSaveIfDirty()
 	h.setSessionCookie()
 }
 

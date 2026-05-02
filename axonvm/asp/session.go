@@ -54,6 +54,31 @@ type Session struct {
 	abandoned bool
 	dirty     bool
 	version   uint64
+
+	lastSavedVersion uint64
+}
+
+// sessionWriteQueue is a buffered channel for asynchronous session persistence.
+var sessionWriteQueue = make(chan *Session, 10000)
+
+func init() {
+	// Start background session writers to offload disk I/O from request threads.
+	// 4 workers provide controlled concurrency to avoid OS thread starvation.
+	for i := 0; i < 4; i++ {
+		go sessionWriterWorker()
+	}
+}
+
+// sessionWriterWorker listens for dirty sessions and persists them to disk.
+func sessionWriterWorker() {
+	for s := range sessionWriteQueue {
+		if s == nil {
+			continue
+		}
+		// Save performing actual disk I/O.
+		// Save handles its own locking and version checks.
+		_ = s.Save()
+	}
 }
 
 // sessionDiskPayload stores session fields serialized to disk.
@@ -417,11 +442,38 @@ func (s *Session) IsDirty() bool {
 func (s *Session) SaveIfDirty() error {
 	s.mu.RLock()
 	dirty := s.dirty
+	version := s.version
+	lastSaved := s.lastSavedVersion
 	s.mu.RUnlock()
-	if !dirty {
+
+	if !dirty || version <= lastSaved {
 		return nil
 	}
 	return s.Save()
+}
+
+// QueueSaveIfDirty pushes the session to the background write queue if it has pending changes.
+// It returns true if the session was queued, false if it was already queued or has no changes.
+func (s *Session) QueueSaveIfDirty() bool {
+	s.mu.RLock()
+	dirty := s.dirty
+	version := s.version
+	lastSaved := s.lastSavedVersion
+	s.mu.RUnlock()
+
+	if !dirty || version <= lastSaved {
+		return false
+	}
+
+	select {
+	case sessionWriteQueue <- s:
+		return true
+	default:
+		// Queue is full, session will be saved in next auto-flush or request.
+		// We log this to identify potential resource starvation in background workers.
+		println("Warning: Session write queue overflow. Persistence delayed for session:", s.ID)
+		return false
+	}
 }
 
 // Save persists session state as JSON in temp/session.
@@ -465,6 +517,7 @@ func (s *Session) Save() error {
 	s.mu.Lock()
 	if s.version == version {
 		s.dirty = false
+		s.lastSavedVersion = version
 	}
 	s.mu.Unlock()
 	return nil

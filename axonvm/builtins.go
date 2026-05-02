@@ -25,7 +25,6 @@ import (
 	"math"
 	"math/rand"
 	"net/url"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -1281,7 +1280,7 @@ func vbsAxonEnumValues(vm *VM, args []Value) (Value, error) {
 		return ValueFromVBArray(NewVBArrayFromValues(0, nil)), nil
 	}
 
-	entries, err := os.ReadDir(obj.path)
+	entries, err := globalFSOCache.GetReadDir(obj.path)
 	if err != nil {
 		return ValueFromVBArray(NewVBArrayFromValues(0, nil)), nil
 	}
