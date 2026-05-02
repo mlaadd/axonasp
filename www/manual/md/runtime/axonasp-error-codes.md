@@ -193,6 +193,16 @@ AxonASP error codes are internal to the G3Pix AxonASP platform. They are never r
 | 9015 | G3DB: transaction is already closed |
 | 9016 | G3DB.OpenFromEnv: missing or incomplete configuration keys in axonasp.toml |
 
+### G3SEARCH Native Search Library (9020–9024)
+
+| Code | Description |
+|------|-------------|
+| 9020 | G3SEARCH.BuildIndex: DocsPath is required |
+| 9021 | G3SEARCH: IndexPath is required |
+| 9022 | G3SEARCH: failed to open index |
+| 9023 | G3SEARCH: failed to write index |
+| 9024 | G3SEARCH: search execution failed |
+
 ---
 
 ## VBScript Error Codes

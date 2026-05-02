@@ -331,6 +331,7 @@ func main() {
 		filepath.Join("temp", "cache"),
 		CacheMaxSizeMB,
 	)
+	scriptCache.SetWatchedExtensions(ExecuteAsASPExtensions)
 	if err := scriptCache.StartInvalidator([]string{cacheRoot}); err != nil {
 		log.Printf("Warning: Failed to start bytecode invalidator: %v\n", err)
 	}
@@ -702,10 +703,11 @@ func executeASPWithStatus(w http.ResponseWriter, r *http.Request, filePath strin
 	cw := newCancellableWriter(single)
 	host := NewWebHost(cw, r)
 
-	if scriptCache == nil {
-		scriptCache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join("temp", "cache"), 1)
+	cache := scriptCache
+	if cache == nil {
+		cache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join("temp", "cache"), 1)
 	}
-	program, err := scriptCache.LoadOrCompile(filePath)
+	program, err := cache.LoadOrCompile(filePath)
 	if err != nil {
 		aspErr := axonvm.CompilerErrorToASPError(err, filePath)
 		host.Server().SetLastError(aspErr)
@@ -731,7 +733,15 @@ func executeASPWithStatus(w http.ResponseWriter, r *http.Request, filePath strin
 	done := make(chan vmResult, 1)
 	go func() {
 		defer vm.Release()
-		done <- vmResult{vm.Run()}
+		runErr := func() (err error) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					err = fmt.Errorf("panic recovered in vm.Run: %v", recovered)
+				}
+			}()
+			return vm.Run()
+		}()
+		done <- vmResult{err: runErr}
 	}()
 
 	start := time.Now()

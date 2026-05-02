@@ -96,6 +96,7 @@ func main() {
 		filepath.Join("temp", "cache"),
 		CacheMaxSizeMB,
 	)
+	scriptCache.SetWatchedExtensions(ExecuteAsASPExtensions)
 	if err := scriptCache.StartInvalidator([]string{workingDir}); err != nil {
 		fmt.Printf("%sWarning%s: failed to start bytecode invalidator: %v\n", colorYellow, colorReset, err)
 	}

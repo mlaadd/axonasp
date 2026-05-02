@@ -386,6 +386,17 @@
         * Properties Detail
             * [Hardwraps](md/libraries/g3md/properties/hardwraps.md)
             * [Unsafe](md/libraries/g3md/properties/unsafe.md)
+    * G3SEARCH
+        * [Overview](md/g3search/overview.md)
+        * [Methods](md/g3search/methods.md)
+        * [Properties](md/g3search/properties.md)
+        * Methods Detail
+            * [BuildIndex](md/g3search/methods/buildindex.md)
+            * [Search](md/g3search/methods/search.md)
+        * Properties Detail
+            * [IndexPath](md/g3search/properties/indexpath.md)
+            * [DocsPath](md/g3search/properties/docspath.md)
+            * [Extension](md/g3search/properties/extension.md)
     * G3PDF
         * [Overview](md/libraries/g3pdf/overview.md)
         * [Methods](md/libraries/g3pdf/methods.md)

@@ -274,6 +274,7 @@ type VM struct {
 	responseCookieItems            map[int64]string
 	aspErrorItems                  map[int64]*asp.ASPError
 	g3mdItems                      map[int64]*G3MD
+	g3searchItems                  map[int64]*G3Search
 	g3testItems                    map[int64]*G3Test
 	g3cryptoItems                  map[int64]*G3Crypto
 	g3jsonItems                    map[int64]*G3JSON
@@ -464,6 +465,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		responseCookieItems:            make(map[int64]string),
 		aspErrorItems:                  make(map[int64]*asp.ASPError),
 		g3mdItems:                      make(map[int64]*G3MD),
+		g3searchItems:                  make(map[int64]*G3Search),
 		g3testItems:                    make(map[int64]*G3Test),
 		g3cryptoItems:                  make(map[int64]*G3Crypto),
 		g3jsonItems:                    make(map[int64]*G3JSON),
@@ -1067,6 +1069,7 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.responseCookieItems = child.responseCookieItems
 	vm.aspErrorItems = child.aspErrorItems
 	vm.g3mdItems = child.g3mdItems
+	vm.g3searchItems = child.g3searchItems
 	vm.g3cryptoItems = child.g3cryptoItems
 	vm.g3jsonItems = child.g3jsonItems
 	vm.g3httpItems = child.g3httpItems
@@ -3259,6 +3262,10 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 		return g3mdObject.DispatchMethod(member, args)
 	}
 
+	if g3searchObject, exists := vm.g3searchItems[objID]; exists {
+		return g3searchObject.DispatchMethod(member, args)
+	}
+
 	if g3cryptoObject, exists := vm.g3cryptoItems[objID]; exists {
 		return g3cryptoObject.DispatchMethod(member, args)
 	}
@@ -3866,6 +3873,9 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 		case strings.EqualFold(member, "CreateObject"):
 			if len(args) >= 1 {
 				progID := strings.TrimSpace(args[0].String())
+				if strings.EqualFold(progID, "G3SEARCH") {
+					return vm.newG3SearchObject()
+				}
 				if strings.EqualFold(progID, "G3MD") {
 					return vm.newG3MDObject()
 				}
@@ -4416,6 +4426,10 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 		return g3mdObject.DispatchPropertyGet(member)
 	}
 
+	if g3searchObject, exists := vm.g3searchItems[target.Num]; exists {
+		return g3searchObject.DispatchPropertyGet(member)
+	}
+
 	if g3testObject, exists := vm.g3testItems[target.Num]; exists {
 		return g3testObject.DispatchPropertyGet(member)
 	}
@@ -4817,6 +4831,11 @@ func (vm *VM) dispatchMemberSet(objID int64, member string, val Value) {
 		return
 	}
 
+	if g3searchObject, exists := vm.g3searchItems[objID]; exists {
+		g3searchObject.DispatchPropertySet(member, val)
+		return
+	}
+
 	if g3testObject, exists := vm.g3testItems[objID]; exists {
 		g3testObject.DispatchPropertySet(member, val)
 		return
@@ -4980,6 +4999,14 @@ func (vm *VM) newG3MDObject() Value {
 	objID := vm.nextDynamicNativeID
 	vm.nextDynamicNativeID++
 	vm.g3mdItems[objID] = NewG3MD()
+	return Value{Type: VTNativeObject, Num: objID}
+}
+
+// newG3SearchObject creates a native G3SEARCH object used by Server.CreateObject("G3SEARCH").
+func (vm *VM) newG3SearchObject() Value {
+	objID := vm.nextDynamicNativeID
+	vm.nextDynamicNativeID++
+	vm.g3searchItems[objID] = NewG3Search(vm)
 	return Value{Type: VTNativeObject, Num: objID}
 }
 
@@ -5374,6 +5401,9 @@ func (vm *VM) materializeStaticObjectFromMarker(marker string) Value {
 
 	if strings.EqualFold(progID, "G3MD") {
 		return vm.newG3MDObject()
+	}
+	if strings.EqualFold(progID, "G3SEARCH") {
+		return vm.newG3SearchObject()
 	}
 	if strings.EqualFold(progID, "G3TestSuite") || strings.EqualFold(progID, "G3Test") {
 		return vm.newG3TestObject()

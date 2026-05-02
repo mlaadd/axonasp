@@ -26,8 +26,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -41,6 +43,7 @@ const (
 	scriptCacheDependencyMapLimit = 1000
 	scriptCacheMagicSize          = 6
 	scriptCacheBinaryVersion      = uint16(6)
+	scriptCacheDebounceWindow     = 1000 * time.Millisecond
 )
 
 var scriptCacheMagic = [scriptCacheMagicSize]byte{'G', '3', 'A', 'X', 'O', 'N'}
@@ -368,23 +371,33 @@ func (p *cachedProgramBinaryPayload) Deserialize(reader io.Reader) error {
 
 // ScriptCache implements two-tier ASP bytecode caching and dependency invalidation.
 type ScriptCache struct {
-	mu                 sync.RWMutex
-	mode               BytecodeCacheMode
-	cacheDir           string
-	programs           map[string]CachedProgram
-	programSizes       map[string]int64
-	programOrder       []string
-	totalBytes         int64
-	maxBytes           int64
-	dependencyMap      map[string][]string
-	scriptDependencies map[string][]string
-	dependencyOrder    []string
-	watcher            *fsnotify.Watcher
-	watchRoots         []string
-	watchedDirs        map[string]struct{}
-	watchStop          chan struct{}
-	watcherActive      bool
-	watcherErrorCount  uint32
+	mu                  sync.RWMutex
+	mode                BytecodeCacheMode
+	cacheDir            string
+	programs            map[string]CachedProgram
+	programSizes        map[string]int64
+	programOrder        []string
+	totalBytes          int64
+	maxBytes            int64
+	dependencyMap       map[string][]string
+	scriptDependencies  map[string][]string
+	dependencyOrder     []string
+	inflightCompiles    map[string]*scriptCompileGate
+	watcher             *fsnotify.Watcher
+	watchRoots          []string
+	watchedPaths        map[string]struct{}
+	watchedExt          map[string]struct{}
+	watchDebounce       map[string]time.Time
+	watchDebounceWindow time.Duration
+	watchStop           chan struct{}
+	watcherActive       bool
+	watcherErrorCount   uint32
+}
+
+type scriptCompileGate struct {
+	done    chan struct{}
+	program CachedProgram
+	err     error
 }
 
 // NewScriptCache builds one cache instance with mode and memory limit settings.
@@ -396,17 +409,42 @@ func NewScriptCache(mode BytecodeCacheMode, cacheDir string, maxSizeMB int) *Scr
 		cacheDir = filepath.Join("temp", "cache")
 	}
 	return &ScriptCache{
-		mode:               mode,
-		cacheDir:           cacheDir,
-		programs:           make(map[string]CachedProgram),
-		programSizes:       make(map[string]int64),
-		programOrder:       make([]string, 0, 64),
-		dependencyMap:      make(map[string][]string),
-		scriptDependencies: make(map[string][]string),
-		dependencyOrder:    make([]string, 0, 256),
-		watchedDirs:        make(map[string]struct{}),
-		maxBytes:           int64(maxSizeMB) * 1024 * 1024,
+		mode:                mode,
+		cacheDir:            cacheDir,
+		programs:            make(map[string]CachedProgram),
+		programSizes:        make(map[string]int64),
+		programOrder:        make([]string, 0, 64),
+		dependencyMap:       make(map[string][]string),
+		scriptDependencies:  make(map[string][]string),
+		dependencyOrder:     make([]string, 0, 256),
+		inflightCompiles:    make(map[string]*scriptCompileGate),
+		watchedPaths:        make(map[string]struct{}),
+		watchedExt:          defaultScriptWatchExtensions(),
+		watchDebounce:       make(map[string]time.Time, 128),
+		watchDebounceWindow: scriptCacheDebounceWindow,
+		maxBytes:            int64(maxSizeMB) * 1024 * 1024,
 	}
+}
+
+// SetWatchedExtensions configures extra file extensions treated as ASP scripts by the invalidator.
+func (c *ScriptCache) SetWatchedExtensions(extensions []string) {
+	if c == nil {
+		return
+	}
+	updated := defaultScriptWatchExtensions()
+	for _, ext := range extensions {
+		normalized := strings.ToLower(strings.TrimSpace(ext))
+		if normalized == "" {
+			continue
+		}
+		if !strings.HasPrefix(normalized, ".") {
+			normalized = "." + normalized
+		}
+		updated[normalized] = struct{}{}
+	}
+	c.mu.Lock()
+	c.watchedExt = updated
+	c.mu.Unlock()
 }
 
 // Mode returns the current cache tier mode.
@@ -490,10 +528,15 @@ func (c *ScriptCache) StartInvalidator(rootDirs []string) error {
 	}
 
 	c.mu.Lock()
-	if c.watchedDirs == nil {
-		c.watchedDirs = make(map[string]struct{}, 256)
+	if c.watchedPaths == nil {
+		c.watchedPaths = make(map[string]struct{}, 256)
 	} else {
-		clear(c.watchedDirs)
+		clear(c.watchedPaths)
+	}
+	if c.watchDebounce == nil {
+		c.watchDebounce = make(map[string]time.Time, 128)
+	} else {
+		clear(c.watchDebounce)
 	}
 	c.mu.Unlock()
 
@@ -535,19 +578,19 @@ func (c *ScriptCache) StartInvalidator(rootDirs []string) error {
 				if !ok {
 					return
 				}
-				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) == 0 {
+				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove) == 0 {
+					continue
+				}
+				if !c.shouldWatchScriptPath(event.Name) {
 					continue
 				}
 				if event.Op&fsnotify.Create != 0 {
-					info, statErr := os.Stat(event.Name)
-					if statErr == nil && info.IsDir() {
-						_ = c.addWatchRecursiveTracked(watcher, event.Name)
-					}
+					_ = c.addWatchPathTracked(watcher, event.Name)
 				}
-				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-					c.removeWatchPathTracked(watcher, event.Name, true)
+				if event.Op&fsnotify.Remove != 0 {
+					c.removeWatchPathTracked(watcher, event.Name, false)
 				}
-				if !shouldInvalidatePath(event.Name) {
+				if !c.shouldProcessWatchEvent(event.Name) {
 					continue
 				}
 				c.Invalidate(event.Name)
@@ -582,8 +625,11 @@ func (c *ScriptCache) StopInvalidator() {
 	watcher := c.watcher
 	c.watcher = nil
 	c.watchRoots = nil
-	if c.watchedDirs != nil {
-		clear(c.watchedDirs)
+	if c.watchedPaths != nil {
+		clear(c.watchedPaths)
+	}
+	if c.watchDebounce != nil {
+		clear(c.watchDebounce)
 	}
 	c.mu.Unlock()
 	if watcher != nil {
@@ -620,14 +666,7 @@ func (c *ScriptCache) Get(filePath string) (CachedProgram, bool) {
 	if err != nil {
 		return CachedProgram{}, false
 	}
-
-	c.mu.RLock()
-	program, ok := c.programs[normalized]
-	c.mu.RUnlock()
-	if !ok {
-		return CachedProgram{}, false
-	}
-	return immutableCachedProgramView(program), true
+	return c.getByCacheKey(normalizeScriptCacheKey(normalized))
 }
 
 // Put stores one compiled program in memory cache and dependency map.
@@ -639,32 +678,14 @@ func (c *ScriptCache) Put(filePath string, program CachedProgram, dependencies [
 	if err != nil {
 		return
 	}
+	cacheKey := normalizeScriptCacheKey(normalized)
 
 	program = immutableCachedProgramView(program)
 	sizeBytes := estimateProgramSizeBytes(program)
 	if sizeBytes <= 0 {
 		return
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if sizeBytes > c.maxBytes {
-		c.removeProgramNoLock(normalized)
-		c.removeScriptDependenciesNoLock(normalized)
-		return
-	}
-
-	c.removeProgramNoLock(normalized)
-	for c.totalBytes+sizeBytes > c.maxBytes && len(c.programOrder) > 0 {
-		victim := c.programOrder[0]
-		c.removeProgramNoLock(victim)
-	}
-
-	c.programs[normalized] = program
-	c.programSizes[normalized] = sizeBytes
-	c.programOrder = append(c.programOrder, normalized)
-	c.totalBytes += sizeBytes
-	c.registerDependenciesNoLock(normalized, dependencies)
+	c.putByCacheKey(cacheKey, program, dependencies, sizeBytes)
 }
 
 // Invalidate removes one script and all dependent scripts from memory cache.
@@ -676,15 +697,16 @@ func (c *ScriptCache) Invalidate(filePath string) {
 	if err != nil {
 		return
 	}
+	cacheKey := normalizeScriptCacheKey(normalized)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	invalidateList := make([]string, 0, 16)
 	invalidateSet := make(map[string]struct{}, 16)
-	invalidateSet[normalized] = struct{}{}
-	invalidateList = append(invalidateList, normalized)
-	if dependents, exists := c.dependencyMap[normalized]; exists {
+	invalidateSet[cacheKey] = struct{}{}
+	invalidateList = append(invalidateList, cacheKey)
+	if dependents, exists := c.dependencyMap[cacheKey]; exists {
 		for _, dependent := range dependents {
 			if _, seen := invalidateSet[dependent]; seen {
 				continue
@@ -715,57 +737,83 @@ func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode)
 	if err != nil {
 		return CachedProgram{}, err
 	}
+	cacheKey := normalizeScriptCacheKey(normalized)
 
 	// If in interactive mode, bypass cache entirely to prevent stalls
 	if mode != ExecutionModeServer {
 		return c.compileOnly(normalized)
 	}
 
-	if c != nil && c.mode.HasMemoryTier() {
-		if program, found := c.Get(normalized); found {
-			return program, nil
+	if program, found := c.getByCacheKey(cacheKey); found {
+		return program, nil
+	}
+
+	if c == nil {
+		return c.compileOnly(normalized)
+	}
+
+	gate, owner := c.acquireCompileGate(cacheKey)
+	if !owner {
+		<-gate.done
+		if gate.err != nil {
+			return CachedProgram{}, gate.err
 		}
+		return immutableCachedProgramView(gate.program), nil
+	}
+
+	var result CachedProgram
+	var compileErr error
+	defer c.releaseCompileGate(cacheKey, gate, result, compileErr)
+
+	if program, found := c.getByCacheKey(cacheKey); found {
+		result = program
+		return result, nil
 	}
 
 	sourceInfo, err := os.Stat(normalized)
 	if err != nil {
-		return CachedProgram{}, err
+		compileErr = err
+		return CachedProgram{}, compileErr
 	}
 
-	if c != nil && c.mode.HasDiskTier() {
+	if c.mode.HasDiskTier() {
 		if program, found := c.loadDiskProgram(normalized, sourceInfo); found {
 			if c.mode.HasMemoryTier() {
-				c.Put(normalized, program, program.IncludeDependencies)
+				c.putByCacheKey(cacheKey, program, program.IncludeDependencies, estimateProgramSizeBytes(program))
 			}
-			return program, nil
+			result = program
+			return result, nil
 		}
 	}
 
 	content, err := os.ReadFile(normalized)
 	if err != nil {
-		return CachedProgram{}, err
+		compileErr = err
+		return CachedProgram{}, compileErr
 	}
 
 	// Strip UTF-8 BOM if present to prevent parsing errors
 	content = stripUTF8BOM(content)
 
 	compiler := NewASPCompiler(string(content))
-	compiler.SetSourceName(normalized)
+	compiler.SetSourceName(cacheKey)
 	if err := compiler.Compile(); err != nil {
-		return CachedProgram{}, err
+		compileErr = err
+		return CachedProgram{}, compileErr
 	}
 
 	program := buildCachedProgramFromCompiler(compiler)
 
-	if c != nil && c.mode.HasDiskTier() {
+	if c.mode.HasDiskTier() {
 		if storeErr := c.storeDiskProgram(normalized, sourceInfo.ModTime(), program); storeErr != nil {
-			return CachedProgram{}, fmt.Errorf("failed to persist bytecode cache to disk for %s: %w", normalized, storeErr)
+			log.Printf("Warning: failed to persist bytecode cache to disk for %s: %v", normalized, storeErr)
 		}
 	}
-	if c != nil && c.mode.HasMemoryTier() {
-		c.Put(normalized, program, program.IncludeDependencies)
+	if c.mode.HasMemoryTier() {
+		c.putByCacheKey(cacheKey, program, program.IncludeDependencies, estimateProgramSizeBytes(program))
 	}
-	return program, nil
+	result = immutableCachedProgramView(program)
+	return result, nil
 }
 
 // compileOnly compiles a script without using any cache layer.
@@ -825,6 +873,14 @@ func (c *ScriptCache) loadDiskProgram(filePath string, sourceInfo os.FileInfo) (
 	if !c.dependenciesFresh(payload.Program.IncludeDependencies, payload.ModTime) {
 		return CachedProgram{}, false
 	}
+	payload.Program.SourceName = normalizeScriptCacheKey(filePath)
+	payload.Program.ProgramHash = computeProgramHash(
+		payload.Program.Bytecode,
+		payload.Program.GlobalCount,
+		payload.Program.OptionCompare,
+		payload.Program.OptionExplicit,
+		payload.Program.SourceName,
+	)
 	return immutableCachedProgramView(payload.Program), true
 }
 
@@ -897,7 +953,7 @@ func (c *ScriptCache) normalizeAbsolutePath(filePath string) (string, error) {
 }
 
 func (c *ScriptCache) cacheFilePath(filePath string) string {
-	hash := xxhash.Sum64String(filePath)
+	hash := xxhash.Sum64String(normalizeScriptCacheKey(filePath))
 	return filepath.Join(c.cacheDir, fmt.Sprintf("%016x.aspb", hash))
 }
 
@@ -933,6 +989,14 @@ func (c *ScriptCache) dependenciesFresh(dependencies []string, compiledUnix int6
 	return true
 }
 
+func normalizeScriptCacheKey(filePath string) string {
+	normalized := filepath.Clean(strings.TrimSpace(filePath))
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(normalized)
+	}
+	return normalized
+}
+
 func sourceHasIncludeDirective(filePath string) bool {
 	content, err := os.ReadFile(filePath)
 	if err != nil || len(content) == 0 {
@@ -957,6 +1021,7 @@ func (c *ScriptCache) registerDependenciesNoLock(scriptPath string, dependencies
 		if err != nil || normalized == "" {
 			continue
 		}
+		normalized = normalizeScriptCacheKey(normalized)
 		if _, exists := seen[normalized]; exists {
 			continue
 		}
@@ -1039,17 +1104,23 @@ func (c *ScriptCache) addWatchRecursiveTracked(watcher *fsnotify.Watcher, rootDi
 		return err
 	}
 	if !info.IsDir() {
+		if c.shouldWatchScriptPath(rootDir) {
+			return c.addWatchPathTracked(watcher, rootDir)
+		}
 		return nil
 	}
 	return filepath.WalkDir(rootDir, func(path string, dirEntry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
-		if !dirEntry.IsDir() {
+		if dirEntry.IsDir() {
+			if shouldSkipScriptWatchDir(path, dirEntry.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		if strings.EqualFold(dirEntry.Name(), "node_modules") || strings.EqualFold(dirEntry.Name(), ".git") {
-			return filepath.SkipDir
+		if !c.shouldWatchScriptPath(path) {
+			return nil
 		}
 		return c.addWatchPathTracked(watcher, path)
 	})
@@ -1063,9 +1134,10 @@ func (c *ScriptCache) addWatchPathTracked(watcher *fsnotify.Watcher, path string
 	if err != nil {
 		return err
 	}
+	normalized = normalizeScriptCacheKey(normalized)
 
 	c.mu.RLock()
-	_, exists := c.watchedDirs[normalized]
+	_, exists := c.watchedPaths[normalized]
 	c.mu.RUnlock()
 	if exists {
 		return nil
@@ -1078,10 +1150,10 @@ func (c *ScriptCache) addWatchPathTracked(watcher *fsnotify.Watcher, path string
 	}
 
 	c.mu.Lock()
-	if c.watchedDirs == nil {
-		c.watchedDirs = make(map[string]struct{}, 256)
+	if c.watchedPaths == nil {
+		c.watchedPaths = make(map[string]struct{}, 256)
 	}
-	c.watchedDirs[normalized] = struct{}{}
+	c.watchedPaths[normalized] = struct{}{}
 	c.mu.Unlock()
 	return nil
 }
@@ -1094,10 +1166,11 @@ func (c *ScriptCache) removeWatchPathTracked(watcher *fsnotify.Watcher, path str
 	if err != nil {
 		return
 	}
+	normalized = normalizeScriptCacheKey(normalized)
 
 	removals := make([]string, 0, 8)
 	c.mu.RLock()
-	for watchedPath := range c.watchedDirs {
+	for watchedPath := range c.watchedPaths {
 		if strings.EqualFold(watchedPath, normalized) || (includeChildren && pathHasPrefixFold(watchedPath, normalized)) {
 			removals = append(removals, watchedPath)
 		}
@@ -1107,7 +1180,7 @@ func (c *ScriptCache) removeWatchPathTracked(watcher *fsnotify.Watcher, path str
 	for _, watchedPath := range removals {
 		_ = watcher.Remove(watchedPath)
 		c.mu.Lock()
-		delete(c.watchedDirs, watchedPath)
+		delete(c.watchedPaths, watchedPath)
 		c.mu.Unlock()
 	}
 }
@@ -1118,9 +1191,9 @@ func (c *ScriptCache) pruneStaleWatches(watcher *fsnotify.Watcher) {
 	}
 	stale := make([]string, 0, 16)
 	c.mu.RLock()
-	for watchedPath := range c.watchedDirs {
-		info, err := os.Stat(watchedPath)
-		if err != nil || !info.IsDir() {
+	for watchedPath := range c.watchedPaths {
+		_, err := os.Stat(watchedPath)
+		if err != nil {
 			stale = append(stale, watchedPath)
 		}
 	}
@@ -1129,7 +1202,7 @@ func (c *ScriptCache) pruneStaleWatches(watcher *fsnotify.Watcher) {
 	for _, watchedPath := range stale {
 		_ = watcher.Remove(watchedPath)
 		c.mu.Lock()
-		delete(c.watchedDirs, watchedPath)
+		delete(c.watchedPaths, watchedPath)
 		c.mu.Unlock()
 	}
 }
@@ -1160,9 +1233,148 @@ func pathHasPrefixFold(path string, prefix string) bool {
 	return strings.HasPrefix(pathLower, prefixLower)
 }
 
-func shouldInvalidatePath(path string) bool {
+func defaultScriptWatchExtensions() map[string]struct{} {
+	return map[string]struct{}{
+		".asp": {},
+		".inc": {},
+		".asa": {},
+	}
+}
+
+func shouldSkipScriptWatchDir(path string, dirName string) bool {
+	if strings.EqualFold(dirName, ".git") || strings.EqualFold(dirName, "node_modules") {
+		return true
+	}
+	if strings.EqualFold(dirName, "temp") {
+		return true
+	}
+	if strings.EqualFold(dirName, "logs") {
+		return true
+	}
+	if strings.EqualFold(dirName, "log") {
+		return true
+	}
+	_ = path
+	return false
+}
+
+func (c *ScriptCache) shouldWatchScriptPath(path string) bool {
+	if c == nil {
+		return false
+	}
 	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".asp" || ext == ".inc"
+	if ext == "" {
+		return false
+	}
+	c.mu.RLock()
+	_, ok := c.watchedExt[ext]
+	c.mu.RUnlock()
+	return ok
+}
+
+func (c *ScriptCache) shouldProcessWatchEvent(path string) bool {
+	if c == nil {
+		return false
+	}
+	key := normalizeScriptCacheKey(path)
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.watchDebounce == nil {
+		c.watchDebounce = make(map[string]time.Time, 128)
+	}
+	if c.watchDebounceWindow <= 0 {
+		c.watchDebounceWindow = scriptCacheDebounceWindow
+	}
+	if last, ok := c.watchDebounce[key]; ok {
+		if now.Sub(last) < c.watchDebounceWindow {
+			return false
+		}
+	}
+	c.watchDebounce[key] = now
+	if len(c.watchDebounce) > 4096 {
+		cutoff := now.Add(-4 * c.watchDebounceWindow)
+		for watchedKey, ts := range c.watchDebounce {
+			if ts.Before(cutoff) {
+				delete(c.watchDebounce, watchedKey)
+			}
+		}
+	}
+	return true
+}
+
+func (c *ScriptCache) getByCacheKey(cacheKey string) (CachedProgram, bool) {
+	if c == nil || !c.mode.HasMemoryTier() {
+		return CachedProgram{}, false
+	}
+	c.mu.RLock()
+	program, ok := c.programs[cacheKey]
+	c.mu.RUnlock()
+	if !ok {
+		return CachedProgram{}, false
+	}
+	return immutableCachedProgramView(program), true
+}
+
+func (c *ScriptCache) putByCacheKey(cacheKey string, program CachedProgram, dependencies []string, sizeBytes int64) {
+	if c == nil || !c.mode.HasMemoryTier() {
+		return
+	}
+	if sizeBytes <= 0 {
+		sizeBytes = estimateProgramSizeBytes(program)
+		if sizeBytes <= 0 {
+			return
+		}
+	}
+	program = immutableCachedProgramView(program)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if sizeBytes > c.maxBytes {
+		c.removeProgramNoLock(cacheKey)
+		c.removeScriptDependenciesNoLock(cacheKey)
+		return
+	}
+
+	c.removeProgramNoLock(cacheKey)
+	for c.totalBytes+sizeBytes > c.maxBytes && len(c.programOrder) > 0 {
+		victim := c.programOrder[0]
+		c.removeProgramNoLock(victim)
+	}
+
+	c.programs[cacheKey] = program
+	c.programSizes[cacheKey] = sizeBytes
+	c.programOrder = append(c.programOrder, cacheKey)
+	c.totalBytes += sizeBytes
+	c.registerDependenciesNoLock(cacheKey, dependencies)
+}
+
+func (c *ScriptCache) acquireCompileGate(cacheKey string) (*scriptCompileGate, bool) {
+	if c == nil {
+		return nil, true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inflightCompiles == nil {
+		c.inflightCompiles = make(map[string]*scriptCompileGate)
+	}
+	if gate, exists := c.inflightCompiles[cacheKey]; exists {
+		return gate, false
+	}
+	gate := &scriptCompileGate{done: make(chan struct{})}
+	c.inflightCompiles[cacheKey] = gate
+	return gate, true
+}
+
+func (c *ScriptCache) releaseCompileGate(cacheKey string, gate *scriptCompileGate, program CachedProgram, err error) {
+	if c == nil || gate == nil {
+		return
+	}
+	c.mu.Lock()
+	gate.program = immutableCachedProgramView(program)
+	gate.err = err
+	close(gate.done)
+	delete(c.inflightCompiles, cacheKey)
+	c.mu.Unlock()
 }
 
 func containsFold(values []string, target string) bool {

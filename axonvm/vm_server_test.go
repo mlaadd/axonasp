@@ -255,6 +255,105 @@ func TestVMServerG3MDProcess(t *testing.T) {
 	}
 }
 
+// TestVMServerCreateObjectG3Search verifies CreateObject and property dispatch for G3SEARCH.
+func TestVMServerCreateObjectG3Search(t *testing.T) {
+	vm := NewVM(nil, nil, 5)
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	obj := vm.dispatchNativeCall(nativeObjectServer, "CreateObject", []Value{NewString("G3SEARCH")})
+	if obj.Type != VTNativeObject {
+		t.Fatalf("expected VTNativeObject, got %#v", obj)
+	}
+
+	defaultExtension := vm.dispatchMemberGet(obj, "Extension")
+	if defaultExtension.Type != VTString || defaultExtension.Str != ".md" {
+		t.Fatalf("unexpected default Extension value: %#v", defaultExtension)
+	}
+
+	vm.dispatchMemberSet(obj.Num, "IndexPath", NewString("temp/g3search.index"))
+	vm.dispatchMemberSet(obj.Num, "DocsPath", NewString("www/manual/md"))
+	vm.dispatchMemberSet(obj.Num, "Extension", NewString("txt"))
+
+	indexPath := vm.dispatchMemberGet(obj, "IndexPath")
+	docsPath := vm.dispatchMemberGet(obj, "DocsPath")
+	extension := vm.dispatchMemberGet(obj, "Extension")
+
+	if indexPath.Type != VTString || indexPath.Str != "temp/g3search.index" {
+		t.Fatalf("unexpected IndexPath value: %#v", indexPath)
+	}
+	if docsPath.Type != VTString || docsPath.Str != "www/manual/md" {
+		t.Fatalf("unexpected DocsPath value: %#v", docsPath)
+	}
+	if extension.Type != VTString || extension.Str != ".txt" {
+		t.Fatalf("unexpected Extension value: %#v", extension)
+	}
+}
+
+// TestVMServerG3SearchBuildAndSearch verifies index build and Search return shape.
+func TestVMServerG3SearchBuildAndSearch(t *testing.T) {
+	vm := NewVM(nil, nil, 5)
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	obj := vm.dispatchNativeCall(nativeObjectServer, "CreateObject", []Value{NewString("G3SEARCH")})
+	if obj.Type != VTNativeObject {
+		t.Fatalf("expected VTNativeObject, got %#v", obj)
+	}
+
+	docsDir := filepath.Join(t.TempDir(), "docs")
+	indexDir := filepath.Join(t.TempDir(), "index")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs dir failed: %v", err)
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatalf("mkdir index dir failed: %v", err)
+	}
+
+	content := []byte("AxonASP search validation content")
+	filePath := filepath.Join(docsDir, "guide.md")
+	if err := os.WriteFile(filePath, content, 0o644); err != nil {
+		t.Fatalf("write docs file failed: %v", err)
+	}
+
+	vm.dispatchMemberSet(obj.Num, "DocsPath", NewString(docsDir))
+	vm.dispatchMemberSet(obj.Num, "IndexPath", NewString(indexDir))
+	vm.dispatchMemberSet(obj.Num, "Extension", NewString(".md"))
+
+	_ = vm.dispatchNativeCall(obj.Num, "BuildIndex", nil)
+	if vm.lastError != nil {
+		t.Fatalf("BuildIndex produced unexpected error: %v", vm.lastError)
+	}
+
+	results := vm.dispatchNativeCall(obj.Num, "Search", []Value{NewString("AxonASP")})
+	if results.Type != VTArray || results.Arr == nil {
+		t.Fatalf("expected VTArray result, got %#v", results)
+	}
+	if len(results.Arr.Values) == 0 {
+		t.Fatalf("expected at least one result row, got %#v", results)
+	}
+
+	firstRow := results.Arr.Values[0]
+	if firstRow.Type != VTArray || firstRow.Arr == nil {
+		t.Fatalf("expected first result row as VTArray, got %#v", firstRow)
+	}
+	if len(firstRow.Arr.Values) != 2 {
+		t.Fatalf("expected [filename, score] tuple, got %#v", firstRow.Arr.Values)
+	}
+
+	if firstRow.Arr.Values[0].Type != VTString || firstRow.Arr.Values[0].Str == "" {
+		t.Fatalf("expected first tuple item as filename string, got %#v", firstRow.Arr.Values[0])
+	}
+	if firstRow.Arr.Values[1].Type != VTDouble {
+		t.Fatalf("expected second tuple item as score double, got %#v", firstRow.Arr.Values[1])
+	}
+
+	// Ensure test temp directories can be removed on Windows by releasing the shared reader.
+	globalReaderMutex.Lock()
+	_ = closeGlobalReaderLocked()
+	globalReaderMutex.Unlock()
+}
+
 // TestVMServerCreateObjectG3Crypto verifies CreateObject aliases for G3Crypto.
 func TestVMServerCreateObjectG3Crypto(t *testing.T) {
 	vm := NewVM(nil, nil, 5)

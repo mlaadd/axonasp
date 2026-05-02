@@ -158,6 +158,13 @@ const (
 	ErrG3DBStatementClosed       AxonASPErrorCode = 9014
 	ErrG3DBTransactionClosed     AxonASPErrorCode = 9015
 	ErrG3DBMissingConfigKeys     AxonASPErrorCode = 9016
+
+	// G3SEARCH native search library errors (9020-9024).
+	ErrG3SearchDocsPathMissing  AxonASPErrorCode = 9020
+	ErrG3SearchIndexPathMissing AxonASPErrorCode = 9021
+	ErrG3SearchIndexOpenFailed  AxonASPErrorCode = 9022
+	ErrG3SearchIndexWriteFailed AxonASPErrorCode = 9023
+	ErrG3SearchSearchFailed     AxonASPErrorCode = 9024
 )
 
 var AxonASPErrorMessages = map[AxonASPErrorCode]string{
@@ -296,6 +303,13 @@ var AxonASPErrorMessages = map[AxonASPErrorCode]string{
 	ErrG3DBStatementClosed:       "G3DB: prepared statement is already closed",
 	ErrG3DBTransactionClosed:     "G3DB: transaction is already closed",
 	ErrG3DBMissingConfigKeys:     "G3DB.OpenFromEnv: missing or incomplete configuration keys in axonasp.toml",
+
+	// G3SEARCH native search library
+	ErrG3SearchDocsPathMissing:  "G3SEARCH.BuildIndex: DocsPath is required",
+	ErrG3SearchIndexPathMissing: "G3SEARCH: IndexPath is required",
+	ErrG3SearchIndexOpenFailed:  "G3SEARCH: failed to open index",
+	ErrG3SearchIndexWriteFailed: "G3SEARCH: failed to write index",
+	ErrG3SearchSearchFailed:     "G3SEARCH: search execution failed",
 }
 
 func (e AxonASPErrorCode) String() string {

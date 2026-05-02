@@ -24,6 +24,8 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -248,6 +250,14 @@ func TestScriptCacheAddWatchRecursiveTrackedDeduplicatesDirectories(t *testing.T
 	if err := os.MkdirAll(nestedB, 0o755); err != nil {
 		t.Fatalf("mkdir nested directories: %v", err)
 	}
+	aspFile := filepath.Join(nestedB, "default.asp")
+	if err := os.WriteFile(aspFile, []byte("<% Response.Write 1 %>"), 0o644); err != nil {
+		t.Fatalf("write asp file: %v", err)
+	}
+	txtFile := filepath.Join(nestedB, "notes.txt")
+	if err := os.WriteFile(txtFile, []byte("ignore"), 0o644); err != nil {
+		t.Fatalf("write txt file: %v", err)
+	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -258,15 +268,15 @@ func TestScriptCacheAddWatchRecursiveTrackedDeduplicatesDirectories(t *testing.T
 	if err := cache.addWatchRecursiveTracked(watcher, root); err != nil {
 		t.Fatalf("add recursive watch first pass: %v", err)
 	}
-	countFirst := len(cache.watchedDirs)
-	if countFirst != 3 {
-		t.Fatalf("expected 3 watched directories after first pass, got %d", countFirst)
+	countFirst := len(cache.watchedPaths)
+	if countFirst != 1 {
+		t.Fatalf("expected 1 watched script file after first pass, got %d", countFirst)
 	}
 
 	if err := cache.addWatchRecursiveTracked(watcher, root); err != nil {
 		t.Fatalf("add recursive watch second pass: %v", err)
 	}
-	countSecond := len(cache.watchedDirs)
+	countSecond := len(cache.watchedPaths)
 	if countSecond != countFirst {
 		t.Fatalf("expected deduplicated watch count to remain %d, got %d", countFirst, countSecond)
 	}
@@ -275,9 +285,12 @@ func TestScriptCacheAddWatchRecursiveTrackedDeduplicatesDirectories(t *testing.T
 func TestScriptCachePruneStaleWatchesRemovesDeletedDirectories(t *testing.T) {
 	cache := NewScriptCache(BytecodeCacheMemoryOnly, t.TempDir(), 8)
 	root := t.TempDir()
-	nestedA := filepath.Join(root, "nested")
-	if err := os.MkdirAll(nestedA, 0o755); err != nil {
-		t.Fatalf("mkdir nested directory: %v", err)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root directory: %v", err)
+	}
+	aspFile := filepath.Join(root, "watched.asp")
+	if err := os.WriteFile(aspFile, []byte("<% Response.Write 1 %>"), 0o644); err != nil {
+		t.Fatalf("write asp file: %v", err)
 	}
 
 	watcher, err := fsnotify.NewWatcher()
@@ -290,21 +303,70 @@ func TestScriptCachePruneStaleWatchesRemovesDeletedDirectories(t *testing.T) {
 		t.Fatalf("add recursive watch: %v", err)
 	}
 
-	normalizedNestedA, err := cache.normalizeAbsolutePath(nestedA)
+	normalizedASP, err := cache.normalizeAbsolutePath(aspFile)
 	if err != nil {
-		t.Fatalf("normalize nested directory: %v", err)
+		t.Fatalf("normalize asp file: %v", err)
 	}
-	if _, exists := cache.watchedDirs[normalizedNestedA]; !exists {
-		t.Fatalf("expected nested directory to be tracked before deletion")
+	normalizedASP = normalizeScriptCacheKey(normalizedASP)
+	if _, exists := cache.watchedPaths[normalizedASP]; !exists {
+		t.Fatalf("expected asp file to be tracked before deletion")
 	}
 
-	if err := os.RemoveAll(nestedA); err != nil {
-		t.Fatalf("remove nested directory: %v", err)
+	if err := os.Remove(aspFile); err != nil {
+		t.Fatalf("remove asp file: %v", err)
 	}
 
 	cache.pruneStaleWatches(watcher)
 
-	if _, exists := cache.watchedDirs[normalizedNestedA]; exists {
-		t.Fatalf("expected deleted nested directory watch to be pruned")
+	if _, exists := cache.watchedPaths[normalizedASP]; exists {
+		t.Fatalf("expected deleted script watch to be pruned")
+	}
+}
+
+func TestScriptCacheLoadOrCompileFallsBackToMemoryWhenDiskPersistFails(t *testing.T) {
+	workspace := t.TempDir()
+	cacheDirFile := filepath.Join(workspace, "cache-as-file")
+	if err := os.WriteFile(cacheDirFile, []byte("not-a-dir"), 0o644); err != nil {
+		t.Fatalf("write cache directory placeholder file: %v", err)
+	}
+
+	sourcePath := filepath.Join(workspace, "default.asp")
+	if err := os.WriteFile(sourcePath, []byte("<% Response.Write 1 %>"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	cache := NewScriptCache(BytecodeCacheEnabled, cacheDirFile, 8)
+	first, err := cache.LoadOrCompile(sourcePath)
+	if err != nil {
+		t.Fatalf("first compile should succeed even when disk persist fails: %v", err)
+	}
+	if len(first.Bytecode) == 0 {
+		t.Fatalf("expected compiled bytecode in first result")
+	}
+
+	if err := os.Remove(sourcePath); err != nil {
+		t.Fatalf("remove source file: %v", err)
+	}
+
+	second, err := cache.LoadOrCompile(sourcePath)
+	if err != nil {
+		t.Fatalf("second compile should hit memory cache even with missing source file: %v", err)
+	}
+	if len(second.Bytecode) == 0 {
+		t.Fatalf("expected memory-cached bytecode in second result")
+	}
+}
+
+func TestScriptCacheNormalizeScriptCacheKeyWindowsCompatibility(t *testing.T) {
+	mixed := filepath.Clean("C:/WWW/Index.ASP")
+	normalized := normalizeScriptCacheKey(mixed)
+	if runtime.GOOS == "windows" {
+		if normalized != strings.ToLower(mixed) {
+			t.Fatalf("expected lowercased windows cache key, got %q want %q", normalized, strings.ToLower(mixed))
+		}
+		return
+	}
+	if normalized != mixed {
+		t.Fatalf("expected non-windows cache key to preserve case, got %q want %q", normalized, mixed)
 	}
 }
