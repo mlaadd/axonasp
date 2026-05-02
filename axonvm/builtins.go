@@ -1043,9 +1043,36 @@ func vbsAxonRedimPreserveArray(args []Value) (Value, error) {
 		bounds = append(bounds, bound)
 	}
 
-	resized := buildDimArray(bounds)
 	if existing, ok := toVBArray(args[0]); ok {
 		existingBounds := vbArrayUpperBounds(existing)
+		// Optimization: O(log N) allocations for 1D arrays by leveraging slice capacity.
+		if len(existingBounds) == 1 && len(bounds) == 1 {
+			newSize := bounds[0] + 1
+			if newSize < 0 {
+				newSize = 0
+			}
+
+			var newValues []Value
+			if newSize <= cap(existing.Values) {
+				// Reuse backing array capacity if sufficient.
+				newValues = existing.Values[:newSize]
+				// Initialize new elements to Empty if growing.
+				if newSize > len(existing.Values) {
+					clear(newValues[len(existing.Values):])
+				}
+			} else {
+				// Grow with 2x capacity buffer to achieve amortized O(1) growth.
+				newCap := newSize
+				if newCap < cap(existing.Values)*2 {
+					newCap = cap(existing.Values) * 2
+				}
+				newValues = make([]Value, newSize, newCap)
+				copy(newValues, existing.Values)
+			}
+			return ValueFromVBArray(&VBArray{Lower: existing.Lower, Values: newValues}), nil
+		}
+
+		resized := buildDimArray(bounds)
 		if len(existingBounds) > 1 && len(bounds) == len(existingBounds) {
 			for index := 0; index < len(bounds)-1; index++ {
 				if bounds[index] != existingBounds[index] {
@@ -1054,9 +1081,10 @@ func vbsAxonRedimPreserveArray(args []Value) (Value, error) {
 			}
 		}
 		copyPreservedArray(resized, existing, bounds)
+		return ValueFromVBArray(resized), nil
 	}
 
-	return ValueFromVBArray(resized), nil
+	return ValueFromVBArray(buildDimArray(bounds)), nil
 }
 
 // vbsAxonEnumValues normalizes supported enumerable values into a zero-based array snapshot.

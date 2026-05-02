@@ -1171,7 +1171,7 @@ func fsoResolveFileTimes(info os.FileInfo) (time.Time, time.Time, time.Time) {
 
 // dispatchFSOFilePropertyGet resolves FSOFile property reads.
 func (vm *VM) dispatchFSOFilePropertyGet(obj *fsoNativeObject, member string) Value {
-	info, err := os.Stat(obj.path)
+	info, err := globalFSOCache.GetStat(obj.path)
 	if err != nil || info.IsDir() {
 		return Value{Type: VTEmpty}
 	}
@@ -1215,7 +1215,7 @@ func (vm *VM) dispatchFSOFilePropertyGet(obj *fsoNativeObject, member string) Va
 
 // dispatchFSOFolderPropertyGet resolves FSOFolder property reads.
 func (vm *VM) dispatchFSOFolderPropertyGet(obj *fsoNativeObject, member string) Value {
-	info, err := os.Stat(obj.path)
+	info, err := globalFSOCache.GetStat(obj.path)
 	if err != nil || !info.IsDir() {
 		return Value{Type: VTEmpty}
 	}
@@ -1304,7 +1304,7 @@ func (vm *VM) dispatchFSOFilesCollectionPropertyGet(obj *fsoNativeObject, member
 		return Value{Type: VTEmpty}
 	}
 
-	entries, err := os.ReadDir(obj.path)
+	entries, err := globalFSOCache.GetReadDir(obj.path)
 	if err != nil {
 		return NewInteger(0)
 	}
@@ -1325,7 +1325,7 @@ func (vm *VM) dispatchFSOSubFoldersCollectionPropertyGet(obj *fsoNativeObject, m
 		return Value{Type: VTEmpty}
 	}
 
-	entries, err := os.ReadDir(obj.path)
+	entries, err := globalFSOCache.GetReadDir(obj.path)
 	if err != nil {
 		return NewInteger(0)
 	}
