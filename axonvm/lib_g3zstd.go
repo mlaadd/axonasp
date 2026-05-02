@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	_ "runtime"
 	"strings"
 
 	"g3pix.com.br/axonasp/vbscript"
@@ -124,8 +125,10 @@ func (z *G3ZSTD) DispatchMethod(methodName string, args []Value) Value {
 		if z.decoder != nil {
 			z.decoder.Close()
 			z.decoder = nil
+
 		}
 		z.lastError = ""
+
 		return NewBool(true)
 	}
 	return NewEmpty()
@@ -247,7 +250,10 @@ func (z *G3ZSTD) methodCompressFile(sourcePath string, targetPath string, level 
 	}
 	defer output.Close()
 
-	writer, err := zstd.NewWriter(output, zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)))
+	writer, err := zstd.NewWriter(output,
+		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)),
+		zstd.WithEncoderConcurrency(1),
+	)
 	if err != nil {
 		z.raiseError("zstd compress writer failed", err)
 		return false
@@ -279,7 +285,7 @@ func (z *G3ZSTD) methodDecompressFile(sourcePath string, targetPath string) bool
 	}
 	defer input.Close()
 
-	decoder, err := zstd.NewReader(input)
+	decoder, err := zstd.NewReader(input, zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		z.raiseError("zstd decompress reader failed", err)
 		return false
@@ -318,7 +324,10 @@ func (z *G3ZSTD) encoderForLevel(level int) (*zstd.Encoder, bool) {
 		z.encoder.Close()
 		z.encoder = nil
 	}
-	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)))
+	enc, err := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(level)),
+		zstd.WithEncoderConcurrency(1),
+	)
 	if err != nil {
 		z.raiseError("zstd encoder init failed", err)
 		return nil, false
@@ -333,7 +342,7 @@ func (z *G3ZSTD) decoderObject() (*zstd.Decoder, bool) {
 	if z.decoder != nil {
 		return z.decoder, true
 	}
-	dec, err := zstd.NewReader(nil)
+	dec, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		z.raiseError("zstd decoder init failed", err)
 		return nil, false
@@ -375,4 +384,27 @@ func (z *G3ZSTD) raiseError(context string, err error) {
 	message := fmt.Sprintf("%s: %v", context, err)
 	z.lastError = message
 	z.vm.raise(vbscript.InternalError, message)
+}
+
+// cleanupG3ZSTDResources forcefully releases all zstd encoder/decoders at request end.
+func (vm *VM) cleanupG3ZSTDResources() {
+
+	if vm == nil || len(vm.g3zstdItems) == 0 {
+		return
+	}
+	for id, item := range vm.g3zstdItems {
+		if item != nil {
+			if item.encoder != nil {
+				item.encoder.Close()
+				item.encoder = nil
+			}
+			if item.decoder != nil {
+				item.decoder.Close()
+				item.decoder = nil
+			}
+		}
+		delete(vm.g3zstdItems, id)
+		delete(vm.nativeObjectProxies, id)
+
+	}
 }

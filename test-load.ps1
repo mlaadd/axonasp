@@ -1,7 +1,7 @@
 # Força o carregamento da biblioteca HTTP no PowerShell
 Add-Type -AssemblyName System.Net.Http
 
-$url = "http://localhost:8801/manual/"
+$url = "http://localhost:8801/tests/?file=test_g3zstd.asp"
 $totalRequests = 2000 # Ajuste o número de requisições simultâneas aqui
 
 Write-Host "Iniciando disparo de $totalRequests requisições simultâneas para $url..." -ForegroundColor Cyan

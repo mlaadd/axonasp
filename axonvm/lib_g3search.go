@@ -50,9 +50,6 @@ type G3Search struct {
 
 // NewG3Search creates a new G3Search object with default extension.
 func NewG3Search(vm *VM) *G3Search {
-	if vm != nil {
-		vm.raise(vbscript.InternalError, ErrInvalidConfig.String()+": g3search.g3search_enabled is false")
-	}
 
 	return &G3Search{
 		extension: ".md",
