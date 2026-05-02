@@ -42,7 +42,7 @@ import (
 const (
 	scriptCacheDependencyMapLimit = 1000
 	scriptCacheMagicSize          = 6
-	scriptCacheBinaryVersion      = uint16(6)
+	scriptCacheBinaryVersion      = uint16(7)
 	scriptCacheDebounceWindow     = 1000 * time.Millisecond
 )
 
@@ -99,6 +99,7 @@ type CachedProgram struct {
 	UserConstGlobals    []string
 	GlobalZeroArgFuncs  []string
 	ProgramHash         uint64
+	GlobalNamesLower    []string
 
 	// Legacy fields kept for backward compatibility with v2 cache payloads.
 	GlobalNames         []string
@@ -203,6 +204,9 @@ func (p *cachedProgramBinaryPayload) Serialize(writer io.Writer) error {
 		return err
 	}
 	if err := writeStringSlice(buffered, p.Program.GlobalZeroArgFuncs); err != nil {
+		return err
+	}
+	if err := writeStringSlice(buffered, p.Program.GlobalNamesLower); err != nil {
 		return err
 	}
 
@@ -352,6 +356,13 @@ func (p *cachedProgramBinaryPayload) Deserialize(reader io.Reader) error {
 				p.Program.GlobalZeroArgFuncs = zeroArgFuncs
 			} else {
 				p.Program.GlobalZeroArgFuncs = inferCachedProgramZeroArgFuncs(&p.Program)
+			}
+			if version >= 7 {
+				lower, err := readStringSlice(reader)
+				if err != nil {
+					return err
+				}
+				p.Program.GlobalNamesLower = lower
 			}
 		}
 	}
@@ -1549,6 +1560,7 @@ func cloneCachedProgram(program CachedProgram) CachedProgram {
 		UserConstGlobals:    cloneStringSlice(program.UserConstGlobals),
 		GlobalZeroArgFuncs:  cloneStringSlice(program.GlobalZeroArgFuncs),
 		ProgramHash:         program.ProgramHash,
+		GlobalNamesLower:    cloneStringSlice(program.GlobalNamesLower),
 		GlobalNames:         cloneStringSlice(program.GlobalNames),
 		DeclaredGlobalNames: cloneStringSlice(program.DeclaredGlobalNames),
 		ConstGlobalNames:    cloneStringSlice(program.ConstGlobalNames),
@@ -1606,6 +1618,7 @@ func immutableCachedProgramView(program CachedProgram) CachedProgram {
 	program.DeclaredGlobalNames = immutableStringView(program.DeclaredGlobalNames)
 	program.ConstGlobalNames = immutableStringView(program.ConstGlobalNames)
 	program.IncludeDependencies = immutableStringView(program.IncludeDependencies)
+	program.GlobalNamesLower = immutableStringView(program.GlobalNamesLower)
 
 	for i := range program.Constants {
 		program.Constants[i].Names = immutableStringView(program.Constants[i].Names)
@@ -1640,6 +1653,7 @@ func estimateProgramSizeBytes(program CachedProgram) int64 {
 	size += estimateStringSliceSize(program.UserConstGlobals)
 	size += estimateStringSliceSize(program.GlobalZeroArgFuncs)
 	size += estimateStringSliceSize(program.IncludeDependencies)
+	size += estimateStringSliceSize(program.GlobalNamesLower)
 	size += int64(len(program.SourceName))
 	if size < 1 {
 		return 1

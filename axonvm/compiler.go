@@ -27,7 +27,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync/atomic"
 
@@ -508,20 +507,55 @@ func (c *Compiler) emitInjectedConstantInitializers(constants []VBSConstant) {
 	}
 }
 
-var includeDirectivePattern = regexp.MustCompile(`(?is)<!--\s*#include\s+(virtual|file)\s*=\s*("([^"]+)"|'([^']+)')\s*-->`)
-
-// emptyASPBlockPattern matches empty ASP blocks that carry no executable code.
-// This is used as a lightweight preprocessor cleanup step before lexing.
-
-// var emptyASPBlockPattern = regexp.MustCompile(`(?is)<%=\s*%>|<%\s*%>|<%%>`)
-var emptyASPBlockPattern = regexp.MustCompile(`<%\s*=?\s*%>`)
-
 // stripEmptyASPBlocks removes empty ASP blocks that should not reach compilation.
+// Optimization: Uses manual scanning instead of regexp to avoid heap allocations.
 func stripEmptyASPBlocks(source string) string {
 	if source == "" {
 		return source
 	}
-	return emptyASPBlockPattern.ReplaceAllString(source, "")
+
+	var builder strings.Builder
+	builder.Grow(len(source))
+
+	cursor := 0
+	for {
+		start := strings.Index(source[cursor:], "<%")
+		if start == -1 {
+			builder.WriteString(source[cursor:])
+			break
+		}
+
+		absStart := cursor + start
+		builder.WriteString(source[cursor:absStart])
+
+		end := strings.Index(source[absStart:], "%>")
+		if end == -1 {
+			builder.WriteString(source[absStart:])
+			break
+		}
+
+		absEnd := absStart + end
+		content := source[absStart+2 : absEnd]
+
+		// Check if block is effectively empty (only whitespace and optional '=')
+		isEmpty := true
+		for i := 0; i < len(content); i++ {
+			c := content[i]
+			if c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '=' {
+				continue
+			}
+			isEmpty = false
+			break
+		}
+
+		if !isEmpty {
+			builder.WriteString(source[absStart : absEnd+2])
+		}
+
+		cursor = absEnd + 2
+	}
+
+	return builder.String()
 }
 
 // stripUTF8BOM removes UTF-8 BOM (EF BB BF) from byte slice if present.
@@ -534,6 +568,7 @@ func stripUTF8BOM(data []byte) []byte {
 }
 
 // preprocessASPIncludesWithDeps expands includes and optionally records resolved dependency files.
+// Optimization: Uses manual scanning instead of regexp to avoid heap allocations.
 func preprocessASPIncludesWithDeps(source string, sourceName string, visited map[string]bool, depth int, dependencies *[]string) (string, LineMap, error) {
 	if depth > 32 {
 		return "", nil, fmt.Errorf("include recursion limit exceeded")
@@ -542,25 +577,78 @@ func preprocessASPIncludesWithDeps(source string, sourceName string, visited map
 	processed := source
 	lineMap := buildIdentityLineMap(source, sourceName)
 	for {
-		match := includeDirectivePattern.FindStringSubmatchIndex(processed)
-		if match == nil {
+		// Manual scan for <!-- #include ... -->
+		startIdx := -1
+		endIdx := -1
+		kind := ""
+		pathVal := ""
+		directive := ""
+
+		cursor := 0
+		for {
+			idx := strings.Index(processed[cursor:], "<!--")
+			if idx == -1 {
+				break
+			}
+			absStart := cursor + idx
+
+			// Find closing tag
+			idxClose := strings.Index(processed[absStart:], "-->")
+			if idxClose == -1 {
+				cursor = absStart + 4
+				continue
+			}
+			absEnd := absStart + idxClose + 3
+
+			comment := processed[absStart:absEnd]
+			upperComment := strings.ToUpper(comment)
+
+			if strings.Contains(upperComment, "#INCLUDE") {
+				// Parse directive
+				kindIdx := -1
+				if strings.Contains(upperComment, "VIRTUAL") {
+					kind = "virtual"
+					kindIdx = strings.Index(upperComment, "VIRTUAL")
+				} else if strings.Contains(upperComment, "FILE") {
+					kind = "file"
+					kindIdx = strings.Index(upperComment, "FILE")
+				}
+
+				if kindIdx != -1 {
+					valPart := comment[kindIdx+len(kind):]
+					eqIdx := strings.Index(valPart, "=")
+					if eqIdx != -1 {
+						valPart = valPart[eqIdx+1:]
+						valPart = strings.TrimSpace(valPart)
+						if len(valPart) > 0 {
+							quote := valPart[0]
+							if quote == '"' || quote == '\'' {
+								valPart = valPart[1:]
+								quoteEndIdx := strings.IndexByte(valPart, quote)
+								if quoteEndIdx != -1 {
+									pathVal = valPart[:quoteEndIdx]
+									startIdx = absStart
+									endIdx = absEnd
+									directive = comment
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+			cursor = absStart + 4
+		}
+
+		if startIdx == -1 {
 			break
 		}
 
-		replaceStart := match[0]
-		replaceEnd := match[1]
-		if lineOnlyIncludeDirective(processed, match[0], match[1]) {
-			replaceStart = lineStartIndex(processed, match[0])
-			replaceEnd = lineEndIndexIncludingNewline(processed, match[1])
-		}
-
-		directive := processed[match[0]:match[1]]
-		kind := strings.ToLower(processed[match[2]:match[3]])
-		pathVal := ""
-		if match[6] != -1 && match[7] != -1 {
-			pathVal = processed[match[6]:match[7]]
-		} else if match[8] != -1 && match[9] != -1 {
-			pathVal = processed[match[8]:match[9]]
+		replaceStart := startIdx
+		replaceEnd := endIdx
+		if lineOnlyIncludeDirective(processed, startIdx, endIdx) {
+			replaceStart = lineStartIndex(processed, startIdx)
+			replaceEnd = lineEndIndexIncludingNewline(processed, endIdx)
 		}
 
 		resolvedPath, err := resolveIncludePath(sourceName, pathVal, kind == "virtual")

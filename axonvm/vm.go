@@ -411,13 +411,15 @@ type VM struct {
 	dynamicProgramStarts map[uint64]int  // Per-VM start offsets for already-appended cached dynamic fragments.
 	jsStringWorkBytes    int64           // Per-run cumulative bytes produced by JScript string operations.
 
-	baseBytecode            []byte
-	baseConstants           []Value
-	baseGlobals             []Value
-	baseOptionCompare       int
-	baseOptionExplicit      bool
-	baseGlobalNames         []string
-	baseGlobalNamesHash     uint64
+	baseBytecode         []byte
+	baseConstants        []Value
+	baseGlobals          []Value
+	baseOptionCompare    int
+	baseOptionExplicit   bool
+	baseGlobalNames      []string
+	baseGlobalNamesLower []string
+	baseGlobalNamesHash  uint64
+
 	baseGlobalZeroArgFuncs  map[string]bool
 	baseRuntimeClassVersion uint64
 	globalNameIndex         map[string]int

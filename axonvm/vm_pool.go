@@ -36,7 +36,7 @@ type vmProgramPool struct {
 }
 
 // vmProgramPool manages a pool of VM instances for a specific compiled program, allowing for efficient reuse and reduced allocation overhead. This limit can be changed in axonasp.toml
-const vmProgramPoolDefaultRetained = 50
+const vmProgramPoolDefaultRetained = 10
 
 var cachedProgramPools sync.Map
 var vmPoolLimitMu sync.RWMutex
@@ -238,6 +238,7 @@ func (vm *VM) captureBaseProgramState() {
 	vm.baseOptionCompare = vm.optionCompare
 	vm.baseOptionExplicit = vm.optionExplicit
 	vm.baseGlobalNames = cloneStringSlice(vm.globalNames)
+	vm.baseGlobalNamesLower = cloneStringSlice(vm.baseGlobalNamesLower)
 	vm.baseGlobalNamesHash = vm.globalNamesHash
 	clear(vm.baseGlobalZeroArgFuncs)
 	for key, value := range vm.globalZeroArgFuncs {
@@ -420,12 +421,23 @@ func (vm *VM) rebuildGlobalNameIndex() {
 		clear(vm.globalNameIndex)
 	}
 	vm.globalNamesHash = hashStringSliceFNV1a(vm.globalNames)
+
+	// Optimization: Use pre-computed lowercase names to avoid allocations in the hot path.
+	useLower := len(vm.baseGlobalNamesLower) == len(vm.globalNames)
+
 	for idx := 0; idx < len(vm.globalNames); idx++ {
 		name := strings.TrimSpace(vm.globalNames[idx])
 		if name == "" {
 			continue
 		}
-		vm.globalNameIndex[strings.ToLower(name)] = idx
+
+		var lower string
+		if useLower {
+			lower = vm.baseGlobalNamesLower[idx]
+		} else {
+			lower = strings.ToLower(name)
+		}
+		vm.globalNameIndex[lower] = idx
 	}
 }
 

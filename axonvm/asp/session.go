@@ -21,6 +21,7 @@
 package asp
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"hash/fnv"
@@ -118,6 +119,13 @@ var (
 	sessionAutoFlushStop chan struct{}
 	sessionAutoFlushDone chan struct{}
 )
+
+// sessionBufferPool reduces allocations during session serialization.
+var sessionBufferPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
 
 // resolveDefaultSessionLCID reads the configured default LCID with safe fallbacks.
 func resolveDefaultSessionLCID() int {
@@ -505,12 +513,17 @@ func (s *Session) Save() error {
 		return err
 	}
 
-	bytes, err := json.Marshal(payload)
-	if err != nil {
+	// Optimization: Use pooled buffers to avoid heavy allocations during high-frequency saves.
+	buf := sessionBufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer sessionBufferPool.Put(buf)
+
+	encoder := json.NewEncoder(buf)
+	if err := encoder.Encode(payload); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(sessionFilePath(s.ID), bytes, 0o600); err != nil {
+	if err := os.WriteFile(sessionFilePath(s.ID), buf.Bytes(), 0o600); err != nil {
 		return err
 	}
 
@@ -574,12 +587,14 @@ func LoadSession(sessionID string) (*Session, bool, error) {
 	return session, true, nil
 }
 
-// CreateSession creates a brand-new session with generated ID and persists it.
+// CreateSession creates a brand-new session with generated ID and persists it asynchronously.
 func CreateSession() (*Session, error) {
 	session := NewSessionWithID(newSessionID())
-	if err := session.Save(); err != nil {
-		return nil, err
-	}
+	// Optimization: Never call Save() synchronously during initialization.
+	// Mark as dirty and let the background flusher handle persistence.
+	session.mu.Lock()
+	session.markDirtyLocked()
+	session.mu.Unlock()
 	return registerSession(session), nil
 }
 

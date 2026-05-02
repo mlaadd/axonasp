@@ -21,24 +21,52 @@
 package axonvm
 
 import (
-	"regexp"
 	"strings"
 )
 
-// ─── METADATA Directive Scanner ───────────────────────────────────────────────
-
-// metadataDirectivePattern matches <!-- METADATA TYPE="TypeLib" ... --> HTML comments,
-// capturing the full attribute block so the parser can extract UUID, NAME, and VERSION.
-var metadataDirectivePattern = regexp.MustCompile(`(?is)<!--\s*METADATA[^>]*TYPE\s*=\s*["']?\s*TypeLib\s*["']?[^>]*-->`)
-
-// metadataAttrPattern extracts a single attribute value (UUID, NAME, or VERSION) from
-// a METADATA comment.
-var metadataAttrPattern = regexp.MustCompile(`(?i)(?:UUID|NAME|VERSION)\s*=\s*["']([^"']*)["']`)
-
 // stripMetadataDirectives removes all <!-- METADATA ... --> HTML comments from the
 // source so they do not appear in the rendered page output, matching IIS behaviour.
+// Optimization: Uses manual scanning instead of regexp to avoid heap allocations.
 func stripMetadataDirectives(source string) string {
-	return metadataDirectivePattern.ReplaceAllLiteralString(source, "")
+	if source == "" {
+		return source
+	}
+
+	var builder strings.Builder
+	builder.Grow(len(source))
+
+	cursor := 0
+	for {
+		start := strings.Index(source[cursor:], "<!--")
+		if start == -1 {
+			builder.WriteString(source[cursor:])
+			break
+		}
+
+		absStart := cursor + start
+		builder.WriteString(source[cursor:absStart])
+
+		end := strings.Index(source[absStart:], "-->")
+		if end == -1 {
+			builder.WriteString(source[absStart:])
+			break
+		}
+
+		absEnd := absStart + end
+		comment := source[absStart : absEnd+3]
+
+		// Check if it's a METADATA directive
+		upperComment := strings.ToUpper(comment)
+		if strings.Contains(upperComment, "METADATA") && strings.Contains(upperComment, "TYPELIB") {
+			// Skip this block (strip it)
+		} else {
+			builder.WriteString(comment)
+		}
+
+		cursor = absEnd + 3
+	}
+
+	return builder.String()
 }
 
 // detectedMetadataLibrary carries one parsed METADATA TYPE="TypeLib" entry.
@@ -49,47 +77,95 @@ type detectedMetadataLibrary struct {
 
 // detectMetadataLibraries scans one ASP source and extracts all METADATA TYPE="TypeLib" entries.
 // UUID is normalized to uppercase without braces and NAME is trimmed.
+// Optimization: Uses manual scanning instead of regexp to avoid heap allocations.
 func detectMetadataLibraries(source string) []detectedMetadataLibrary {
-	matches := metadataDirectivePattern.FindAllString(source, -1)
-	if len(matches) == 0 {
+	if source == "" {
 		return nil
 	}
 
-	libs := make([]detectedMetadataLibrary, 0, len(matches))
+	var libs []detectedMetadataLibrary
 	seen := make(map[string]bool)
 
-	for _, block := range matches {
-		lib := detectedMetadataLibrary{}
-		for _, attr := range metadataAttrPattern.FindAllStringSubmatch(block, -1) {
-			if len(attr) < 2 {
-				continue
-			}
-			raw := strings.TrimSpace(attr[0])
-			val := strings.TrimSpace(attr[1])
-			upperRaw := strings.ToUpper(raw)
-			switch {
-			case strings.HasPrefix(upperRaw, "UUID"):
-				lib.uuid = strings.ToUpper(strings.Trim(val, "{}"))
-			case strings.HasPrefix(upperRaw, "NAME"):
-				lib.name = val
+	cursor := 0
+	for {
+		start := strings.Index(source[cursor:], "<!--")
+		if start == -1 {
+			break
+		}
+
+		absStart := cursor + start
+		end := strings.Index(source[absStart:], "-->")
+		if end == -1 {
+			break
+		}
+
+		absEnd := absStart + end
+		comment := source[absStart : absEnd+3]
+		upperComment := strings.ToUpper(comment)
+
+		if strings.Contains(upperComment, "METADATA") && strings.Contains(upperComment, "TYPELIB") {
+			lib := parseMetadataComment(comment)
+			key := lib.uuid + "|" + strings.ToLower(lib.name)
+			if (lib.uuid != "" || strings.TrimSpace(lib.name) != "") && !seen[key] {
+				seen[key] = true
+				libs = append(libs, lib)
 			}
 		}
 
-		key := lib.uuid + "|" + strings.ToLower(lib.name)
-		if lib.uuid == "" && strings.TrimSpace(lib.name) == "" {
-			continue
-		}
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		libs = append(libs, lib)
+		cursor = absEnd + 3
 	}
 
 	if len(libs) == 0 {
 		return nil
 	}
 	return libs
+}
+
+// parseMetadataComment extracts UUID and NAME attributes from a METADATA comment manually.
+func parseMetadataComment(comment string) detectedMetadataLibrary {
+	lib := detectedMetadataLibrary{}
+
+	extractAttr := func(c, attrName string) string {
+		attrName = strings.ToUpper(attrName)
+		upperC := strings.ToUpper(c)
+		idx := strings.Index(upperC, attrName)
+		if idx == -1 {
+			return ""
+		}
+
+		valPart := c[idx+len(attrName):]
+		eqIdx := strings.Index(valPart, "=")
+		if eqIdx == -1 {
+			return ""
+		}
+
+		valPart = valPart[eqIdx+1:]
+		valPart = strings.TrimSpace(valPart)
+		if len(valPart) == 0 {
+			return ""
+		}
+
+		quote := valPart[0]
+		if quote != '"' && quote != '\'' {
+			// Unquoted value (rare but possible)
+			endIdx := strings.IndexAny(valPart, " \t\r\n>")
+			if endIdx == -1 {
+				return valPart
+			}
+			return valPart[:endIdx]
+		}
+
+		valPart = valPart[1:]
+		endIdx := strings.IndexByte(valPart, quote)
+		if endIdx == -1 {
+			return ""
+		}
+		return valPart[:endIdx]
+	}
+
+	lib.uuid = strings.ToUpper(strings.Trim(extractAttr(comment, "UUID"), "{}"))
+	lib.name = extractAttr(comment, "NAME")
+	return lib
 }
 
 // getMetadataLibraryConstants resolves one deduplicated constant set for detected typelibs.

@@ -131,6 +131,14 @@ func buildCachedProgramFromCompiler(compiler *Compiler) CachedProgram {
 		GlobalZeroArgFuncs:  sortedTrueKeys(compiler.globalZeroArgFuncs),
 		IncludeDependencies: compiler.IncludeDependencies(),
 	}
+
+	// Pre-compute lowercased global names for zero-allocation VM resets.
+	allLower := make([]string, 0, len(allGlobals))
+	for _, name := range allGlobals {
+		allLower = append(allLower, strings.ToLower(strings.TrimSpace(name)))
+	}
+	program.GlobalNamesLower = allLower
+
 	program.ProgramHash = computeProgramHash(
 		program.Bytecode,
 		program.GlobalCount,
@@ -150,6 +158,9 @@ func applyProgramGlobalMetadata(vm *VM, program CachedProgram) {
 
 	if len(program.GlobalNames) > 0 {
 		vm.globalNames = append(vm.globalNames[:0], program.GlobalNames...)
+		if len(program.GlobalNamesLower) > 0 {
+			vm.baseGlobalNamesLower = program.GlobalNamesLower
+		}
 		vm.rebuildGlobalNameIndex()
 		for i := range program.DeclaredGlobalNames {
 			name := strings.ToLower(strings.TrimSpace(program.DeclaredGlobalNames[i]))
@@ -169,6 +180,9 @@ func applyProgramGlobalMetadata(vm *VM, program CachedProgram) {
 		vm.globalNames = append(vm.globalNames, base.names...)
 		vm.globalNames = append(vm.globalNames, program.GlobalPreludeNames...)
 		vm.globalNames = append(vm.globalNames, program.UserGlobalNames...)
+		if len(program.GlobalNamesLower) > 0 {
+			vm.baseGlobalNamesLower = program.GlobalNamesLower
+		}
 		vm.rebuildGlobalNameIndex()
 
 		for key := range base.declared {
