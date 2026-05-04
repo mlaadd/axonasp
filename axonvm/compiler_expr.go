@@ -993,6 +993,7 @@ func (c *Compiler) Compile() (err error) {
 	if c.isEval {
 		c.parseExpression(PrecNone)
 		c.emit(OpHalt)
+		c.optimizePeephole()
 		return nil
 	}
 
@@ -1090,6 +1091,7 @@ func (c *Compiler) Compile() (err error) {
 		flushJScriptProgram()
 	}
 	c.emit(OpHalt)
+	c.optimizePeephole()
 	return nil
 }
 

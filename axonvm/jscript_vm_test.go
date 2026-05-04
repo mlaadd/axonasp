@@ -772,24 +772,34 @@ func TestJScriptMathAndDateSurface(t *testing.T) {
 }
 
 func TestJScriptBinaryOperatorsUseJSOpcodes(t *testing.T) {
+	// Verify correctness with constant operands (these will be folded at compile
+	// time, so we only check the runtime result, not the bytecode opcodes).
 	source := `<script runat="server" language="JScript">` +
 		`var a = 7 - 2; var b = 3 * 4; var c = 9 / 3; var d = 9 % 4;` +
 		`var e = ("5" == 5); var f = (2 < "10");` +
 		`Response.Write(a + b + c + d + (e ? 1 : 0) + (f ? 1 : 0));` +
 		`</script>`
-
-	compiler := NewASPCompiler(source)
-	if err := compiler.Compile(); err != nil {
-		t.Fatalf("compile failed: %v", err)
+	out := runASPSourceForTest(t, source)
+	if out != "23" {
+		t.Fatalf("unexpected binary operator output: %q", out)
 	}
 
-	bytecode := compiler.Bytecode()
-	hasJSSubtract := false
-	hasJSMultiply := false
-	hasJSDivide := false
-	hasJSModulo := false
-	hasJSLooseEq := false
-	hasJSLess := false
+	// Verify JScript opcodes are emitted when operands are non-constant (variables),
+	// ensuring the optimizer does not remove opcodes for dynamic expressions.
+	varSource := `<script runat="server" language="JScript">` +
+		`var x = 7; var y = 2;` +
+		`var a = x - y; var b = x * y; var c = x / y; var d = x % y;` +
+		`var e = ("5" == x); var f = (y < "10");` +
+		`Response.Write(a + "|" + b + "|" + c + "|" + d);` +
+		`</script>`
+	bytecode := func() []byte {
+		c2 := NewASPCompiler(varSource)
+		if err := c2.Compile(); err != nil {
+			t.Fatalf("compile failed: %v", err)
+		}
+		return c2.Bytecode()
+	}()
+	hasJSSubtract, hasJSMultiply, hasJSDivide, hasJSModulo, hasJSLooseEq, hasJSLess := false, false, false, false, false, false
 	for i := 0; i < len(bytecode); i++ {
 		switch OpCode(bytecode[i]) {
 		case OpJSSubtract:
@@ -806,14 +816,13 @@ func TestJScriptBinaryOperatorsUseJSOpcodes(t *testing.T) {
 			hasJSLess = true
 		}
 	}
-
 	if !hasJSSubtract || !hasJSMultiply || !hasJSDivide || !hasJSModulo || !hasJSLooseEq || !hasJSLess {
-		t.Fatalf("expected JS binary opcodes in bytecode, got %v", bytecode)
+		t.Fatalf("expected JS binary opcodes in variable-expression bytecode; got subtract=%v mul=%v div=%v mod=%v looseEq=%v less=%v",
+			hasJSSubtract, hasJSMultiply, hasJSDivide, hasJSModulo, hasJSLooseEq, hasJSLess)
 	}
-
-	out := runASPSourceForTest(t, source)
-	if out != "23" {
-		t.Fatalf("unexpected binary operator output: %q", out)
+	varOut := runASPSourceForTest(t, varSource)
+	if varOut != "5|14|3.5|1" {
+		t.Fatalf("unexpected variable binary operator output: %q", varOut)
 	}
 }
 

@@ -23,13 +23,16 @@ package axonvm
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"g3pix.com.br/axonasp/jscript"
 	jsast "g3pix.com.br/axonasp/jscript/ast"
 	jsparser "g3pix.com.br/axonasp/jscript/parser"
 	jstoken "g3pix.com.br/axonasp/jscript/token"
+	jsunistring "g3pix.com.br/axonasp/jscript/unistring"
 )
 
 var jscriptCallAssignmentPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\(([^\)]*)\)\s*=\s*([^;\r\n]+);`)
@@ -815,8 +818,16 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 			c.compileJScriptExpression(node.Right)
 			c.patchJSJump(jumpFalse)
 		default:
-			c.compileJScriptExpression(node.Left)
-			c.compileJScriptExpression(node.Right)
+			// Attempt compile-time constant folding on both operands, then on
+			// the whole expression. If successful, emit a single OpConstant.
+			foldedLeft := foldJSExpr(node.Left)
+			foldedRight := foldJSExpr(node.Right)
+			if folded := foldJSBinaryLiterals(node.Operator, foldedLeft, foldedRight); folded != nil {
+				c.compileJScriptExpression(folded)
+				return
+			}
+			c.compileJScriptExpression(foldedLeft)
+			c.compileJScriptExpression(foldedRight)
 			switch node.Operator {
 			case jstoken.PLUS:
 				c.emit(OpJSAdd)
@@ -1381,4 +1392,117 @@ func (c *Compiler) patchJSJumpTo(offsetIndex int, jumpTarget int) {
 	c.bytecode[offsetIndex+1] = byte((jumpTarget >> 16) & 0xFF)
 	c.bytecode[offsetIndex+2] = byte((jumpTarget >> 8) & 0xFF)
 	c.bytecode[offsetIndex+3] = byte(jumpTarget & 0xFF)
+}
+
+// ---------------------------------------------------------------------------
+// JScript compile-time constant folding (AST pre-pass)
+// ---------------------------------------------------------------------------
+
+// foldJSExpr recursively attempts to fold a JScript AST expression to a
+// simpler literal at compile time. It mutates BinaryExpression children
+// in-place and returns either the original node or a new literal node.
+func foldJSExpr(expr jsast.Expression) jsast.Expression {
+	bin, ok := expr.(*jsast.BinaryExpression)
+	if !ok {
+		return expr
+	}
+	// Fold children first (depth-first), enabling chained folding.
+	bin.Left = foldJSExpr(bin.Left)
+	bin.Right = foldJSExpr(bin.Right)
+	// Try to evaluate this binary expression at compile time.
+	if folded := foldJSBinaryLiterals(bin.Operator, bin.Left, bin.Right); folded != nil {
+		return folded
+	}
+	return bin
+}
+
+// foldJSBinaryLiterals evaluates a binary operation over two literal AST nodes
+// at compile time. Returns a new literal expression, or nil if not foldable.
+func foldJSBinaryLiterals(op jstoken.Token, left, right jsast.Expression) jsast.Expression {
+	lf, lok := jsExprAsFloat(left)
+	rf, rok := jsExprAsFloat(right)
+	ls, lsok := jsExprAsString(left)
+	rs, rsok := jsExprAsString(right)
+
+	switch op {
+	case jstoken.PLUS:
+		// + with any string operand coerces both sides to string.
+		if lsok || rsok {
+			if !lsok {
+				if !lok {
+					return nil
+				}
+				ls = jsFloatToString(lf)
+			}
+			if !rsok {
+				if !rok {
+					return nil
+				}
+				rs = jsFloatToString(rf)
+			}
+			return &jsast.StringLiteral{Value: jsunistring.String(ls + rs)}
+		}
+		if lok && rok {
+			return jsNewNumLiteral(lf + rf)
+		}
+	case jstoken.MINUS:
+		if lok && rok {
+			return jsNewNumLiteral(lf - rf)
+		}
+	case jstoken.MULTIPLY:
+		if lok && rok {
+			return jsNewNumLiteral(lf * rf)
+		}
+	case jstoken.SLASH:
+		if lok && rok && rf != 0 {
+			return jsNewNumLiteral(lf / rf)
+		}
+	case jstoken.REMAINDER:
+		if lok && rok && rf != 0 {
+			return jsNewNumLiteral(math.Mod(lf, rf))
+		}
+	}
+	return nil
+}
+
+// jsExprAsFloat extracts a float64 from a JS NumberLiteral node.
+func jsExprAsFloat(expr jsast.Expression) (float64, bool) {
+	num, ok := expr.(*jsast.NumberLiteral)
+	if !ok {
+		return 0, false
+	}
+	switch v := num.Value.(type) {
+	case int64:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case float64:
+		return v, true
+	}
+	return 0, false
+}
+
+// jsExprAsString extracts a plain Go string from a JS StringLiteral node.
+func jsExprAsString(expr jsast.Expression) (string, bool) {
+	sl, ok := expr.(*jsast.StringLiteral)
+	if !ok {
+		return "", false
+	}
+	return sl.Value.String(), true
+}
+
+// jsNewNumLiteral constructs a JS NumberLiteral carrying a float64 result.
+// Idx and Literal are left at zero/empty since this node is never used for
+// error reporting.
+func jsNewNumLiteral(f float64) *jsast.NumberLiteral {
+	return &jsast.NumberLiteral{Value: f}
+}
+
+// jsFloatToString converts a float64 to its JS string representation,
+// omitting the decimal point for integer-valued floats.
+func jsFloatToString(f float64) string {
+	if f == math.Trunc(f) && !math.IsInf(f, 0) && !math.IsNaN(f) {
+		return strconv.FormatInt(int64(f), 10)
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }

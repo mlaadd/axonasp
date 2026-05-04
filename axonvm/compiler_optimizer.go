@@ -1,0 +1,340 @@
+/*
+ * AxonASP Server
+ * Copyright (C) 2026 G3pix Ltda. All rights reserved.
+ *
+ * Developed by Lucas Guimarães - G3pix Ltda
+ * Contact: https://g3pix.com.br
+ * Project URL: https://g3pix.com.br/axonasp
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ *
+ * Attribution Notice:
+ * If this software is used in other projects, the name "AxonASP Server"
+ * must be cited in the documentation or "About" section.
+ *
+ * Contribution Policy:
+ * Modifications to the core source code of AxonASP Server must be
+ * made available under this same license terms.
+ */
+package axonvm
+
+import (
+	"encoding/binary"
+	"math"
+	"strconv"
+)
+
+// optimizePeephole performs in-place bytecode peephole optimization.
+// It repeats single-pass scans until no further constant folding is possible,
+// allowing chained binary operations (e.g. 1+2+3) to fully collapse.
+// All changes are made in-place on c.bytecode; redundant bytes are replaced
+// with OpNop so every absolute jump offset remains valid.
+func (c *Compiler) optimizePeephole() {
+	for {
+		folded := c.optimizePeepholePass()
+		propagated := c.optimizeLocalCopyPropagationPass()
+		if !folded && !propagated {
+			break
+		}
+	}
+}
+
+// optimizeLocalCopyPropagationPass performs conservative local copy propagation
+// within one basic block by rewriting OpGetLocal operands in-place.
+//
+// It tracks copies created by direct sequences:
+//
+//	OpGetLocal src  [OpNop...]  OpLetLocal dst
+//
+// then rewrites subsequent OpGetLocal dst to OpGetLocal src while the mapping
+// remains valid. The map is invalidated at jump targets, control-flow edges,
+// calls, and any write to a local slot, which keeps propagation confined to one
+// linear region with no cross-branch assumptions.
+func (c *Compiler) optimizeLocalCopyPropagationPass() bool {
+	if len(c.bytecode) == 0 {
+		return false
+	}
+	targets := collectJumpTargets(c.bytecode)
+	alias := make(map[uint16]uint16)
+	changed := false
+
+	for ip := 0; ip < len(c.bytecode); {
+		if _, boundary := targets[ip]; boundary {
+			clear(alias)
+		}
+
+		op := OpCode(c.bytecode[ip])
+		size := opcodeOperandSize(op)
+		instrEnd := ip + 1 + size
+		if instrEnd > len(c.bytecode) {
+			break
+		}
+
+		switch op {
+		case OpGetLocal:
+			local := binary.BigEndian.Uint16(c.bytecode[ip+1 : ip+3])
+			if src, ok := alias[local]; ok {
+				binary.BigEndian.PutUint16(c.bytecode[ip+1:ip+3], src)
+				local = src
+				changed = true
+			}
+
+			// Detect direct copy pattern: OpGetLocal src [OpNop*] OpLetLocal dst.
+			next := instrEnd
+			for next < len(c.bytecode) && OpCode(c.bytecode[next]) == OpNop {
+				next++
+			}
+			if next+2 < len(c.bytecode) && OpCode(c.bytecode[next]) == OpLetLocal {
+				dst := binary.BigEndian.Uint16(c.bytecode[next+1 : next+3])
+				resolved := local
+				for {
+					up, ok := alias[resolved]
+					if !ok || up == resolved {
+						break
+					}
+					resolved = up
+				}
+				alias[dst] = resolved
+			}
+
+		case OpLetLocal, OpSetLocal, OpIncLocalInt, OpDecLocalInt:
+			written := binary.BigEndian.Uint16(c.bytecode[ip+1 : ip+3])
+			delete(alias, written)
+			for k, v := range alias {
+				if v == written {
+					delete(alias, k)
+				}
+			}
+
+		case OpJump, OpJumpIfFalse, OpJumpIfTrue, OpGotoLabel,
+			OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter,
+			OpJSBreak, OpJSContinue, OpJSForInCleanup,
+			OpCall, OpCallMember, OpCallBuiltin, OpJSCall, OpJSCallMember, OpJSNew:
+			clear(alias)
+		}
+
+		ip = instrEnd
+	}
+
+	return changed
+}
+
+// optimizePeepholePass performs one forward scan of c.bytecode looking for
+// constant-pair binary operations to fold. It advances a sliding window
+// looking for:
+//
+//	OpConstant[hi][lo]  [OpNop…]  OpConstant[hi][lo]  [OpNop…]  <foldableBinOp>
+//
+// OpNop bytes between instructions are skipped so that chained folds (e.g.
+// "a"&"b"&"c" → "ab"&"c") collapse in a single pass even after earlier folds
+// have introduced padding nops.
+// Returns true if any instruction was folded (signals another pass needed).
+func (c *Compiler) optimizePeepholePass() bool {
+	if len(c.bytecode) < 7 { // minimum: OpConstant(3) + OpConstant(3) + BinOp(1)
+		return false
+	}
+
+	// Build the set of absolute byte-offsets that are jump-target landing points.
+	targets := collectJumpTargets(c.bytecode)
+	changed := false
+
+	for i := 0; i < len(c.bytecode); {
+		// First instruction must be OpConstant.
+		if OpCode(c.bytecode[i]) != OpConstant {
+			i++
+			continue
+		}
+
+		// Skip any OpNop padding to find the second instruction.
+		j := i + 3
+		for j < len(c.bytecode) && OpCode(c.bytecode[j]) == OpNop {
+			j++
+		}
+		if j+3 > len(c.bytecode) || OpCode(c.bytecode[j]) != OpConstant {
+			i++
+			continue
+		}
+
+		// Skip any OpNop padding to find the binary op.
+		k := j + 3
+		for k < len(c.bytecode) && OpCode(c.bytecode[k]) == OpNop {
+			k++
+		}
+		if k >= len(c.bytecode) || !isFoldableVBSBinaryOp(OpCode(c.bytecode[k])) {
+			i++
+			continue
+		}
+
+		// Safety: no jump target may land on bytes i+1 through k inclusive.
+		// A well-formed program never jumps to an operand byte, but j and k
+		// are opcode bytes that could legitimately be named targets.
+		if hasTargetInRange(targets, i+1, k) {
+			i++
+			continue
+		}
+
+		// Read the two constant indices (big-endian uint16).
+		idxA := int(binary.BigEndian.Uint16(c.bytecode[i+1:]))
+		idxB := int(binary.BigEndian.Uint16(c.bytecode[j+1:]))
+		binOp := OpCode(c.bytecode[k])
+		if idxA >= len(c.constants) || idxB >= len(c.constants) {
+			i++
+			continue
+		}
+
+		// Attempt compile-time evaluation.
+		result, ok := foldVBSBinaryOp(c.constants[idxA], c.constants[idxB], binOp)
+		if !ok {
+			i++
+			continue
+		}
+
+		// Fold success: update first OpConstant to reference the result and
+		// fill every byte from i+3 through k (inclusive) with OpNop so that
+		// absolute jump offsets into this region remain valid.
+		newIdx := c.addConstant(result)
+		binary.BigEndian.PutUint16(c.bytecode[i+1:], uint16(newIdx))
+		for p := i + 3; p <= k; p++ {
+			c.bytecode[p] = byte(OpNop)
+		}
+		changed = true
+		// Stay at i: the newly written OpConstant may chain with another
+		// constant+op pair immediately following the nop block.
+	}
+	return changed
+}
+
+// collectJumpTargets scans bytecode and returns a set of every absolute byte
+// offset that is named as a landing point by a VBScript jump instruction.
+func collectJumpTargets(bytecode []byte) map[int]struct{} {
+	targets := make(map[int]struct{})
+	for ip := 0; ip < len(bytecode); {
+		op := OpCode(bytecode[ip])
+		ip++
+		size := opcodeOperandSize(op)
+		switch op {
+		case OpJump, OpJumpIfFalse, OpJumpIfTrue, OpGotoLabel:
+			// 4-byte absolute target immediately follows the opcode.
+			if ip+4 <= len(bytecode) {
+				targets[int(binary.BigEndian.Uint32(bytecode[ip:]))] = struct{}{}
+			}
+		}
+		ip += size
+	}
+	return targets
+}
+
+// hasTargetInRange reports whether any collected jump target falls in [from, to].
+func hasTargetInRange(targets map[int]struct{}, from, to int) bool {
+	for pos := from; pos <= to; pos++ {
+		if _, ok := targets[pos]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// isFoldableVBSBinaryOp reports whether a given opcode can be folded over two
+// compile-time constant Values.
+func isFoldableVBSBinaryOp(op OpCode) bool {
+	switch op {
+	case OpAdd, OpSub, OpMul, OpDiv, OpIDiv, OpMod, OpConcat:
+		return true
+	}
+	return false
+}
+
+// foldVBSBinaryOp evaluates a binary operation over two constant Values at
+// compile time. Returns (result, true) on success, or (Value{}, false) if the
+// operand types are not supported or the operation would cause division by zero.
+func foldVBSBinaryOp(a, b Value, op OpCode) (Value, bool) {
+	switch op {
+	case OpConcat:
+		// & always converts both sides to string before concatenating.
+		sa, ok1 := vbsConstantToString(a)
+		sb, ok2 := vbsConstantToString(b)
+		if ok1 && ok2 {
+			return NewString(sa + sb), true
+		}
+	case OpAdd:
+		return foldVBSNumericOp(a, b,
+			func(x, y int64) int64 { return x + y },
+			func(x, y float64) float64 { return x + y })
+	case OpSub:
+		return foldVBSNumericOp(a, b,
+			func(x, y int64) int64 { return x - y },
+			func(x, y float64) float64 { return x - y })
+	case OpMul:
+		return foldVBSNumericOp(a, b,
+			func(x, y int64) int64 { return x * y },
+			func(x, y float64) float64 { return x * y })
+	case OpDiv:
+		// VBScript / always produces a Double.
+		fa, oka := vbsConstantToFloat(a)
+		fb, okb := vbsConstantToFloat(b)
+		if oka && okb && fb != 0 {
+			return NewDouble(fa / fb), true
+		}
+	case OpIDiv:
+		// VBScript \ is integer division (truncates toward zero).
+		if a.Type == VTInteger && b.Type == VTInteger && b.Num != 0 {
+			return NewInteger(a.Num / b.Num), true
+		}
+	case OpMod:
+		// Only fold positive integers to avoid sign-convention edge cases.
+		if a.Type == VTInteger && b.Type == VTInteger && b.Num > 0 && a.Num >= 0 {
+			return NewInteger(a.Num % b.Num), true
+		}
+		fa, oka := vbsConstantToFloat(a)
+		fb, okb := vbsConstantToFloat(b)
+		if oka && okb && fb != 0 {
+			return NewDouble(math.Mod(fa, fb)), true
+		}
+	}
+	return Value{}, false
+}
+
+// foldVBSNumericOp applies an arithmetic operation to two constant Values when
+// both are numeric (VTInteger or VTDouble), promoting to Double when necessary.
+func foldVBSNumericOp(a, b Value, intOp func(int64, int64) int64, fltOp func(float64, float64) float64) (Value, bool) {
+	switch {
+	case a.Type == VTInteger && b.Type == VTInteger:
+		return NewInteger(intOp(a.Num, b.Num)), true
+	case a.Type == VTDouble && b.Type == VTDouble:
+		return NewDouble(fltOp(a.Flt, b.Flt)), true
+	case a.Type == VTInteger && b.Type == VTDouble:
+		return NewDouble(fltOp(float64(a.Num), b.Flt)), true
+	case a.Type == VTDouble && b.Type == VTInteger:
+		return NewDouble(fltOp(a.Flt, float64(b.Num))), true
+	}
+	return Value{}, false
+}
+
+// vbsConstantToString converts a compile-time constant Value to a string
+// representation suitable for the & concatenation operator.
+// Only VTString, VTInteger, and VTDouble are supported.
+func vbsConstantToString(v Value) (string, bool) {
+	switch v.Type {
+	case VTString:
+		return v.Str, true
+	case VTInteger:
+		return strconv.FormatInt(v.Num, 10), true
+	case VTDouble:
+		// Use %g to match VBScript's default numeric-to-string format.
+		return strconv.FormatFloat(v.Flt, 'g', -1, 64), true
+	}
+	return "", false
+}
+
+// vbsConstantToFloat converts a compile-time constant numeric Value to float64.
+func vbsConstantToFloat(v Value) (float64, bool) {
+	switch v.Type {
+	case VTInteger:
+		return float64(v.Num), true
+	case VTDouble:
+		return v.Flt, true
+	}
+	return 0, false
+}

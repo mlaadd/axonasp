@@ -280,6 +280,13 @@ const (
 	// OpDecLocalInt decrements one local numeric slot in place.
 	// [OpCode, OffsetHigh, OffsetLow]
 	OpDecLocalInt
+
+	// OpNop is a no-operation placeholder emitted by the peephole optimizer to
+	// fill bytes that were made redundant by constant folding.  The VM advances
+	// the instruction pointer past it at near-zero cost; jump offsets are
+	// preserved because the bytecode array is never shrunk.
+	// [OpCode]  (0 operand bytes)
+	OpNop
 )
 
 func (op OpCode) String() string {
@@ -570,6 +577,8 @@ func (op OpCode) String() string {
 		return "OpJSForIterEnter"
 	case OpJSForIterExit:
 		return "OpJSForIterExit"
+	case OpNop:
+		return "OpNop"
 	default:
 		return "OpUnknown"
 	}

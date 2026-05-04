@@ -1283,6 +1283,9 @@ aspExecLoop:
 		case OpPop:
 			vm.pop()
 
+		case OpNop:
+			// No operation: consumed only the single opcode byte; advance to next instruction.
+
 		case OpGetGlobal:
 			idx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
 			vm.ip += 2
