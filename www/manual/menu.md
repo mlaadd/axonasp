@@ -42,11 +42,10 @@
     * [Application](md/asp/application.md)
     * [ASPError](md/asp/asperror.md)
     * [ASP Dictionary](md/asp/dictionary.md)
-    * [Use JScript in AxonASP Pages](md/asp/jscript-support.md)
-    * [Use ES6 Features in JScript Scripts](md/asp/jscript-es6-support.md)
     * [Global Console Object](md/asp/console-object.md)
-* JScript Modernization
-    * [ES6 Feature Support Matrix](md/jscript/jscript-es6-support.md)
+* Javascript (JScript support)
+    * [Use Javascript in ASP Pages](md/javascript/jscript-support.md)
+    * [ES6 Features](md/javascript/jscript-es6-support.md)
 * Libraries
     * [Object Overview](md/libraries/overview.md)
     * G3AXON Functions

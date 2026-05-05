@@ -107,6 +107,7 @@ func TestAcquireVMFromCachedProgramResetsJScriptState(t *testing.T) {
 	vm.jsObjectItems[20001] = map[string]Value{"x": NewInteger(1)}
 	vm.jsFunctionItems[20002] = &jsFunctionObject{name: "dirtyFn"}
 	vm.jsForInItems[1] = &jsForInEnumerator{keys: []string{"k"}, index: 0}
+	vm.jsForOfItems[2] = &jsForOfEnumerator{values: []Value{NewString("v")}, index: 0}
 	vm.jsEnvItems[20003] = &jsEnvFrame{parentID: 0, bindings: map[string]Value{"x": NewInteger(1)}}
 
 	vm.Release()
@@ -126,7 +127,7 @@ func TestAcquireVMFromCachedProgramResetsJScriptState(t *testing.T) {
 	if reused.jsThisValue.Type != VTJSUndefined {
 		t.Fatalf("expected jsThisValue to be undefined after reuse")
 	}
-	if len(reused.jsObjectItems) != 0 || len(reused.jsFunctionItems) != 0 || len(reused.jsForInItems) != 0 || len(reused.jsEnvItems) != 0 {
+	if len(reused.jsObjectItems) != 0 || len(reused.jsFunctionItems) != 0 || len(reused.jsForInItems) != 0 || len(reused.jsForOfItems) != 0 || len(reused.jsEnvItems) != 0 {
 		t.Fatalf("expected JScript dynamic maps to be cleared")
 	}
 

@@ -110,6 +110,14 @@ type jsForInEnumerator struct {
 	index int
 }
 
+// jsForOfEnumerator holds the collected values for a for...of loop.
+// Values are collected once when the loop is first entered and then
+// consumed one per iteration to avoid mutating the source during traversal.
+type jsForOfEnumerator struct {
+	values []Value
+	index  int
+}
+
 func (vm *VM) jsEval(args []Value) Value {
 	if len(args) == 0 {
 		return Value{Type: VTJSUndefined}
@@ -4420,6 +4428,74 @@ func (vm *VM) jsEnumerateForInKeys(source Value) []string {
 			keys = append(keys, strconv.Itoa(source.Arr.Lower+i))
 		}
 		return keys
+	}
+
+	return nil
+}
+
+// jsEnumerateForOfValues collects the iterable values from a source for for...of traversal.
+// Arrays yield their elements, Strings yield each character, JS Sets yield their members,
+// JS Maps yield [key, value] pair arrays, and JS Arrays (VTJSObject with __js_class Array)
+// yield indexed elements. All other types produce an empty slice.
+func (vm *VM) jsEnumerateForOfValues(source Value) []Value {
+	// Fast path: VBScript/internal Array — yield elements directly.
+	if source.Type == VTArray && source.Arr != nil {
+		out := make([]Value, len(source.Arr.Values))
+		copy(out, source.Arr.Values)
+		return out
+	}
+
+	// String — yield each character as a single-character string.
+	if source.Type == VTString {
+		runes := []rune(source.Str)
+		out := make([]Value, len(runes))
+		for i, r := range runes {
+			out[i] = NewString(string(r))
+		}
+		return out
+	}
+
+	// JS Object — inspect the runtime class to decide how to iterate.
+	if source.Type == VTJSObject {
+		class := vm.jsObjectStringProperty(source, "__js_class")
+		switch class {
+		case "Array":
+			// JS Array: iterate by numeric index up to .length.
+			lengthVal, _ := vm.jsMemberGet(source, "length")
+			n := int(vm.jsToNumber(lengthVal).Flt)
+			out := make([]Value, 0, n)
+			for i := 0; i < n; i++ {
+				out = append(out, vm.jsIndexGet(source, NewInteger(int64(i))))
+			}
+			return out
+		case "Set":
+			// Set: iterate over unique members stored in jsSetItems.
+			if setMap, ok := vm.jsSetItems[source.Num]; ok {
+				out := make([]Value, 0, len(setMap))
+				for k := range setMap {
+					out = append(out, NewString(k))
+				}
+				return out
+			}
+		case "Map":
+			// Map: iterate over [key, value] pairs stored in jsMapItems.
+			if mapData, ok := vm.jsMapItems[source.Num]; ok {
+				out := make([]Value, 0, len(mapData))
+				for k, v := range mapData {
+					// Build a two-element JS array as the iteration value.
+					pairID := vm.allocJSID()
+					vm.jsObjectItems[pairID] = make(map[string]Value, 4)
+					vm.jsPropertyItems[pairID] = make(map[string]jsPropertyDescriptor, 2)
+					pair := Value{Type: VTJSObject, Num: pairID}
+					vm.jsIndexSet(pair, NewInteger(0), NewString(k))
+					vm.jsIndexSet(pair, NewInteger(1), v)
+					vm.jsIndexSet(pair, NewString("length"), NewInteger(2))
+					vm.jsMemberSet(pair, "__js_class", NewString("Array"))
+					out = append(out, pair)
+				}
+				return out
+			}
+		}
 	}
 
 	return nil

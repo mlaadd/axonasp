@@ -536,3 +536,156 @@ func TestJScriptSetAndMapBasics(t *testing.T) {
 		t.Errorf("expected 'yes|yes', got %q", out)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1: Computed Property Names
+// ---------------------------------------------------------------------------
+
+func TestJScriptComputedPropertyNames(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var key = "name";
+		var o = { [key]: "Alice" };
+		Response.Write(o.name);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Alice" {
+		t.Errorf("expected 'Alice', got %q", out)
+	}
+}
+
+func TestJScriptComputedPropertyNamesExpression(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var prefix = "greet";
+		var o = { [prefix + "_en"]: "Hello", [prefix + "_fr"]: "Bonjour" };
+		Response.Write(o.greet_en);
+		Response.Write("|");
+		Response.Write(o.greet_fr);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Hello|Bonjour" {
+		t.Errorf("expected 'Hello|Bonjour', got %q", out)
+	}
+}
+
+func TestJScriptComputedPropertyNamesMixed(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var k = "dynamic";
+		var o = { static: 1, [k]: 2 };
+		Response.Write(o.static);
+		Response.Write("|");
+		Response.Write(o.dynamic);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "1|2" {
+		t.Errorf("expected '1|2', got %q", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: For...Of Loops
+// ---------------------------------------------------------------------------
+
+func TestJScriptForOfArray(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var arr = [10, 20, 30];
+		var result = "";
+		for (var x of arr) {
+			result += x + ",";
+		}
+		Response.Write(result);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "10,20,30," {
+		t.Errorf("expected '10,20,30,', got %q", out)
+	}
+}
+
+func TestJScriptForOfString(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var result = "";
+		for (var ch of "abc") {
+			result += ch;
+		}
+		Response.Write(result);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "abc" {
+		t.Errorf("expected 'abc', got %q", out)
+	}
+}
+
+func TestJScriptForOfLet(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var sum = 0;
+		for (let n of [1, 2, 3, 4]) {
+			sum += n;
+		}
+		Response.Write(sum);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "10" {
+		t.Errorf("expected '10', got %q", out)
+	}
+}
+
+func TestJScriptForOfBreak(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var result = "";
+		for (var x of [1, 2, 3, 4, 5]) {
+			if (x === 3) break;
+			result += x + ",";
+		}
+		Response.Write(result);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "1,2," {
+		t.Errorf("expected '1,2,', got %q", out)
+	}
+}
+
+func TestJScriptForOfContinue(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var result = "";
+		for (var x of [1, 2, 3, 4]) {
+			if (x === 2) continue;
+			result += x + ",";
+		}
+		Response.Write(result);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "1,3,4," {
+		t.Errorf("expected '1,3,4,', got %q", out)
+	}
+}
+
+func TestJScriptForOfEmpty(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var result = "ok";
+		for (var x of []) {
+			result = "fail";
+		}
+		Response.Write(result);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "ok" {
+		t.Errorf("expected 'ok', got %q", out)
+	}
+}

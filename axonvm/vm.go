@@ -341,6 +341,7 @@ type VM struct {
 	jsPropertyItems                map[int64]map[string]jsPropertyDescriptor
 	jsFunctionItems                map[int64]*jsFunctionObject
 	jsForInItems                   map[int]*jsForInEnumerator
+	jsForOfItems                   map[int]*jsForOfEnumerator
 	jsEnvItems                     map[int64]*jsEnvFrame
 	jsArgumentsItems               map[int64]*jsArgumentsBinding
 	jsSetItems                     map[int64]map[string]struct{}
@@ -544,6 +545,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		jsPropertyItems:                make(map[int64]map[string]jsPropertyDescriptor),
 		jsFunctionItems:                make(map[int64]*jsFunctionObject),
 		jsForInItems:                   make(map[int]*jsForInEnumerator),
+		jsForOfItems:                   make(map[int]*jsForOfEnumerator),
 		jsEnvItems:                     make(map[int64]*jsEnvFrame),
 		jsArgumentsItems:               make(map[int64]*jsArgumentsBinding),
 		jsSetItems:                     make(map[int64]map[string]struct{}),
@@ -831,7 +833,7 @@ func opcodeOperandSize(op OpCode) int {
 	// 4-byte operands (for jump targets)
 	case OpJump, OpJumpIfFalse, OpJumpIfTrue, OpGotoLabel,
 		OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter,
-		OpJSCase, OpJSDefault, OpJSBreak, OpJSContinue, OpJSForInCleanup:
+		OpJSCase, OpJSDefault, OpJSBreak, OpJSContinue, OpJSForInCleanup, OpJSForOfCleanup:
 		return 4
 	// 4-byte operands
 	case OpLine, OpCallMember, OpArraySet, OpCallBuiltin, OpSetDirective, OpSetOption, OpJSCallMember:
@@ -844,6 +846,9 @@ func opcodeOperandSize(op OpCode) int {
 		return 6
 	// 6-byte operands for OpJSForIn: EnumVarIdx(2) + LoopStartTarget(4)
 	case OpJSForIn:
+		return 6
+	// 6-byte operands for OpJSForOf: EnumVarIdx(2) + exitTarget(4)
+	case OpJSForOf:
 		return 6
 	// 8-byte operands: classNameIdx(2) + methodNameIdx(2) + userSubIdx(2) + isPublic(2)
 	case OpRegisterClassMethod:
@@ -880,7 +885,7 @@ func remapExecuteGlobalBytecode(bytecode []byte, constBase int, bytecodeBase int
 			idx := int(binary.BigEndian.Uint16(bytecode[ip:])) + constBase
 			binary.BigEndian.PutUint16(bytecode[ip:], uint16(idx))
 			ip += 2
-		case OpJump, OpJumpIfFalse, OpJumpIfTrue, OpGotoLabel, OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter, OpJSCase, OpJSDefault, OpJSBreak, OpJSContinue, OpJSForInCleanup:
+		case OpJump, OpJumpIfFalse, OpJumpIfTrue, OpGotoLabel, OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter, OpJSCase, OpJSDefault, OpJSBreak, OpJSContinue, OpJSForInCleanup, OpJSForOfCleanup:
 			target := int(binary.BigEndian.Uint32(bytecode[ip:])) + bytecodeBase
 			binary.BigEndian.PutUint32(bytecode[ip:], uint32(target))
 			ip += 4
@@ -902,6 +907,14 @@ func remapExecuteGlobalBytecode(bytecode []byte, constBase int, bytecodeBase int
 			ip += 2
 			loopStartTarget := int(binary.BigEndian.Uint32(bytecode[ip:])) + bytecodeBase
 			binary.BigEndian.PutUint32(bytecode[ip:], uint32(loopStartTarget))
+			ip += 4
+		case OpJSForOf:
+			// EnumVarIdx(2) + exitTarget(4)
+			foVarIdx := int(binary.BigEndian.Uint16(bytecode[ip:])) + constBase
+			binary.BigEndian.PutUint16(bytecode[ip:], uint16(foVarIdx))
+			ip += 2
+			foExitTarget := int(binary.BigEndian.Uint32(bytecode[ip:])) + bytecodeBase
+			binary.BigEndian.PutUint32(bytecode[ip:], uint32(foExitTarget))
 			ip += 4
 		case OpRegisterClass:
 			classIdx := int(binary.BigEndian.Uint16(bytecode[ip:])) + constBase
@@ -1176,6 +1189,7 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.jsPropertyItems = child.jsPropertyItems
 	vm.jsFunctionItems = child.jsFunctionItems
 	vm.jsForInItems = child.jsForInItems
+	vm.jsForOfItems = child.jsForOfItems
 	vm.jsEnvItems = child.jsEnvItems
 	vm.jsArgumentsItems = child.jsArgumentsItems
 	vm.jsSetItems = child.jsSetItems
@@ -2684,6 +2698,59 @@ aspExecLoop:
 
 			vm.jsSetName(vm.constants[enumNameIdx].Str, NewString(enumState.keys[enumState.index]))
 			enumState.index++
+
+		case OpJSForOfCleanup:
+			// Remove stale for-of enumerator on early exit (break/throw).
+			forOfPos := int(binary.BigEndian.Uint32(vm.bytecode[vm.ip:]))
+			vm.ip += 4
+			delete(vm.jsForOfItems, forOfPos)
+			if vm.sp >= 0 {
+				vm.pop()
+			}
+
+		case OpJSForOf:
+			// Iterate over the VALUES of an iterable (array, string, Set, Map, etc.).
+			// Format: nameConstIdx(2) + exitTarget(4)
+			foNameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			vm.ip += 2
+			foExitTarget := int(binary.BigEndian.Uint32(vm.bytecode[vm.ip:]))
+			vm.ip += 4
+
+			opPos := vm.ip - 7
+			foState := vm.jsForOfItems[opPos]
+			if foState == nil {
+				// First encounter: collect iterable values and pop the source.
+				if vm.sp < 0 {
+					vm.ip = foExitTarget
+					continue
+				}
+				source := vm.stack[vm.sp]
+				values := vm.jsEnumerateForOfValues(source)
+				foState = &jsForOfEnumerator{values: values, index: 0}
+				vm.jsForOfItems[opPos] = foState
+			}
+
+			if foState.index >= len(foState.values) {
+				// Exhausted: clean up and jump past the loop.
+				delete(vm.jsForOfItems, opPos)
+				if vm.sp >= 0 {
+					vm.pop()
+				}
+				vm.ip = foExitTarget
+				continue
+			}
+
+			// Assign the next value to the loop variable.
+			vm.jsSetName(vm.constants[foNameIdx].Str, foState.values[foState.index])
+			foState.index++
+
+		case OpJSComputedPropertySet:
+			// Pops key (top), value (next), object (next); sets object[key] = value.
+			// The outer object reference below remains on the stack.
+			key := vm.pop()
+			val := vm.pop()
+			obj := vm.pop()
+			vm.jsIndexSet(obj, key, val)
 
 		case OpJSSwitch:
 			// Switch statement - discriminant value on stack, cases follow

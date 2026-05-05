@@ -685,6 +685,9 @@ func (vm *VM) ensureDynamicMaps() {
 	if vm.jsForInItems == nil {
 		vm.jsForInItems = make(map[int]*jsForInEnumerator)
 	}
+	if vm.jsForOfItems == nil {
+		vm.jsForOfItems = make(map[int]*jsForOfEnumerator)
+	}
 	if vm.jsEnvItems == nil {
 		vm.jsEnvItems = make(map[int64]*jsEnvFrame)
 	}
@@ -750,6 +753,7 @@ func (vm *VM) resetDynamicMaps() {
 	clear(vm.jsPropertyItems)
 	clear(vm.jsFunctionItems)
 	clear(vm.jsForInItems)
+	clear(vm.jsForOfItems)
 	clear(vm.jsEnvItems)
 	clear(vm.jsCallStack)
 	vm.jsCallStack = vm.jsCallStack[:0]

@@ -314,6 +314,35 @@ const (
 	//          exitTargetB3(1), exitTargetB2(1), exitTargetB1(1), exitTargetB0(1)]
 	// Total: 9 bytes (1 opcode + 8 operand bytes).
 	OpJSJumpIfLessFast
+
+	// OpJSComputedPropertySet sets a computed property key on an object literal being built.
+	// It pops the key (top), then the value (next), then the target object (next),
+	// and calls jsIndexSet(obj, key, value). The outer object reference below on the stack
+	// is left intact so subsequent properties can continue to reference the object.
+	//
+	// Stack before: ..., obj (outer), obj (dup), value, key
+	// Stack after:  ..., obj (outer)
+	// Format: [OpCode(1)]  (0 operand bytes).
+	OpJSComputedPropertySet
+
+	// OpJSForOf iterates over the values of an iterable (Array, String, Map, Set, etc.).
+	// On first encounter the source value is popped from the stack and its values are
+	// collected into an enumerator keyed by the opcode position. On each pass the next
+	// value is assigned to the named variable; when exhausted the opcode jumps to exitTarget
+	// and removes the enumerator.
+	//
+	// Stack: source value consumed on first pass; no further stack impact per iteration.
+	// Format: [OpCode(1), nameConstIdxH(1), nameConstIdxL(1),
+	//          exitTargetB3(1), exitTargetB2(1), exitTargetB1(1), exitTargetB0(1)]
+	// Total: 7 bytes (1 opcode + 6 operand bytes).
+	OpJSForOf
+
+	// OpJSForOfCleanup removes the for-of enumerator created at the given bytecode position.
+	// Emitted after a break out of the loop so the enumerator does not leak.
+	//
+	// Format: [OpCode(1), forOfPosB3(1), forOfPosB2(1), forOfPosB1(1), forOfPosB0(1)]
+	// Total: 5 bytes (1 opcode + 4 operand bytes).
+	OpJSForOfCleanup
 )
 
 func (op OpCode) String() string {
@@ -610,6 +639,12 @@ func (op OpCode) String() string {
 		return "OpForNextFastInt"
 	case OpJSJumpIfLessFast:
 		return "OpJSJumpIfLessFast"
+	case OpJSComputedPropertySet:
+		return "OpJSComputedPropertySet"
+	case OpJSForOf:
+		return "OpJSForOf"
+	case OpJSForOfCleanup:
+		return "OpJSForOfCleanup"
 	default:
 		return "OpUnknown"
 	}

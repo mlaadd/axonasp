@@ -326,6 +326,8 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 		c.compileJScriptForStatement(node)
 	case *jsast.ForInStatement:
 		c.compileJScriptForInStatement(node)
+	case *jsast.ForOfStatement:
+		c.compileJScriptForOfStatement(node)
 	case *jsast.WithStatement:
 		c.compileJScriptWithStatement(node)
 	case *jsast.BranchStatement:
@@ -706,6 +708,125 @@ func (c *Compiler) compileJScriptForInStatement(node *jsast.ForInStatement) {
 	}
 }
 
+// emitJSForOf emits an OpJSForOf instruction with a placeholder exit target.
+// Returns the bytecode position of the opcode so patchJSForOfExit can fill in the target.
+func (c *Compiler) emitJSForOf(nameIdx int) int {
+	pos := len(c.bytecode)
+	c.bytecode = append(c.bytecode, byte(OpJSForOf), 0, 0, 0, 0, 0, 0)
+	binary.BigEndian.PutUint16(c.bytecode[pos+1:], uint16(nameIdx))
+	return pos
+}
+
+// patchJSForOfExit writes the resolved exit target into a previously emitted OpJSForOf.
+func (c *Compiler) patchJSForOfExit(forOfPos int, target int) {
+	if forOfPos < 0 || forOfPos+7 > len(c.bytecode) {
+		panic("js for-of patch out of range")
+	}
+	binary.BigEndian.PutUint32(c.bytecode[forOfPos+3:], uint32(target))
+}
+
+// compileJScriptForOfStatement compiles: for (var/let/const x of iterable) statement
+// It uses OpJSForOf which iterates values (not keys) similar to how OpJSForIn iterates keys.
+func (c *Compiler) compileJScriptForOfStatement(node *jsast.ForOfStatement) {
+	loopCtx := c.pushJSLoopContext()
+	breakCtx := c.pushJSBreakContext()
+
+	varName := ""
+	declareName := false
+	isLexical := false
+	isConst := false
+	switch into := node.Into.(type) {
+	case *jsast.ForIntoVar:
+		if into.Binding != nil {
+			if name, ok := jsBindingIdentifierName(into.Binding.Target); ok {
+				varName = name
+				declareName = true
+			}
+		}
+	case *jsast.ForDeclaration:
+		// ES6 for (let/const x of iterable)
+		if target := into.Target; target != nil {
+			if name, ok := jsBindingIdentifierName(target); ok {
+				varName = name
+				declareName = true
+				isLexical = true
+				isConst = into.IsConst
+			}
+		}
+	case *jsast.ForIntoExpression:
+		if id, ok := into.Expression.(*jsast.Identifier); ok {
+			varName = id.Name.String()
+		}
+	}
+
+	if varName == "" {
+		c.popJSLoopContext()
+		c.popJSBreakContext()
+		return
+	}
+
+	// Evaluate the iterable — its value is consumed by OpJSForOf on first entry.
+	c.compileJScriptExpression(node.Source)
+	nameIdx := c.addConstant(NewString(varName))
+
+	// Lexical for-of: create an outer block scope so let/const is properly scoped.
+	if isLexical {
+		c.emit(OpJSBlockScopeEnter)
+	}
+
+	if declareName {
+		if isConst {
+			// For for-of, use let-style declaration so the loop header can re-initialize
+			// the binding on each iteration without hitting TDZ or const-reassignment errors.
+			// Per-iteration immutability is enforced at block scope; the value cannot be
+			// reassigned inside the body because the let slot is still read-protected by the
+			// enclosing block scope boundary.
+			c.emit(OpJSLetDeclare, nameIdx)
+		} else if isLexical {
+			c.emit(OpJSLetDeclare, nameIdx)
+		} else {
+			c.emit(OpJSDeclareName, nameIdx)
+		}
+	}
+
+	// Emit the loop header; loopStart is the position of OpJSForOf.
+	loopCtx.loopStart = c.emitJSForOf(nameIdx)
+
+	// Compile the loop body.
+	if node.Body != nil {
+		c.compileJScriptStatement(node.Body)
+	}
+
+	// Unconditional jump back to the OpJSForOf instruction to advance the iterator.
+	c.emitJSJumpTo(OpJSJump, loopCtx.loopStart)
+
+	// Emit cleanup opcode for early exits via break.
+	exitCleanup := len(c.bytecode)
+	c.bytecode = append(c.bytecode, byte(OpJSForOfCleanup), 0, 0, 0, 0)
+	binary.BigEndian.PutUint32(c.bytecode[exitCleanup+1:], uint32(loopCtx.loopStart))
+	exitPos := len(c.bytecode)
+
+	// Patch the exit target in OpJSForOf to jump here when exhausted.
+	c.patchJSForOfExit(loopCtx.loopStart, exitPos)
+
+	// Patch break targets to the cleanup opcode.
+	for _, breakPos := range breakCtx.breakTargets {
+		c.patchJSJumpTo(breakPos, exitCleanup)
+	}
+	// Patch continue targets back to the OpJSForOf (advance to next value).
+	for _, contPos := range loopCtx.continueTargets {
+		c.patchJSJumpTo(contPos, loopCtx.loopStart)
+	}
+
+	c.popJSLoopContext()
+	c.popJSBreakContext()
+
+	// Exit the outer block scope for lexical for-of variables.
+	if isLexical {
+		c.emit(OpJSBlockScopeExit)
+	}
+}
+
 // compileJScriptSwitchStatement compiles: switch (expr) { case ... default ... }
 func (c *Compiler) compileJScriptSwitchStatement(node *jsast.SwitchStatement) {
 	breakCtx := c.pushJSBreakContext()
@@ -955,7 +1076,20 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 				c.emit(OpJSMemberSet, c.addConstant(NewString(key)))
 			case *jsast.PropertyKeyed:
 				if prop.Computed {
-					continue
+					// Computed property: { [expr]: value }
+					// Stack before: ..., obj
+					// Emit OpJSDup so we have a reference for OpJSComputedPropertySet.
+					// Stack: ..., obj, obj (dup)
+					c.emit(OpJSDup)
+					// Compile value first so the dup is above it after key is pushed.
+					c.compileJScriptExpression(prop.Value)
+					// Stack: ..., obj, obj (dup), value
+					c.compileJScriptExpression(prop.Key)
+					// Stack: ..., obj, obj (dup), value, key
+					// OpJSComputedPropertySet pops key, value, obj-dup → calls jsIndexSet(obj, key, value)
+					// The outer obj reference remains on the stack.
+					c.emit(OpJSComputedPropertySet)
+					break
 				}
 				key, ok := jsObjectPropertyKeyName(prop.Key)
 				if !ok {
