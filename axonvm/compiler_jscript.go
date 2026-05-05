@@ -35,7 +35,9 @@ import (
 	jsunistring "g3pix.com.br/axonasp/jscript/unistring"
 )
 
-var jscriptCallAssignmentPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\(([^\)]*)\)\s*=\s*([^;\r\n]+);`)
+var jscriptCallAssignmentPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\(([^\)]*)\)\s*=\s+([^;\r\n]+);`)
+
+const jsRestParamTemplatePrefix = "__js_rest__:"
 
 // compileJScriptBlock parses one JScript source block and emits isolated OpJS bytecode.
 func (c *Compiler) compileJScriptBlock(source string) {
@@ -918,14 +920,46 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 			}
 		}
 	case *jsast.ArrayLiteral:
+		// ES6 spread in array literals is emitted as push/spread-push calls on a
+		// single target array to preserve evaluation order.
+		hasSpread := false
 		for i := range node.Value {
+			if _, ok := node.Value[i].(*jsast.SpreadElement); ok {
+				hasSpread = true
+				break
+			}
+		}
+		if !hasSpread {
+			for i := range node.Value {
+				if node.Value[i] == nil {
+					c.emit(OpJSLoadUndefined)
+					continue
+				}
+				c.compileJScriptExpression(node.Value[i])
+			}
+			c.emit(OpJSNewArray, len(node.Value))
+			break
+		}
+
+		c.emit(OpJSNewArray, 0)
+		for i := range node.Value {
+			c.emit(OpJSDup)
 			if node.Value[i] == nil {
 				c.emit(OpJSLoadUndefined)
+				c.emit(OpJSCallMember, c.addConstant(NewString("push")), 1)
+				c.emit(OpJSPop)
+				continue
+			}
+			if spread, ok := node.Value[i].(*jsast.SpreadElement); ok {
+				c.compileJScriptExpression(spread.Expression)
+				c.emit(OpJSCallMember, c.addConstant(NewString("__spreadPush")), 1)
+				c.emit(OpJSPop)
 				continue
 			}
 			c.compileJScriptExpression(node.Value[i])
+			c.emit(OpJSCallMember, c.addConstant(NewString("push")), 1)
+			c.emit(OpJSPop)
 		}
-		c.emit(OpJSNewArray, len(node.Value))
 	case *jsast.RegExpLiteral:
 		c.emit(OpJSGetName, c.addConstant(NewString("RegExp")))
 		c.emit(OpConstant, c.addConstant(NewString(node.Pattern)))
@@ -991,6 +1025,10 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 		c.patchJSJump(jumpFalse)
 		c.compileJScriptExpression(node.Alternate)
 		c.patchJSJump(jumpEnd)
+	case *jsast.TemplateLiteral:
+		c.compileJScriptTemplateLiteral(node)
+	case *jsast.ArrowFunctionLiteral:
+		c.compileJScriptArrowFunctionLiteral(node)
 	default:
 		c.emit(OpJSLoadUndefined)
 	}
@@ -1187,6 +1225,10 @@ func (c *Compiler) compileJScriptCall(node *jsast.CallExpression) {
 func (c *Compiler) compileJScriptFunctionLiteral(fn *jsast.FunctionLiteral, fallbackName string) {
 	jumpOverBody := c.emitJSJump(OpJSJump)
 	bodyStart := len(c.bytecode)
+
+	// Emit default parameter guards before the function body.
+	c.compileJScriptDefaultParamGuards(fn.ParameterList)
+
 	if fn.Body != nil {
 		for i := range fn.Body.List {
 			c.compileJScriptStatement(fn.Body.List[i])
@@ -1233,6 +1275,30 @@ func (c *Compiler) compileJScriptFunctionLiteral(fn *jsast.FunctionLiteral, fall
 					paramSeen[paramName] = struct{}{}
 				}
 				params = append(params, paramName)
+			}
+		}
+		if fn.ParameterList.Rest != nil {
+			if restID, ok := fn.ParameterList.Rest.(*jsast.Identifier); ok {
+				restName := restID.Name.String()
+				if c.jsStrictMode && jsIsRestrictedIdentifier(restName) {
+					jsErr := jscript.NewJSSyntaxError(jscript.IllegalAssignment, 0, 0)
+					jsErr.WithASPDescription(fmt.Sprintf("parameter name '%s' is not allowed in strict mode", restName))
+					if c.sourceName != "" {
+						jsErr.WithFile(c.sourceName)
+					}
+					panic(jsErr)
+				}
+				if c.jsStrictMode {
+					if _, duplicate := paramSeen[restName]; duplicate {
+						jsErr := jscript.NewJSSyntaxError(jscript.SyntaxError, 0, 0)
+						jsErr.WithASPDescription(fmt.Sprintf("duplicate parameter name '%s' not allowed in strict mode", restName))
+						if c.sourceName != "" {
+							jsErr.WithFile(c.sourceName)
+						}
+						panic(jsErr)
+					}
+				}
+				params = append(params, jsRestParamTemplatePrefix+restName)
 			}
 		}
 	}
@@ -1397,6 +1463,133 @@ func (c *Compiler) patchJSJumpTo(offsetIndex int, jumpTarget int) {
 // ---------------------------------------------------------------------------
 // JScript compile-time constant folding (AST pre-pass)
 // ---------------------------------------------------------------------------
+
+// compileJScriptTemplateLiteral compiles an ES6 template literal into a series of
+// string concatenation operations on the stack, producing a single string value.
+// Multi-line strings are supported natively since newlines are preserved in the
+// element text. Tagged templates are not yet supported and emit undefined.
+func (c *Compiler) compileJScriptTemplateLiteral(node *jsast.TemplateLiteral) {
+	// Tagged templates: not supported in this initial implementation.
+	if node.Tag != nil {
+		c.emit(OpJSLoadUndefined)
+		return
+	}
+	// Plain template with no expressions: emit as a string constant.
+	if len(node.Expressions) == 0 {
+		str := ""
+		if len(node.Elements) > 0 && node.Elements[0].Valid {
+			str = node.Elements[0].Parsed.String()
+		}
+		c.emit(OpConstant, c.addConstant(NewString(str)))
+		return
+	}
+	// Build: elem[0] + expr[0] + elem[1] + expr[1] + ... + elem[n].
+	// Starting with the first static element ensures the concatenation chain
+	// begins as a string, triggering JS string coercion for all following values.
+	firstElem := ""
+	if len(node.Elements) > 0 && node.Elements[0].Valid {
+		firstElem = node.Elements[0].Parsed.String()
+	}
+	c.emit(OpConstant, c.addConstant(NewString(firstElem)))
+	for i, exprNode := range node.Expressions {
+		c.compileJScriptExpression(exprNode)
+		c.emit(OpJSAdd)
+		elemStr := ""
+		if i+1 < len(node.Elements) && node.Elements[i+1].Valid {
+			elemStr = node.Elements[i+1].Parsed.String()
+		}
+		c.emit(OpConstant, c.addConstant(NewString(elemStr)))
+		c.emit(OpJSAdd)
+	}
+}
+
+// compileJScriptArrowFunctionLiteral compiles an ES6 arrow function expression.
+// Arrow functions capture 'this' lexically from the enclosing scope; they do not
+// bind their own 'this' when called. Concise bodies (x => expr) emit an implicit
+// return; block bodies behave like regular functions.
+func (c *Compiler) compileJScriptArrowFunctionLiteral(fn *jsast.ArrowFunctionLiteral) {
+	jumpOverBody := c.emitJSJump(OpJSJump)
+	bodyStart := len(c.bytecode)
+
+	// Emit default parameter guards for any parameters that have an initializer.
+	c.compileJScriptDefaultParamGuards(fn.ParameterList)
+
+	switch body := fn.Body.(type) {
+	case *jsast.ExpressionBody:
+		// Concise body: `(x) => x * 2` — expression result is implicitly returned.
+		c.compileJScriptExpression(body.Expression)
+		c.emit(OpJSReturn)
+	case *jsast.BlockStatement:
+		for i := range body.List {
+			c.compileJScriptStatement(body.List[i])
+		}
+		c.emit(OpJSLoadUndefined)
+		c.emit(OpJSReturn)
+	default:
+		c.emit(OpJSLoadUndefined)
+		c.emit(OpJSReturn)
+	}
+
+	bodyEnd := len(c.bytecode)
+	c.patchJSJump(jumpOverBody)
+
+	params := make([]string, 0)
+	if fn.ParameterList != nil {
+		params = make([]string, 0, len(fn.ParameterList.List))
+		for _, b := range fn.ParameterList.List {
+			if b == nil || b.Target == nil {
+				continue
+			}
+			if p, ok := b.Target.(*jsast.Identifier); ok {
+				params = append(params, p.Name.String())
+			}
+		}
+		if fn.ParameterList.Rest != nil {
+			if restID, ok := fn.ParameterList.Rest.(*jsast.Identifier); ok {
+				params = append(params, jsRestParamTemplatePrefix+restID.Name.String())
+			}
+		}
+	}
+
+	templateIdx := c.addConstant(Value{
+		Type:  VTJSArrowFunctionTemplate,
+		Num:   int64(bodyStart),
+		Flt:   float64(bodyEnd),
+		Str:   "",
+		Names: params,
+	})
+	c.emit(OpJSCreateClosure, templateIdx)
+}
+
+// compileJScriptDefaultParamGuards emits bytecode at the beginning of a function
+// body that checks each parameter with a default value and assigns the default
+// expression when the actual argument was not provided (i.e., is undefined).
+func (c *Compiler) compileJScriptDefaultParamGuards(paramList *jsast.ParameterList) {
+	if paramList == nil {
+		return
+	}
+	for _, b := range paramList.List {
+		if b == nil || b.Initializer == nil {
+			continue
+		}
+		p, ok := b.Target.(*jsast.Identifier)
+		if !ok {
+			continue
+		}
+		paramName := p.Name.String()
+		nameIdx := c.addConstant(NewString(paramName))
+
+		// if (param === undefined) { param = defaultExpr; }
+		c.emit(OpJSGetName, nameIdx)
+		c.emit(OpJSLoadUndefined)
+		c.emit(OpJSStrictEq)
+		// JumpIfFalse skips the default assignment when param is NOT undefined.
+		skipJump := c.emitJSJump(OpJSJumpIfFalse)
+		c.compileJScriptExpression(b.Initializer)
+		c.emit(OpJSSetName, nameIdx)
+		c.patchJSJump(skipJump)
+	}
+}
 
 // foldJSExpr recursively attempts to fold a JScript AST expression to a
 // simpler literal at compile time. It mutates BinaryExpression children

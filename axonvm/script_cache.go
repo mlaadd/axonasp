@@ -1486,7 +1486,7 @@ func writeSerializedValue(writer io.Writer, value Value) error {
 	}
 
 	switch value.Type {
-	case VTString, VTUserSub, VTJSFunctionTemplate:
+	case VTString, VTUserSub, VTJSFunctionTemplate, VTJSArrowFunctionTemplate, VTSymbol:
 		if err := writeString(writer, value.Str); err != nil {
 			return err
 		}
@@ -1497,7 +1497,7 @@ func writeSerializedValue(writer io.Writer, value Value) error {
 		return NewAxonASPError(ErrInvalidCacheFile, nil, ErrInvalidCacheFile.String(), "", 0)
 	}
 
-	if value.Type == VTUserSub || value.Type == VTJSFunctionTemplate {
+	if value.Type == VTUserSub || value.Type == VTJSFunctionTemplate || value.Type == VTJSArrowFunctionTemplate {
 		if err := writeStringSlice(writer, value.Names); err != nil {
 			return err
 		}
@@ -1521,7 +1521,7 @@ func readSerializedValue(reader io.Reader) (Value, error) {
 	}
 
 	switch valueType {
-	case VTString, VTUserSub, VTJSFunctionTemplate:
+	case VTString, VTUserSub, VTJSFunctionTemplate, VTJSArrowFunctionTemplate, VTSymbol:
 		stringValue, err := readString(reader)
 		if err != nil {
 			return Value{}, err
@@ -1534,7 +1534,7 @@ func readSerializedValue(reader io.Reader) (Value, error) {
 		return Value{}, NewAxonASPError(ErrInvalidCacheFile, nil, ErrInvalidCacheFile.String(), "", 0)
 	}
 
-	if valueType == VTUserSub || valueType == VTJSFunctionTemplate {
+	if valueType == VTUserSub || valueType == VTJSFunctionTemplate || valueType == VTJSArrowFunctionTemplate {
 		names, err := readStringSlice(reader)
 		if err != nil {
 			return Value{}, err

@@ -343,6 +343,9 @@ type VM struct {
 	jsForInItems                   map[int]*jsForInEnumerator
 	jsEnvItems                     map[int64]*jsEnvFrame
 	jsArgumentsItems               map[int64]*jsArgumentsBinding
+	jsSetItems                     map[int64]map[string]struct{}
+	jsMapItems                     map[int64]map[string]Value
+	jsNextSymbolID                 int64
 	jsStrictMode                   bool                  // Current strict mode state
 	jsFunctionStrictModes          map[int64]bool        // Maps function IDs to strict mode status
 	jsBlockScopes                  []map[string]Value    // Stack of block-scoped (let/const) variable values
@@ -543,6 +546,9 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		jsForInItems:                   make(map[int]*jsForInEnumerator),
 		jsEnvItems:                     make(map[int64]*jsEnvFrame),
 		jsArgumentsItems:               make(map[int64]*jsArgumentsBinding),
+		jsSetItems:                     make(map[int64]map[string]struct{}),
+		jsMapItems:                     make(map[int64]map[string]Value),
+		jsNextSymbolID:                 1,
 		jsFunctionStrictModes:          make(map[int64]bool),
 		jsBlockScopes:                  make([]map[string]Value, 0, 32),
 		jsBlockScopeConst:              make([]map[string]struct{}, 0, 32),
@@ -1146,6 +1152,9 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.jsForInItems = child.jsForInItems
 	vm.jsEnvItems = child.jsEnvItems
 	vm.jsArgumentsItems = child.jsArgumentsItems
+	vm.jsSetItems = child.jsSetItems
+	vm.jsMapItems = child.jsMapItems
+	vm.jsNextSymbolID = child.jsNextSymbolID
 }
 
 // syncExecuteLocalState propagates stack and frame state back after Execute/Eval.
@@ -1201,6 +1210,11 @@ func (vm *VM) Run() (err error) {
 		vm.host.Server().BeginExecution()
 		defer vm.host.Server().EndExecution()
 	}
+	defer func() {
+		if !vm.suppressTerminate {
+			vm.jsCleanupCollections()
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			if endSignal, ok := r.(string); ok && endSignal == asp.ResponseEndSignal {
@@ -2277,9 +2291,7 @@ aspExecLoop:
 			}
 			callee := vm.pop()
 			result := vm.jsCall(callee, Value{Type: VTJSUndefined}, args)
-			if len(vm.jsCallStack) == 0 || result.Type != VTJSUndefined {
-				vm.push(result)
-			}
+			vm.push(result)
 
 		case OpJSCallMember:
 			nameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
@@ -2293,9 +2305,7 @@ aspExecLoop:
 			target := vm.pop()
 			member := vm.constants[nameIdx].Str
 			if result, handled := vm.jsCallMember(target, member, args); handled {
-				if len(vm.jsCallStack) == 0 || result.Type != VTJSUndefined {
-					vm.push(result)
-				}
+				vm.push(result)
 				continue
 			}
 			switch target.Type {
@@ -2310,10 +2320,7 @@ aspExecLoop:
 						callThis = args[0]
 						callArgs = args[1:]
 					}
-					result := vm.jsCall(target, callThis, callArgs)
-					if len(vm.jsCallStack) == 0 || result.Type != VTJSUndefined {
-						vm.push(result)
-					}
+					vm.push(vm.jsCall(target, callThis, callArgs))
 				case strings.EqualFold(member, "apply"):
 					applyThis := Value{Type: VTJSUndefined}
 					var applyArgs []Value
@@ -2323,10 +2330,7 @@ aspExecLoop:
 					if len(args) > 1 {
 						applyArgs = vm.jsExtractApplyArgs(args[1])
 					}
-					result := vm.jsCall(target, applyThis, applyArgs)
-					if len(vm.jsCallStack) == 0 || result.Type != VTJSUndefined {
-						vm.push(result)
-					}
+					vm.push(vm.jsCall(target, applyThis, applyArgs))
 				case strings.EqualFold(member, "bind"):
 					bindThis := Value{Type: VTJSUndefined}
 					bindArgs := args[:0]
@@ -2340,20 +2344,14 @@ aspExecLoop:
 					if deferred {
 						continue
 					}
-					result := vm.jsCall(callee, target, args)
-					if len(vm.jsCallStack) == 0 || result.Type != VTJSUndefined {
-						vm.push(result)
-					}
+					vm.push(vm.jsCall(callee, target, args))
 				}
 			case VTJSObject, VTArray, VTString, VTDate:
 				callee, deferred := vm.jsMemberGet(target, member)
 				if deferred {
 					continue
 				}
-				result := vm.jsCall(callee, target, args)
-				if len(vm.jsCallStack) == 0 || result.Type != VTJSUndefined {
-					vm.push(result)
-				}
+				vm.push(vm.jsCall(callee, target, args))
 			default:
 				vm.push(Value{Type: VTJSUndefined})
 			}

@@ -50,9 +50,14 @@ const (
 	VTJSFunction
 	// VTJSFunctionTemplate is a compile-time constant describing one JS function body.
 	VTJSFunctionTemplate
+	// VTJSArrowFunctionTemplate is a compile-time constant describing one JS arrow function body.
+	// Arrow functions capture the enclosing 'this' value at closure creation time.
+	VTJSArrowFunctionTemplate
 	// VTArgRef is a synthetic value type emitted only at call sites to carry a ByRef
 	// slot reference alongside the argument value for post-call write-back.
 	VTArgRef
+	// VTSymbol represents the JavaScript Symbol primitive.
+	VTSymbol
 )
 
 type Value struct {
@@ -107,6 +112,11 @@ func (v Value) String() string {
 		return fmt.Sprintf("[JSFunctionTemplate:%d]", v.Num)
 	case VTArgRef:
 		return "[ArgRef]"
+	case VTSymbol:
+		if v.Str == "" {
+			return "Symbol()"
+		}
+		return "Symbol(" + v.Str + ")"
 	default:
 		return "Unknown"
 	}
