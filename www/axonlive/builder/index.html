@@ -235,6 +235,23 @@
                             </div>
                         </div>
 
+                        <!-- MD Viewer specific -->
+                        <div v-if="selectedComponent.type === 'mdviewer'">
+                            <div class="prop-group">
+                                <label class="prop-label">Markdown File Path</label>
+                                <input type="text" class="prop-input" v-model="selectedComponent.mdFile"
+                                    placeholder="/docs/readme.md">
+                                <p style="font-size:9px; color:#666; margin-top:2px;">Virtual path to the .md file. Read
+                                    via G3FILES on page load.</p>
+                            </div>
+                            <div class="prop-group">
+                                <label><input type="checkbox" v-model="selectedComponent.unsafe"> Allow raw HTML in
+                                    Markdown</label>
+                                <p style="font-size:9px; color:#666; margin-top:2px;">Sets G3MD.Unsafe. Enable only for
+                                    trusted content.</p>
+                            </div>
+                        </div>
+
                         <!-- File Uploader specific -->
                         <div v-if="selectedComponent.type === 'fileuploader'">
                             <div class="prop-group">

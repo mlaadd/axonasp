@@ -21,6 +21,7 @@ const availableComponents = [
     { type: 'label', label: 'Label / Text' },
     { type: 'hr', label: 'Horizontal Rule' },
     { type: 'fileuploader', label: 'File Uploader' },
+    { type: 'mdviewer', label: 'MD Viewer' },
     { type: 'hiddenfield', label: 'Hidden Field' },
     { type: 'image', label: 'Image' },
     { type: 'iframe', label: 'iFrame' },
@@ -90,6 +91,12 @@ function createComponentInstance(type) {
             allowedExtensions: '', blockedExtensions: 'exe,bat', preserveName: true, savedFileName: '',
             showUploadButton: true, uploadButtonText: 'Send File',
             reRender: true // To update result label
+        };
+        case 'mdviewer': return {
+            ...base, width: '400px', height: '300px',
+            mdFile: '', // Virtual path to .md file (e.g. /docs/readme.md)
+            unsafe: true, // Allow raw HTML in Markdown (G3MD.Unsafe)
+            reRender: true
         };
         case 'hiddenfield': return { ...base, value: '', position: 'static', width: '0px', height: '0px' };
         case 'image': return { ...base, src: 'https://g3pix.com.br/axonasp/apple-icon-60x60.png', width: '60px', height: '60px' };
@@ -333,6 +340,13 @@ const ComponentRenderer = {
                 <input type="file" style="width:100%" disabled>
                 <button v-if="comp.showUploadButton" type="button" class="btn btn-primary" style="margin-top:5px;" disabled>{{ comp.uploadButtonText || 'Send File' }}</button>
                 <div style="font-size:10px; color:#666; margin-top:5px;">Result: Ready to upload</div>
+            </div>
+
+            <div v-else-if="comp.type === 'mdviewer'" style="width:100%; height:100%; overflow:auto; border:1px dashed #6699cc; background:#f8faff; padding:8px; box-sizing:border-box;">
+                <div style="font-size:10px; font-weight:bold; color:#003399; border-bottom:1px solid #c0c8d8; padding-bottom:3px; margin-bottom:6px;">MD VIEWER</div>
+                <div v-if="comp.mdFile" style="font-size:11px; color:#444; font-style:italic;">File: {{ comp.mdFile }}</div>
+                <div v-else style="font-size:11px; color:#999; font-style:italic;">No file configured — content will be empty on load.</div>
+                <div style="font-size:10px; color:#888; margin-top:4px;">Rendered via G3MD on server side.</div>
             </div>
 
             <div v-else-if="comp.type === 'hiddenfield'" style="width:20px; height:20px; background:#ddd; border:1px solid #333; text-align:center; font-size:10px;">H</div>
@@ -957,6 +971,9 @@ const app = createApp({
                     html += `${indent}<div ${attrs}>\n`;
                     html += `${indent}    ${renderUploaderInner(comp, `<%=Server.HTMLEncode(String(${comp.id}_val || "Ready"))%>`)}\n`;
                     html += `${indent}</div>\n`;
+                } else if (comp.type === 'mdviewer') {
+                    // _val holds the G3MD-rendered HTML; emit raw (do not HTMLEncode)
+                    html += `${indent}<div ${attrs}><%=${comp.id}_val%></div>\n`;
                 } else if (comp.type === 'hiddenfield') {
                     html += `${indent}<input type="hidden" ${attrs} value="${comp.value || ''}">\n`;
                 } else if (comp.type === 'image') {
@@ -1013,7 +1030,7 @@ const app = createApp({
         const collectStateComponents = (compList, result) => {
             result = result || [];
             for (const comp of compList) {
-                if (comp.reRender && (comp.type === 'label' || comp.type === 'input' || comp.type === 'textarea' || comp.type === 'select' || comp.type === 'checkbox' || comp.type === 'radio' || comp.type === 'hiddenfield' || comp.type === 'fileuploader')) {
+                if (comp.reRender && (comp.type === 'label' || comp.type === 'input' || comp.type === 'textarea' || comp.type === 'select' || comp.type === 'checkbox' || comp.type === 'radio' || comp.type === 'hiddenfield' || comp.type === 'fileuploader' || comp.type === 'mdviewer')) {
                     result.push(comp);
                 }
                 if (comp.children) collectStateComponents(comp.children, result);
@@ -1031,9 +1048,29 @@ const app = createApp({
             if (stateComps.length === 0) return "";
             let js = "// Restore persisted component state (survives across async re-executions)\n";
             for (const comp of stateComps) {
-                const defaultVal = (comp.text || comp.value || "").replace(/"/g, '\\"');
                 js += `var ${comp.id}_val = AxonLive.GetComponentProperty(sessionID, "${comp.id}", "val");\n`;
-                js += `if (${comp.id}_val === null || ${comp.id}_val === "") { ${comp.id}_val = "${defaultVal}"; }\n`;
+                if (comp.type === 'mdviewer') {
+                    // MD Viewer: on first load, read and render the configured markdown file via G3FILES + G3MD.
+                    // Server.MapPath resolves the virtual path so both HTTP server and CLI work correctly.
+                    // Use falsy check: GetComponentProperty returns undefined (not null/"") on first load
+                    js += `if (!${comp.id}_val) {\n`;
+                    if (comp.mdFile) {
+                        const safePath = comp.mdFile.replace(/\\/g, '/').replace(/"/g, '\\"');
+                        js += `    var __mdpath_${comp.id} = Server.MapPath("${safePath}");\n`;
+                        js += `    var __g3files_${comp.id} = Server.CreateObject("G3FILES");\n`;
+                        js += `    if (__g3files_${comp.id}.Exists(__mdpath_${comp.id})) {\n`;
+                        js += `        var __g3md_${comp.id} = Server.CreateObject("G3MD");\n`;
+                        js += `        __g3md_${comp.id}.Unsafe = ${comp.unsafe ? 'true' : 'false'};\n`;
+                        js += `        ${comp.id}_val = __g3md_${comp.id}.Process(__g3files_${comp.id}.Read(__mdpath_${comp.id}, "utf-8"));\n`;
+                        js += `    } else { ${comp.id}_val = ""; }\n`;
+                    } else {
+                        js += `    ${comp.id}_val = "";\n`;
+                    }
+                    js += `}\n`;
+                } else {
+                    const defaultVal = (comp.text || comp.value || "").replace(/"/g, '\\"');
+                    js += `if (${comp.id}_val === null || ${comp.id}_val === "") { ${comp.id}_val = "${defaultVal}"; }\n`;
+                }
             }
             return js;
         };
@@ -1067,13 +1104,26 @@ const app = createApp({
                     else if (comp.type === 'fileuploader') {
                         inner = renderUploaderInner(comp, `'+(${comp.id}_val || "Ready")+'`);
                     }
+                    else if (comp.type === 'mdviewer') {
+                        // _val holds the already-rendered G3MD HTML; inject raw
+                        inner = `'+(${comp.id}_val || "")+'`;
+                    }
                     else { inner = comp.text || ""; }
 
                     let htmlStr = `<${tag} ${attrs}>${inner}</${tag}>`;
                     if (tag === 'input' || tag === 'img') {
                         htmlStr = `<${tag} ${attrs}>`;
                     }
-                    js += `    AxonLive.RegisterComponent("${comp.id}", '${escapeJsSingleQuotedString(htmlStr)}');\n`;
+
+                    if (comp.type === 'mdviewer') {
+                        // MD Viewer: _val contains rendered G3MD HTML which may hold any character.
+                        // Build RegisterComponent via explicit JS concatenation so the variable
+                        // value is never embedded inside a single-quoted string literal.
+                        const staticAttrs = escapeJsSingleQuotedString(attrs);
+                        js += `    AxonLive.RegisterComponent("${comp.id}", '<div ${staticAttrs}>' + (${comp.id}_val || '') + '</div>');\n`;
+                    } else {
+                        js += `    AxonLive.RegisterComponent("${comp.id}", '${escapeJsSingleQuotedString(htmlStr)}');\n`;
+                    }
                 }
                 if (comp.children) {
                     js += generateReRenderCalls(comp.children);
