@@ -22,7 +22,7 @@
 
 param(
     [Parameter(Mandatory = $false)]
-    [ValidateSet("windows", "linux", "darwin", "all")]
+    [ValidateSet("windows", "linux", "darwin", "wasm", "all")]
     [string]$Platform = "windows",
 
     [Parameter(Mandatory = $false)]
@@ -196,6 +196,19 @@ function Run-Platform {
 if ($Platform -eq "windows" -or $Platform -eq "all") { Run-Platform "windows" $Architecture }
 if ($Platform -eq "linux" -or $Platform -eq "all") { Run-Platform "linux"   $Architecture }
 if ($Platform -eq "darwin" -or $Platform -eq "all") { Run-Platform "darwin"  $Architecture }
+if ($Platform -eq "wasm" -or $Platform -eq "all") {
+    Write-Host "-------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host " Building for js/wasm" -ForegroundColor Yellow
+    Write-Host "-------------------------------------------------------" -ForegroundColor DarkGray
+
+    $OutDir = "./wasm/"
+    $ok = Build-Binary -TargetOS "js" -TargetArch "wasm" -OutputName "${OutDir}axonasp.wasm" -SourcePath "./wasm/main.go" -Label "WASM Web"
+    $script:BuildSuccess = $script:BuildSuccess -and $ok
+    $goroot = go env GOROOT
+    Copy-Item "$goroot\lib\wasm\wasm_exec.js" -Destination $OutDir -ErrorAction SilentlyContinue
+    Write-Success "  [OK] Copied wasm_exec.js"
+    Write-Host ""
+}
 
 # Restore to host OS after cross-compiling
 $env:GOOS = "windows"

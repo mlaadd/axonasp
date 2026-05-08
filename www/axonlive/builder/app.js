@@ -1,4 +1,4 @@
-const { createApp, ref, computed, reactive, watch, onMounted, onUnmounted } = Vue;
+const { createApp, ref, computed, reactive, watch, onMounted, onUnmounted, nextTick } = Vue;
 
 let idCounter = 1;
 function generateId(type) {
@@ -99,7 +99,14 @@ function createComponentInstance(type) {
             reRender: true
         };
         case 'hiddenfield': return { ...base, value: '', position: 'static', width: '0px', height: '0px' };
-        case 'image': return { ...base, src: 'https://g3pix.com.br/axonasp/apple-icon-60x60.png', width: '60px', height: '60px' };
+        case 'image': return {
+            ...base,
+            src: 'https://g3pix.com.br/axonasp/apple-icon-60x60.png',
+            alt: 'Image',
+            title: '',
+            width: '60px',
+            height: '60px'
+        };
         case 'iframe': return { ...base, src: 'https://g3pix.com.br', width: '400px', height: '300px' };
         case 'table':
             let t = { ...base, rows: 2, cols: 2, cells: {}, width: '100%', height: 'auto', showHeader: false, showFooter: false };
@@ -351,7 +358,7 @@ const ComponentRenderer = {
 
             <div v-else-if="comp.type === 'hiddenfield'" style="width:20px; height:20px; background:#ddd; border:1px solid #333; text-align:center; font-size:10px;">H</div>
             
-            <img v-else-if="comp.type === 'image'" :src="comp.src" :class="comp.cssClass" alt="Image" style="max-width:100%; width:100%; height:100%;">
+            <img v-else-if="comp.type === 'image'" :src="comp.src" :alt="comp.alt || ''" :title="comp.title || ''" :class="comp.cssClass" style="max-width:100%; width:100%; height:100%;">
             
             <iframe v-else-if="comp.type === 'iframe'" :src="comp.src" style="width:100%; height:100%; border:1px solid #ccc;"></iframe>
 
@@ -487,6 +494,7 @@ const app = createApp({
         const newEventName = ref('onclick');
         const newClientEventName = ref('onclick');
         const editableJsonTree = ref('');
+        const aspCodeEl = ref(null);
         const fileInput = ref(null);
 
         // UNDO / REDO / COPY / PASTE
@@ -747,6 +755,7 @@ const app = createApp({
                 if (!e.target.closest('.context-menu')) contextMenu.show = false;
             });
             saveHistory(); // Initial state
+            highlightGeneratedCode();
         });
 
         onUnmounted(() => {
@@ -769,6 +778,21 @@ const app = createApp({
                 }
             } catch (e) { }
         };
+
+        const highlightGeneratedCode = () => {
+            if (showJsonTree.value) return;
+            nextTick(() => {
+                if (aspCodeEl.value && window.hljs && typeof window.hljs.highlightElement === 'function') {
+                    window.hljs.highlightElement(aspCodeEl.value);
+                }
+            });
+        };
+
+        watch(showJsonTree, (isJsonVisible) => {
+            if (!isJsonVisible) {
+                highlightGeneratedCode();
+            }
+        });
 
         const onDragStart = (event, comp) => {
             event.dataTransfer.setData('application/json', JSON.stringify({ isNew: true, type: comp.type }));
@@ -977,7 +1001,7 @@ const app = createApp({
                 } else if (comp.type === 'hiddenfield') {
                     html += `${indent}<input type="hidden" ${attrs} value="${comp.value || ''}">\n`;
                 } else if (comp.type === 'image') {
-                    html += `${indent}<img src="${comp.src}" ${attrs} alt="">\n`;
+                    html += `${indent}<img src="${escapeHtmlAttr(comp.src || '')}" ${attrs} alt="${escapeHtmlAttr(comp.alt || '')}" title="${escapeHtmlAttr(comp.title || '')}">\n`;
                 } else if (comp.type === 'iframe') {
                     html += `${indent}<iframe src="${comp.src}" ${attrs} frameborder="0"></iframe>\n`;
                 } else if (comp.type === 'link') {
@@ -1302,6 +1326,10 @@ ${scriptBlock}
 </html>`;
         });
 
+        watch(generatedCode, () => {
+            highlightGeneratedCode();
+        });
+
         const jsonTree = computed(() => {
             return JSON.stringify(allComponents.value, null, 4);
         });
@@ -1337,6 +1365,7 @@ ${scriptBlock}
             generatedCode,
             jsonTree,
             editableJsonTree,
+            aspCodeEl,
             newEventName,
             newClientEventName,
             updateFromJson,

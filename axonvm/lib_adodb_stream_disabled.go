@@ -1,4 +1,4 @@
-//go:build lib_adodb_stream_disabled
+//go:build wasm || lib_adodb_stream_disabled
 
 /*
  * AxonASP Server

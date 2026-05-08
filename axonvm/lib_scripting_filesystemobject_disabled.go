@@ -1,4 +1,4 @@
-//go:build lib_scripting_filesystemobject_disabled
+//go:build wasm || lib_scripting_filesystemobject_disabled
 
 /*
  * AxonASP Server

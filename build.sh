@@ -46,8 +46,8 @@ done
 NORMALIZED_TAGS=$(echo "$TAGS" | tr ',;' '  ' | xargs)
 
 # --- Validate Parameters ---
-if [[ ! "$PLATFORM" =~ ^(windows|linux|darwin|all)$ ]]; then
-    echo "Invalid platform: $PLATFORM. Allowed: windows, linux, darwin, all."
+if [[ ! "$PLATFORM" =~ ^(windows|linux|darwin|wasm|all)$ ]]; then
+    echo "Invalid platform: $PLATFORM. Allowed: windows, linux, darwin, wasm, all."
     exit 1
 fi
 if [[ ! "$ARCHITECTURE" =~ ^(amd64|arm64|386)$ ]]; then
@@ -204,9 +204,24 @@ run_platform() {
 }
 
 # Execute Platform Builds
-if [ "$PLATFORM" == "windows" ] || [ "$PLATFORM" == "all" ]; then run_platform "windows" "$ARCHITECTURE"; fi
-if [ "$PLATFORM" == "linux" ]   || [ "$PLATFORM" == "all" ]; then run_platform "linux"   "$ARCHITECTURE"; fi
-if [ "$PLATFORM" == "darwin" ]  || [ "$PLATFORM" == "all" ]; then run_platform "darwin"  "$ARCHITECTURE"; fi
+if [[ "$PLATFORM" == "windows" || "$PLATFORM" == "all" ]]; then run_platform "windows" "$ARCHITECTURE"; fi
+if [[ "$PLATFORM" == "linux" || "$PLATFORM" == "all" ]]; then run_platform "linux" "$ARCHITECTURE"; fi
+if [[ "$PLATFORM" == "darwin" || "$PLATFORM" == "all" ]]; then run_platform "darwin" "$ARCHITECTURE"; fi
+
+if [[ "$PLATFORM" == "wasm" || "$PLATFORM" == "all" ]]; then
+    echo -e "${DARKGRAY}-------------------------------------------------------${NC}"
+    echo -e " ${YELLOW}Building for js/wasm${NC}"
+    echo -e "${DARKGRAY}-------------------------------------------------------${NC}"
+
+    out_dir="./wasm/"
+    build_binary "js" "wasm" "${out_dir}axonasp.wasm" "./wasm/main.go" "WASM Web"
+    if [ $? -ne 0 ]; then BUILD_SUCCESS=false; fi
+
+    GOROOT=$(go env GOROOT)
+    cp "$GOROOT/lib/wasm/wasm_exec.js" "$out_dir"
+    write_success "  [OK] Copied wasm_exec.js"
+    echo ""
+fi
 
 # Reset environment variables to native host
 unset GOOS

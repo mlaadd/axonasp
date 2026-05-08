@@ -18,6 +18,7 @@
  * Modifications to the core source code of AxonASP Server must be
  * made available under this same license terms.
  */
+ //go:build !wasm
 package axonvm
 
 import (

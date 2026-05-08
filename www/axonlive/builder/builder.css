@@ -244,6 +244,24 @@ body {
     color: #333;
 }
 
+.code-pre-wrap {
+    overflow: auto;
+    padding: 0;
+}
+
+.code-pre-wrap pre {
+    margin: 0;
+    padding: 8px;
+    min-height: 100%;
+    white-space: pre;
+}
+
+.code-pre-wrap code {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 .timer-component {
     background-color: #FFFFCC;
     border: 1px solid #CC9900;

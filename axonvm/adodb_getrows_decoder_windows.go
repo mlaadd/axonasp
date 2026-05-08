@@ -1,4 +1,4 @@
-//go:build windows && !lib_adodb_disabled
+//go:build !wasm && windows && !lib_adodb_disabled
 
 /*
  * AxonASP Server

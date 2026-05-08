@@ -1,5 +1,5 @@
-//go:build !windows && !lib_scripting_filesystemobject_disabled
-// +build !windows,!lib_scripting_filesystemobject_disabled
+//go:build !wasm && !windows && !lib_scripting_filesystemobject_disabled
+// +build !wasm,!windows,!lib_scripting_filesystemobject_disabled
 
 /*
  * AxonASP Server

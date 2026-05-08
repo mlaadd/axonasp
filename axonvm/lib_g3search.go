@@ -1,4 +1,4 @@
-//go:build !lib_g3search_disabled
+//go:build !wasm && !lib_g3search_disabled
 
 /*
  * AxonASP Server

@@ -1,4 +1,4 @@
-//go:build !lib_wscript_shell_disabled
+//go:build !wasm && !lib_wscript_shell_disabled
 
 /*
  * AxonASP Server

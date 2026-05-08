@@ -219,6 +219,25 @@
                                 placeholder="Opt 1, Opt 2">
                         </div>
 
+                        <!-- Image specific -->
+                        <div v-if="selectedComponent.type === 'image'">
+                            <div class="prop-group">
+                                <label class="prop-label">Image Source (src)</label>
+                                <input type="text" class="prop-input" v-model="selectedComponent.src"
+                                    placeholder="https://example.com/image.png">
+                            </div>
+                            <div class="prop-group">
+                                <label class="prop-label">ALT Text</label>
+                                <input type="text" class="prop-input" v-model="selectedComponent.alt"
+                                    placeholder="Describe the image">
+                            </div>
+                            <div class="prop-group">
+                                <label class="prop-label">Title</label>
+                                <input type="text" class="prop-input" v-model="selectedComponent.title"
+                                    placeholder="Optional tooltip text">
+                            </div>
+                        </div>
+
                         <!-- Raw HTML / Script / CSS Style content editor -->
                         <div v-if="['rawhtml','script','style'].includes(selectedComponent.type)">
                             <div class="prop-group">
@@ -582,7 +601,9 @@
                         <div class="btn-toggle-pane" @click="toggleCodePane" title="Toggle Size">🗔</div>
                     </div>
                 </div>
-                <textarea class="code-area" readonly v-if="!showJsonTree" :value="generatedCode"></textarea>
+                <div class="code-area code-pre-wrap" v-if="!showJsonTree">
+                    <pre><code ef="aspCodeEl" v-text="generatedCode"></code></pre>
+                </div>
                 <textarea class="code-area" v-if="showJsonTree" v-model="editableJsonTree"
                     @input="updateFromJson"></textarea>
             </div>
@@ -601,6 +622,10 @@
         </div>
 
         <script src="app.js"></script>
+        <link rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/default.min.css">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+        <script>hljs.highlightAll();</script>
     </body>
 
 </html>
