@@ -83,81 +83,25 @@ AxonASP extends Classic ASP with incredibly fast, zero-allocation native Go libr
 
 ---
 
-## 🎨 AxonLive: Visual Application Builder
+## 🎨 AxonLive with Visual Application Builder
 
-**AxonLive** is an integrated visual builder environment designed to accelerate ASP development and make it more accessible. It provides a modern, intuitive interface for creating and managing AxonASP applications without writing boilerplate code.
+**AxonLive**  is a high-performance Reactive Component Framework built directly into the AxonASP Virtual Machine. It empowers developers to create dynamic, stateful, and highly responsive web applications using Classic ASP (VBScript or Server-Side JavaScript) without requiring full page reloads.
 
-### How AxonLive Works
+### Advantages of G3AxonLive
 
-AxonLive operates as a browser-based IDE that connects directly to your AxonASP runtime. It offers:
-
-*   **Visual Component Builder:** Drag-and-drop interface to create application structures, forms, and data-bound components.
-*   **Real-time Preview:** See your changes instantly as you build, with live hot-reloading of components and pages.
-*   **Integrated Code Editor:** Write VBScript and JavaScript directly within the builder, with syntax highlighting and IntelliSense-style suggestions.
-*   **Template Library:** Pre-built templates and components for common scenarios (REST APIs, data grids, forms, dashboards).
-*   **Direct Integration with G3 Libraries:** Seamlessly connect to G3DB, G3JSON, G3HTTP, G3FILES, and other native libraries through visual connectors.
-*   **Project Management:** Organize your ASP files, libraries, and resources within a unified workspace.
-*   **Debugging & Profiling:** Built-in debugging tools to inspect execution, trace errors, and profile performance.
+* **Zero Page Reloads:** All UI interactions (button clicks, form submissions, timers) are sent to the server asynchronously. The server responds with targeted JSON patches, swapping only the modified DOM elements.
+* **Strict Backend Control:** All business logic, validation, and state mutation happen exclusively on the server. The client browser merely acts as a dumb terminal rendering the HTML patches, significantly reducing the attack surface.
+* **Authenticated Session Binding:** The /g3al endpoint binds every async event to the authenticated ASPSESSIONID cookie. Client-provided session identifiers are not used as an authority for page routing.
+* **Zero Additional Wrappers:** AxonLive is implemented directly inside the axonvm engine as a native procedural controller (G3AXONLIVE). This eliminates the need for bulky ASP class wrappers, providing bare-metal performance and zero garbage collection overhead.
+* **Granular DOM Manipulation:** Instead of re-rendering entire components, developers can push targeted instructions to modify styles, attributes, classes, or trigger external redirects natively from ASP.
 
 ### Getting Started with AxonLive
 
-The **AxonLive Builder** is available directly in the `www/` directory of your AxonASP installation:
+You can use **AxonLive Builder** that is available directly in the `www/` directory of your AxonASP installation to implement the reactive components in your ASP applications. The builder provides a simple interface to create and manage your reactive components, allowing you to focus on building your application logic without worrying about the underlying implementation details.:
 
 ```
-www/axonlive/
-  ├── index.html         (Main builder interface)
-  ├── builder/           (Builder engine and components)
-  ├── templates/         (Pre-built application templates)
-  └── examples/          (Sample projects and use cases)
+www/axonlive/builder/           (Builder engine and components)
 ```
-
-**To launch AxonLive:**
-
-1. Start your AxonASP server:
-   ```powershell
-   .\axonasp-http.exe
-   ```
-
-2. Open your browser and navigate to:
-   ```
-   http://localhost:8801/axonlive/
-   ```
-
-3. Begin creating your application using the visual interface. The builder will generate optimized ASP code automatically.
-
-### Building Modern ASP Applications
-
-With AxonLive, you can build modern, full-stack applications entirely in ASP without touching the command line:
-
-*   **REST APIs:** Create RESTful endpoints with automatic routing and request/response handling.
-*   **Single-Page Applications (SPAs):** Build dynamic client-side experiences that communicate with your ASP backend.
-*   **Data-Driven Applications:** Connect to databases via G3DB and visualize data with responsive grids and charts.
-*   **Real-Time Dashboards:** Monitor system performance, metrics, and application state in real-time.
-*   **Multi-Tenant SaaS:** Leverage session management and application state for building scalable SaaS platforms.
-
-AxonLive abstracts away the complexity of ASP infrastructure while preserving the power and flexibility of the language. Whether you're modernizing legacy applications or building new ones, AxonLive makes ASP development fast, intuitive, and enjoyable.
-
----
-
-## 🧪 Experimental: WASM (WebAssembly) Support
-
-AxonASP includes **experimental support for WebAssembly**, allowing you to:
-
-*   **Run ASP on the Browser:** Compile and execute ASP/VBScript code directly in the browser using WebAssembly, enabling new use cases like offline-capable web applications and edge computing.
-*   **Hybrid Execution:** Seamlessly mix client-side ASP (via WASM) and server-side execution for optimal performance and user experience.
-*   **Portable Bytecode:** Distribute compiled ASP bytecode to clients, reducing server load and enabling true distributed computing scenarios.
-*   **Performance:** Leverage native WASM performance (near-native speeds) for computationally intensive operations on the client side.
-
-### Using WASM
-
-WASM support is currently in active development. The implementation is located in the `wasm/` directory. To explore and experiment with WASM capabilities:
-
-1. Review the documentation and examples in `wasm/`
-2. Compile ASP to WebAssembly using the provided build tools
-3. Integrate the generated WASM modules into your web applications
-4. Test and provide feedback on the experimental features
-
-> **⚠️ Important:** WASM support is experimental and subject to change. It is not yet recommended for production environments. We welcome testing and feedback from the community!
 
 ---
 
@@ -309,6 +253,30 @@ G3Pix AxonASP delivers exceptional performance thanks to GoLang's efficiency:
 | **Web Server Integration** | IIS only | nginx, Apache, IIS, Caddy, FastCGI |
 | **URL Rewriting** | IIS modules | Built-in web.config support on proxy server |
 | **Libraries** | none | Built-in libraries for modern web standards |
+
+---
+
+## 🧪 Experimental: WASM (WebAssembly) Support
+
+AxonASP now includes a **experimental support for WebAssembly**, allowing you to:
+
+*   **Run ASP on the Browser:** Compile and execute ASP/VBScript/JavaScript code directly in the browser using WebAssembly, enabling new use cases like offline-capable web applications and edge computing.
+*   **Hybrid Execution:** Seamlessly mix client-side ASP (via WASM) and server-side execution for optimal performance and user experience.
+*   **Portable Bytecode:** Distribute compiled ASP bytecode to clients, reducing server load and enabling true distributed computing scenarios.
+*   **Performance:** Leverage native WASM performance (near-native speeds) for computationally intensive operations on the client side.
+
+### Using WASM
+
+WASM support is currently in active development. The implementation is located in the `wasm/` directory. To explore and experiment with WASM capabilities:
+
+1. Review the documentation and examples in `wasm/`, as some features of AxonASP are not yet supported in WASM mode
+2. Compile ASP to WebAssembly using the provided build tools
+3. Integrate the generated WASM modules into your web applications
+4. Test and provide feedback on the experimental features
+
+> **⚠️ Important:** WASM support is experimental and subject to change. It is not yet recommended for production environments. We welcome testing and feedback from the community!
+
+---
 
 ### 🤝 Contributing
 
