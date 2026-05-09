@@ -346,7 +346,7 @@ type VM struct {
 	jsForOfItems                   map[int]*jsForOfEnumerator
 	jsEnvItems                     map[int64]*jsEnvFrame
 	jsArgumentsItems               map[int64]*jsArgumentsBinding
-	jsSetItems                     map[int64]map[string]struct{}
+	jsSetItems                     map[int64]map[string]Value
 	jsMapItems                     map[int64]map[string]Value
 	jsNextSymbolID                 int64
 	jsStrictMode                   bool                  // Current strict mode state
@@ -552,7 +552,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		jsForOfItems:                   make(map[int]*jsForOfEnumerator),
 		jsEnvItems:                     make(map[int64]*jsEnvFrame),
 		jsArgumentsItems:               make(map[int64]*jsArgumentsBinding),
-		jsSetItems:                     make(map[int64]map[string]struct{}),
+		jsSetItems:                     make(map[int64]map[string]Value),
 		jsMapItems:                     make(map[int64]map[string]Value),
 		jsNextSymbolID:                 1,
 		jsFunctionStrictModes:          make(map[int64]bool),
@@ -830,6 +830,7 @@ func opcodeOperandSize(op OpCode) int {
 		OpJSCreateClosure, OpJSCall, OpJSNewArray, OpJSDelete,
 		OpJSNew, OpJSMemberDelete, OpJSPostIncrement, OpJSPostDecrement, OpJSPreIncrement, OpJSPreDecrement,
 		OpJSAddAssign, OpJSSubtractAssign, OpJSMultiplyAssign, OpJSDivideAssign, OpJSModuloAssign,
+		OpJSExponentAssign, OpJSLogicalAndAssign, OpJSLogicalOrAssign, OpJSCoalesceAssign,
 		OpJSMemberIndexGet, OpJSMemberIndexSet,
 		OpJSPostMemberIncrement, OpJSPostMemberDecrement, OpJSPreMemberIncrement, OpJSPreMemberDecrement,
 		OpJSLetDeclare, OpJSTDZRegisterLet, OpJSTDZRegisterConst, OpJSConstInitialize:
@@ -837,6 +838,7 @@ func opcodeOperandSize(op OpCode) int {
 	// 4-byte operands (for jump targets)
 	case OpJump, OpJumpIfFalse, OpJumpIfTrue, OpGotoLabel,
 		OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter,
+		OpJSJumpIfNullish, OpJSJumpIfNotNullish,
 		OpJSCase, OpJSDefault, OpJSBreak, OpJSContinue, OpJSForInCleanup, OpJSForOfCleanup:
 		return 4
 	// 4-byte operands
@@ -883,13 +885,15 @@ func remapExecuteGlobalBytecode(bytecode []byte, constBase int, bytecodeBase int
 			OpJSDeclareName, OpJSGetName, OpJSSetName, OpJSMemberGet, OpJSMemberSet, OpJSCreateClosure, OpJSDelete,
 			OpJSNew, OpJSMemberDelete, OpJSPostIncrement, OpJSPostDecrement, OpJSPreIncrement, OpJSPreDecrement,
 			OpJSAddAssign, OpJSSubtractAssign, OpJSMultiplyAssign, OpJSDivideAssign, OpJSModuloAssign,
+			OpJSExponentAssign, OpJSLogicalAndAssign, OpJSLogicalOrAssign, OpJSCoalesceAssign,
 			OpJSMemberIndexGet, OpJSMemberIndexSet,
 			OpJSPostMemberIncrement, OpJSPostMemberDecrement, OpJSPreMemberIncrement, OpJSPreMemberDecrement,
 			OpJSLetDeclare, OpJSTDZRegisterLet, OpJSTDZRegisterConst, OpJSConstInitialize:
 			idx := int(binary.BigEndian.Uint16(bytecode[ip:])) + constBase
 			binary.BigEndian.PutUint16(bytecode[ip:], uint16(idx))
 			ip += 2
-		case OpJump, OpJumpIfFalse, OpJumpIfTrue, OpGotoLabel, OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter, OpJSCase, OpJSDefault, OpJSBreak, OpJSContinue, OpJSForInCleanup, OpJSForOfCleanup:
+		case OpJump, OpJumpIfFalse, OpJumpIfTrue, OpGotoLabel, OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter, OpJSCase, OpJSDefault, OpJSBreak, OpJSContinue, OpJSForInCleanup, OpJSForOfCleanup,
+			OpJSJumpIfNullish, OpJSJumpIfNotNullish:
 			target := int(binary.BigEndian.Uint32(bytecode[ip:])) + bytecodeBase
 			binary.BigEndian.PutUint32(bytecode[ip:], uint32(target))
 			ip += 4
@@ -2470,7 +2474,7 @@ aspExecLoop:
 
 		case OpJSAdd:
 			b, a := vm.pop(), vm.pop()
-			vm.push(vm.jsAddValues(a, b))
+			vm.push(vm.jsAdd(a, b))
 
 		case OpJSStrictEq:
 			b, a := vm.pop(), vm.pop()
@@ -2982,6 +2986,76 @@ aspExecLoop:
 			indexVal := vm.pop()
 			target := vm.pop()
 			vm.push(vm.jsUpdateIndex(target, indexVal, -1, false))
+
+		case OpJSExponent:
+			b, a := vm.pop(), vm.pop()
+			vm.push(vm.jsExponent(a, b))
+
+		case OpJSCoalesce:
+			b, a := vm.pop(), vm.pop()
+			vm.push(vm.jsCoalesce(a, b))
+
+		case OpJSJumpIfNullish:
+			target := int(binary.BigEndian.Uint32(vm.bytecode[vm.ip:]))
+			vm.ip += 4
+			val := vm.pop()
+			if val.Type == VTNull || val.Type == VTJSUndefined {
+				vm.ip = target
+			}
+
+		case OpJSJumpIfNotNullish:
+			target := int(binary.BigEndian.Uint32(vm.bytecode[vm.ip:]))
+			vm.ip += 4
+			val := vm.pop()
+			if val.Type != VTNull && val.Type != VTJSUndefined {
+				vm.ip = target
+			}
+
+		case OpJSExponentAssign:
+			nameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			vm.ip += 2
+			nameStr := vm.constants[nameIdx].Str
+			right := vm.pop()
+			left := vm.jsGetName(nameStr)
+			result := vm.jsExponent(left, right)
+			vm.jsSetName(nameStr, result)
+			vm.push(result)
+
+		case OpJSLogicalAndAssign:
+			nameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			vm.ip += 2
+			nameStr := vm.constants[nameIdx].Str
+			val := vm.jsGetName(nameStr)
+			right := vm.pop()
+			if vm.jsTruthy(val) {
+				val = vm.jsLogicalAnd(val, right)
+				vm.jsSetName(nameStr, val)
+			}
+			vm.push(val)
+
+		case OpJSLogicalOrAssign:
+			nameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			vm.ip += 2
+			nameStr := vm.constants[nameIdx].Str
+			val := vm.jsGetName(nameStr)
+			right := vm.pop()
+			if !vm.jsTruthy(val) {
+				val = vm.jsLogicalOr(val, right)
+				vm.jsSetName(nameStr, val)
+			}
+			vm.push(val)
+
+		case OpJSCoalesceAssign:
+			nameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			vm.ip += 2
+			nameStr := vm.constants[nameIdx].Str
+			val := vm.jsGetName(nameStr)
+			right := vm.pop()
+			if val.Type == VTNull || val.Type == VTJSUndefined {
+				val = right
+				vm.jsSetName(nameStr, val)
+			}
+			vm.push(val)
 
 		// Compound assignment operators
 		case OpJSAddAssign:

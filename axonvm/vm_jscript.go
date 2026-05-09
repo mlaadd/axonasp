@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"math/rand"
 	"regexp"
 	"sort"
@@ -636,8 +637,8 @@ func (vm *VM) jsCreateNumberObject() Value {
 	obj["__js_type"] = NewString("Number")
 	obj["__js_ctor"] = NewString("Number")
 	// ES6 static constants
-	obj["MAX_SAFE_INTEGER"] = NewDouble(9007199254740991)
-	obj["MIN_SAFE_INTEGER"] = NewDouble(-9007199254740991)
+	obj["MAX_SAFE_INTEGER"] = NewInteger(9007199254740991)
+	obj["MIN_SAFE_INTEGER"] = NewInteger(-9007199254740991)
 	obj["MAX_VALUE"] = NewDouble(math.MaxFloat64)
 	obj["MIN_VALUE"] = NewDouble(5e-324)
 	obj["POSITIVE_INFINITY"] = NewDouble(math.Inf(1))
@@ -732,6 +733,11 @@ func (vm *VM) jsValueMapKey(v Value) string {
 		return "num:" + strconv.FormatFloat(v.Flt, 'g', -1, 64)
 	case VTString:
 		return "s:" + v.Str
+	case VTJSBigInt:
+		if v.Big == nil {
+			return "big:0"
+		}
+		return "big:" + v.Big.String()
 	case VTSymbol:
 		return "sym:" + strconv.FormatInt(v.Num, 10)
 	case VTArray:
@@ -1089,6 +1095,8 @@ func (vm *VM) jsTruthy(v Value) bool {
 		return v.Flt != 0
 	case VTString:
 		return v.Str != ""
+	case VTJSBigInt:
+		return v.Big != nil && v.Big.Sign() != 0
 	default:
 		return true
 	}
@@ -1111,6 +1119,8 @@ func (vm *VM) jsStrictEquals(a Value, b Value) bool {
 		return a.Flt == b.Flt
 	case VTString:
 		return a.Str == b.Str
+	case VTJSBigInt:
+		return a.Big.Cmp(b.Big) == 0
 	default:
 		return a.String() == b.String()
 	}
@@ -3605,7 +3615,8 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			switch {
 			case strings.EqualFold(member, "add"):
 				if store, ok := vm.jsSetItems[target.Num]; ok {
-					store[vm.jsValueMapKey(jsArgOrUndefined(args, 0))] = struct{}{}
+					arg := jsArgOrUndefined(args, 0)
+					store[vm.jsValueMapKey(arg)] = arg
 				}
 				return target, true
 			case strings.EqualFold(member, "has"):
@@ -4607,6 +4618,12 @@ func (vm *VM) jsEnumerateForOfValues(source Value) []Value {
 	// JS Object — inspect the runtime class to decide how to iterate.
 	if source.Type == VTJSObject {
 		class := vm.jsObjectStringProperty(source, "__js_class")
+		if class == "" {
+			class = vm.jsObjectStringProperty(source, "__js_type")
+		}
+		if class == "" {
+			class = vm.jsObjectStringProperty(source, "__js_ctor")
+		}
 		switch class {
 		case "Array":
 			// JS Array: iterate by numeric index up to .length.
@@ -4621,8 +4638,8 @@ func (vm *VM) jsEnumerateForOfValues(source Value) []Value {
 			// Set: iterate over unique members stored in jsSetItems.
 			if setMap, ok := vm.jsSetItems[source.Num]; ok {
 				out := make([]Value, 0, len(setMap))
-				for k := range setMap {
-					out = append(out, NewString(k))
+				for _, v := range setMap {
+					out = append(out, v)
 				}
 				return out
 			}
@@ -4631,16 +4648,7 @@ func (vm *VM) jsEnumerateForOfValues(source Value) []Value {
 			if mapData, ok := vm.jsMapItems[source.Num]; ok {
 				out := make([]Value, 0, len(mapData))
 				for k, v := range mapData {
-					// Build a two-element JS array as the iteration value.
-					pairID := vm.allocJSID()
-					vm.jsObjectItems[pairID] = make(map[string]Value, 4)
-					vm.jsPropertyItems[pairID] = make(map[string]jsPropertyDescriptor, 2)
-					pair := Value{Type: VTJSObject, Num: pairID}
-					vm.jsIndexSet(pair, NewInteger(0), NewString(k))
-					vm.jsIndexSet(pair, NewInteger(1), v)
-					vm.jsIndexSet(pair, NewString("length"), NewInteger(2))
-					vm.jsMemberSet(pair, "__js_class", NewString("Array"))
-					out = append(out, pair)
+					out = append(out, ValueFromVBArray(NewVBArrayFromValues(0, []Value{NewString(k), v})))
 				}
 				return out
 			}
@@ -4792,6 +4800,9 @@ func (vm *VM) jsThrowReferenceError(msg string) {
 // jsToNumber converts a Value to a numeric value (VTDouble) following JScript semantics.
 func (vm *VM) jsToNumber(v Value) Value {
 	switch v.Type {
+	case VTJSBigInt:
+		vm.jsThrowTypeError("Cannot convert a BigInt value to a number")
+		return NewDouble(math.NaN())
 	case VTJSUndefined:
 		return NewDouble(math.NaN())
 	case VTNull, VTEmpty:
@@ -4836,11 +4847,33 @@ func (vm *VM) jsToUint32(v Value) uint32 {
 
 // jsAdd implements JScript '+' operator (string concatenation or numeric addition).
 func (vm *VM) jsAdd(a Value, b Value) Value {
+	a = resolveCallable(vm, a)
+	b = resolveCallable(vm, b)
+	if a.Type == VTJSBigInt && b.Type == VTJSBigInt {
+		res := new(big.Int).Add(a.Big, b.Big)
+		return NewBigInt(res)
+	}
+	if a.Type == VTJSBigInt || b.Type == VTJSBigInt {
+		if a.Type == VTString || b.Type == VTString {
+			// Fall through to string concatenation
+		} else {
+			vm.jsThrowTypeError("Cannot mix BigInt and other types, use explicit conversions")
+			return Value{Type: VTJSUndefined}
+		}
+	}
 	return vm.jsAddValues(a, b)
 }
 
 // jsSubtract implements JScript '-' operator (numeric subtraction).
 func (vm *VM) jsSubtract(a Value, b Value) Value {
+	if a.Type == VTJSBigInt && b.Type == VTJSBigInt {
+		res := new(big.Int).Sub(a.Big, b.Big)
+		return NewBigInt(res)
+	}
+	if a.Type == VTJSBigInt || b.Type == VTJSBigInt {
+		vm.jsThrowTypeError("Cannot mix BigInt and other types, use explicit conversions")
+		return Value{Type: VTJSUndefined}
+	}
 	aNum := vm.jsToNumber(a).Flt
 	bNum := vm.jsToNumber(b).Flt
 	return NewDouble(aNum - bNum)
@@ -4848,6 +4881,14 @@ func (vm *VM) jsSubtract(a Value, b Value) Value {
 
 // jsMultiply implements JScript '*' operator.
 func (vm *VM) jsMultiply(a Value, b Value) Value {
+	if a.Type == VTJSBigInt && b.Type == VTJSBigInt {
+		res := new(big.Int).Mul(a.Big, b.Big)
+		return NewBigInt(res)
+	}
+	if a.Type == VTJSBigInt || b.Type == VTJSBigInt {
+		vm.jsThrowTypeError("Cannot mix BigInt and other types, use explicit conversions")
+		return Value{Type: VTJSUndefined}
+	}
 	aNum := vm.jsToNumber(a).Flt
 	bNum := vm.jsToNumber(b).Flt
 	return NewDouble(aNum * bNum)
@@ -4855,6 +4896,18 @@ func (vm *VM) jsMultiply(a Value, b Value) Value {
 
 // jsDivide implements JScript '/' operator.
 func (vm *VM) jsDivide(a Value, b Value) Value {
+	if a.Type == VTJSBigInt && b.Type == VTJSBigInt {
+		if b.Big.Sign() == 0 {
+			vm.jsThrowTypeError("Division by zero")
+			return Value{Type: VTJSUndefined}
+		}
+		res := new(big.Int).Div(a.Big, b.Big)
+		return NewBigInt(res)
+	}
+	if a.Type == VTJSBigInt || b.Type == VTJSBigInt {
+		vm.jsThrowTypeError("Cannot mix BigInt and other types, use explicit conversions")
+		return Value{Type: VTJSUndefined}
+	}
 	aNum := vm.jsToNumber(a).Flt
 	bNum := vm.jsToNumber(b).Flt
 	if math.IsNaN(aNum) || math.IsNaN(bNum) {
@@ -4874,6 +4927,18 @@ func (vm *VM) jsDivide(a Value, b Value) Value {
 
 // jsModulo implements JScript '%' operator.
 func (vm *VM) jsModulo(a Value, b Value) Value {
+	if a.Type == VTJSBigInt && b.Type == VTJSBigInt {
+		if b.Big.Sign() == 0 {
+			vm.jsThrowTypeError("Division by zero")
+			return Value{Type: VTJSUndefined}
+		}
+		res := new(big.Int).Mod(a.Big, b.Big)
+		return NewBigInt(res)
+	}
+	if a.Type == VTJSBigInt || b.Type == VTJSBigInt {
+		vm.jsThrowTypeError("Cannot mix BigInt and other types, use explicit conversions")
+		return Value{Type: VTJSUndefined}
+	}
 	aNum := vm.jsToNumber(a).Flt
 	bNum := vm.jsToNumber(b).Flt
 	if bNum == 0 || math.IsNaN(aNum) || math.IsNaN(bNum) || math.IsInf(aNum, 0) || math.IsInf(bNum, 0) {
@@ -4882,8 +4947,35 @@ func (vm *VM) jsModulo(a Value, b Value) Value {
 	return NewDouble(math.Mod(aNum, bNum))
 }
 
+// jsExponent implements JScript '**' operator.
+func (vm *VM) jsExponent(a Value, b Value) Value {
+	if a.Type == VTJSBigInt && b.Type == VTJSBigInt {
+		if b.Big.Sign() < 0 {
+			vm.jsThrowTypeError("Exponent must be positive")
+			return Value{Type: VTJSUndefined}
+		}
+		if !b.Big.IsUint64() {
+			vm.jsThrowTypeError("Exponent too large")
+			return Value{Type: VTJSUndefined}
+		}
+		res := new(big.Int).Exp(a.Big, b.Big, nil)
+		return NewBigInt(res)
+	}
+	if a.Type == VTJSBigInt || b.Type == VTJSBigInt {
+		vm.jsThrowTypeError("Cannot mix BigInt and other types, use explicit conversions")
+		return Value{Type: VTJSUndefined}
+	}
+	aNum := vm.jsToNumber(a).Flt
+	bNum := vm.jsToNumber(b).Flt
+	return NewDouble(math.Pow(aNum, bNum))
+}
+
 // jsNegate implements JScript unary '-' operator.
 func (vm *VM) jsNegate(v Value) Value {
+	if v.Type == VTJSBigInt {
+		res := new(big.Int).Neg(v.Big)
+		return NewBigInt(res)
+	}
 	num := vm.jsToNumber(v).Flt
 	return NewDouble(-num)
 }
@@ -5019,6 +5111,14 @@ func (vm *VM) jsLogicalOr(a Value, b Value) Value {
 // jsLogicalNot implements JScript '!' operator.
 func (vm *VM) jsLogicalNot(v Value) Value {
 	return NewBool(!vm.jsTruthy(v))
+}
+
+// jsCoalesce implements JScript '??' operator.
+func (vm *VM) jsCoalesce(a Value, b Value) Value {
+	if a.Type == VTNull || a.Type == VTJSUndefined {
+		return b
+	}
+	return a
 }
 
 // jsMemberIndexGet implements member[index] access.
@@ -5186,7 +5286,7 @@ func (vm *VM) jsNew(constructor Value, args []Value) Value {
 			}
 			vm.jsObjectItems[objID] = obj
 			vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 4)
-			vm.jsSetItems[objID] = make(map[string]struct{}, 8)
+			vm.jsSetItems[objID] = make(map[string]Value, 8)
 			setObj := Value{Type: VTJSObject, Num: objID}
 			if len(args) > 0 && args[0].Type != VTJSUndefined && args[0].Type != VTNull {
 				length, hasLength, deferred := vm.jsArrayLikeLength(args[0])
@@ -5196,7 +5296,7 @@ func (vm *VM) jsNew(constructor Value, args []Value) Value {
 				if hasLength {
 					for i := 0; i < length; i++ {
 						if v, ok := vm.jsArrayLikeGetIndex(args[0], i); ok {
-							vm.jsSetItems[objID][vm.jsValueMapKey(v)] = struct{}{}
+							vm.jsSetItems[objID][vm.jsValueMapKey(v)] = v
 						}
 					}
 				}

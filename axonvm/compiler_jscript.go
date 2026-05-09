@@ -24,6 +24,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
@@ -975,6 +976,8 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 			c.emit(OpConstant, c.addConstant(NewInteger(int64(v))))
 		case float64:
 			c.emit(OpConstant, c.addConstant(NewDouble(v)))
+		case *big.Int:
+			c.emit(OpConstant, c.addConstant(NewBigInt(v)))
 		default:
 			c.emit(OpConstant, c.addConstant(NewDouble(0)))
 		}
@@ -1006,6 +1009,13 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 			c.emit(OpJSPop)
 			c.compileJScriptExpression(node.Right)
 			c.patchJSJump(jumpFalse)
+		case jstoken.COALESCE:
+			c.compileJScriptExpression(node.Left)
+			c.emit(OpJSDup)
+			jumpNotNullish := c.emitJSJump(OpJSJumpIfNotNullish)
+			c.emit(OpJSPop)
+			c.compileJScriptExpression(node.Right)
+			c.patchJSJump(jumpNotNullish)
 		default:
 			// Attempt compile-time constant folding on both operands, then on
 			// the whole expression. If successful, emit a single OpConstant.
@@ -1028,6 +1038,8 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 				c.emit(OpJSDivide)
 			case jstoken.REMAINDER:
 				c.emit(OpJSModulo)
+			case jstoken.EXPONENT:
+				c.emit(OpJSExponent)
 			case jstoken.EQUAL:
 				c.emit(OpJSLooseEqual)
 			case jstoken.NOT_EQUAL:
@@ -1217,6 +1229,25 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 		default:
 			c.emit(OpJSLoadUndefined)
 		}
+	case *jsast.OptionalChain:
+		prevCount := len(c.jsOptionalChainExits)
+		c.compileJScriptExpression(node.Expression)
+		if len(c.jsOptionalChainExits) > prevCount {
+			jumpEnd := c.emitJSJump(OpJSJump)
+			shortCircuitPos := len(c.bytecode)
+			for i := prevCount; i < len(c.jsOptionalChainExits); i++ {
+				c.patchJSJumpTo(c.jsOptionalChainExits[i], shortCircuitPos)
+			}
+			c.emit(OpJSPop)
+			c.emit(OpJSLoadUndefined)
+			c.patchJSJump(jumpEnd)
+		}
+		c.jsOptionalChainExits = c.jsOptionalChainExits[:prevCount]
+	case *jsast.Optional:
+		c.compileJScriptExpression(node.Expression)
+		c.emit(OpJSDup)
+		jumpPos := c.emitJSJump(OpJSJumpIfNullish)
+		c.jsOptionalChainExits = append(c.jsOptionalChainExits, jumpPos)
 	case *jsast.ConditionalExpression:
 		c.compileJScriptExpression(node.Test)
 		jumpFalse := c.emitJSJump(OpJSJumpIfFalse)
@@ -1282,6 +1313,19 @@ func (c *Compiler) compileJScriptAssignment(node *jsast.AssignExpression) {
 			c.emit(OpJSDivideAssign, nameIdx)
 		case jstoken.REMAINDER_ASSIGN, jstoken.REMAINDER:
 			c.emit(OpJSModuloAssign, nameIdx)
+		case jstoken.EXPONENT_ASSIGN:
+			c.emit(OpJSExponentAssign, nameIdx)
+			return
+		case jstoken.LOGICAL_AND_ASSIGN:
+			c.emit(OpJSLogicalAndAssign, nameIdx)
+			return
+		case jstoken.LOGICAL_OR_ASSIGN:
+			c.emit(OpJSLogicalOrAssign, nameIdx)
+			return
+		case jstoken.COALESCE_ASSIGN:
+			c.emit(OpJSCoalesceAssign, nameIdx)
+			return
+			// Return now to avoid OpJSLoadUndefined
 		default:
 			c.emit(OpJSSetName, nameIdx)
 		}

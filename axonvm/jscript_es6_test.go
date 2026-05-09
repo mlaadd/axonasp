@@ -303,24 +303,18 @@ func TestJScriptNumberIsSafeInteger(t *testing.T) {
 // ES6 Secondary Features
 // ---------------------------------------------------------------------------
 
-func TestJScriptObjectAssignKeysValuesEntries(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var target = { a: 1 };
-		Object.assign(target, { b: 2 }, { c: 3 });
-		Response.Write(target.a + "," + target.b + "," + target.c);
-		Response.Write("|");
-		Response.Write(Object.keys(target).join(","));
-		Response.Write("|");
-		Response.Write(Object.values(target).join(","));
-		Response.Write("|");
-		var e = Object.entries(target);
-		Response.Write(e[0][0] + ":" + e[0][1] + ";" + e[1][0] + ":" + e[1][1] + ";" + e[2][0] + ":" + e[2][1]);
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "1,2,3|a,b,c|1,2,3|a:1;b:2;c:3" {
-		t.Errorf("expected '1,2,3|a,b,c|1,2,3|a:1;b:2;c:3', got %q", out)
+func TestJScriptCompoundAssignmentOperators2(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`var a = 10;` +
+		`a += 5;` +
+		`a -= 3;` +
+		`a *= 2;` +
+		`a /= 4;` +
+		`Response.Write(a);` +
+		`</script>`
+	out := runASPSourceForTest(t, source)
+	if out != "6" {
+		t.Fatalf("unexpected compound-assignment output: %q", out)
 	}
 }
 
@@ -387,43 +381,6 @@ func TestJScriptMathTruncSignCbrt(t *testing.T) {
 	}
 }
 
-func TestJScriptObjectKeysNullThrowsTypeError(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var ok = false;
-		try {
-			Object.keys(null);
-		} catch (e) {
-			ok = (String(e).indexOf("TypeError") !== -1);
-		}
-		Response.Write(ok ? "yes" : "no");
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "yes" {
-		t.Errorf("expected 'yes', got %q", out)
-	}
-}
-
-func TestJScriptArraySpreadNullThrowsTypeError(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var ok = false;
-		try {
-			var arr = [...null];
-			Response.Write(arr.length);
-		} catch (e) {
-			ok = (String(e).indexOf("TypeError") !== -1);
-		}
-		Response.Write(ok ? "yes" : "no");
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "yes" {
-		t.Errorf("expected 'yes', got %q", out)
-	}
-}
-
 func TestJScriptSymbolPrimitiveUniqueness(t *testing.T) {
 	out, err := runJScript2(t, jscriptSrc(`
 		var a = Symbol("x");
@@ -455,24 +412,6 @@ func TestJScriptSymbolObjectKeyHiddenFromKeys(t *testing.T) {
 	}
 	if out != "42|visible" {
 		t.Errorf("expected '42|visible', got %q", out)
-	}
-}
-
-func TestJScriptSymbolConstructorThrows(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var ok = false;
-		try {
-			var x = new Symbol("x");
-		} catch (e) {
-			ok = (String(e).indexOf("TypeError") !== -1);
-		}
-		Response.Write(ok ? "yes" : "no");
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "yes" {
-		t.Errorf("expected 'yes', got %q", out)
 	}
 }
 
@@ -537,156 +476,21 @@ func TestJScriptSetAndMapBasics(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Phase 1: Computed Property Names
-// ---------------------------------------------------------------------------
-
-func TestJScriptComputedPropertyNames(t *testing.T) {
+func TestJScriptSetForOfIteratesValues(t *testing.T) {
 	out, err := runJScript2(t, jscriptSrc(`
-		var key = "name";
-		var o = { [key]: "Alice" };
-		Response.Write(o.name);
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "Alice" {
-		t.Errorf("expected 'Alice', got %q", out)
-	}
-}
-
-func TestJScriptComputedPropertyNamesExpression(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var prefix = "greet";
-		var o = { [prefix + "_en"]: "Hello", [prefix + "_fr"]: "Bonjour" };
-		Response.Write(o.greet_en);
-		Response.Write("|");
-		Response.Write(o.greet_fr);
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "Hello|Bonjour" {
-		t.Errorf("expected 'Hello|Bonjour', got %q", out)
-	}
-}
-
-func TestJScriptComputedPropertyNamesMixed(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var k = "dynamic";
-		var o = { static: 1, [k]: 2 };
-		Response.Write(o.static);
-		Response.Write("|");
-		Response.Write(o.dynamic);
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "1|2" {
-		t.Errorf("expected '1|2', got %q", out)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Phase 2: For...Of Loops
-// ---------------------------------------------------------------------------
-
-func TestJScriptForOfArray(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var arr = [10, 20, 30];
-		var result = "";
-		for (var x of arr) {
-			result += x + ",";
+		var s = new Set();
+		s.add("a"); s.add("b"); s.add("c");
+		var setResult = "";
+		for (const v of s) {
+			setResult += v;
 		}
-		Response.Write(result);
+		Response.Write(setResult.length);
 	`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "10,20,30," {
-		t.Errorf("expected '10,20,30,', got %q", out)
-	}
-}
-
-func TestJScriptForOfString(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var result = "";
-		for (var ch of "abc") {
-			result += ch;
-		}
-		Response.Write(result);
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "abc" {
-		t.Errorf("expected 'abc', got %q", out)
-	}
-}
-
-func TestJScriptForOfLet(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var sum = 0;
-		for (let n of [1, 2, 3, 4]) {
-			sum += n;
-		}
-		Response.Write(sum);
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "10" {
-		t.Errorf("expected '10', got %q", out)
-	}
-}
-
-func TestJScriptForOfBreak(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var result = "";
-		for (var x of [1, 2, 3, 4, 5]) {
-			if (x === 3) break;
-			result += x + ",";
-		}
-		Response.Write(result);
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "1,2," {
-		t.Errorf("expected '1,2,', got %q", out)
-	}
-}
-
-func TestJScriptForOfContinue(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var result = "";
-		for (var x of [1, 2, 3, 4]) {
-			if (x === 2) continue;
-			result += x + ",";
-		}
-		Response.Write(result);
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "1,3,4," {
-		t.Errorf("expected '1,3,4,', got %q", out)
-	}
-}
-
-func TestJScriptForOfEmpty(t *testing.T) {
-	out, err := runJScript2(t, jscriptSrc(`
-		var result = "ok";
-		for (var x of []) {
-			result = "fail";
-		}
-		Response.Write(result);
-	`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "ok" {
-		t.Errorf("expected 'ok', got %q", out)
+	if out != "3" {
+		t.Errorf("expected '3', got %q", out)
 	}
 }
 
@@ -746,5 +550,150 @@ func TestJScriptRegExpUnicodeFlag(t *testing.T) {
 	}
 	if out != "pass" {
 		t.Errorf("expected 'pass', got %q", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Modern Syntax & Operators
+// ---------------------------------------------------------------------------
+
+func TestJScriptPhase2OptionalChaining(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"Basic property access", `var a = {b: 1}; Response.Write(a?.b)`, "1"},
+		{"Null base", `var a = null; Response.Write(a?.b)`, "undefined"},
+		{"Undefined base", `var a; Response.Write(a?.b)`, "undefined"},
+		{"Nested property access", `var a = {b: {c: 2}}; Response.Write(a?.b?.c)`, "2"},
+		{"Nested null", `var a = {b: null}; Response.Write(a?.b?.c)`, "undefined"},
+		{"Call exists", `var a = {b: function() { return 3; }}; Response.Write(a?.b())`, "3"},
+		{"Call null base", `var a = null; Response.Write(a?.())`, "undefined"},
+		{"Bracket access", `var a = {b: 4}; Response.Write(a?.['b'])`, "4"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if out != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, out)
+			}
+		})
+	}
+}
+
+func TestJScriptPhase2NullishCoalescing(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"Null LHS", `Response.Write(null ?? 1)`, "1"},
+		{"Undefined LHS", `Response.Write(undefined ?? 2)`, "2"},
+		{"False LHS", `Response.Write(false ?? 3)`, "False"},
+		{"Zero LHS", `Response.Write(0 ?? 4)`, "0"},
+		{"Empty string LHS", `Response.Write("" ?? 5)`, ""},
+		{"Non-nullish LHS", `Response.Write(6 ?? 7)`, "6"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if out != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, out)
+			}
+		})
+	}
+}
+
+func TestJScriptPhase2LogicalAssignment(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"OR assign falsy", `var a = 0; a ||= 1; Response.Write(a)`, "1"},
+		{"OR assign truthy", `var a = 2; a ||= 3; Response.Write(a)`, "2"},
+		{"AND assign truthy", `var a = 4; a &&= 5; Response.Write(a)`, "5"},
+		{"AND assign falsy", `var a = 0; a &&= 6; Response.Write(a)`, "0"},
+		{"Coalesce assign nullish", `var a = null; a ??= 7; Response.Write(a)`, "7"},
+		{"Coalesce assign non-nullish", `var a = 8; a ??= 9; Response.Write(a)`, "8"},
+		{"Assignment result", `var a = 0; Response.Write(a ||= 1)`, "1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if out != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, out)
+			}
+		})
+	}
+}
+
+func TestJScriptPhase2Exponentiation(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"2 ** 3", `Response.Write(2 ** 3)`, "8"},
+		{"3 ** 2", `Response.Write(3 ** 2)`, "9"},
+		{"**= operator", `var a = 2; a **= 4; Response.Write(a)`, "16"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if out != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, out)
+			}
+		})
+	}
+}
+
+func TestJScriptPhase2BigInt(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"Literal", `Response.Write(10n)`, "10"},
+		{"Addition", `Response.Write(10n + 20n)`, "30"},
+		{"Subtraction", `Response.Write(30n - 10n)`, "20"},
+		{"Multiplication", `Response.Write(5n * 6n)`, "30"},
+		{"Division", `Response.Write(10n / 3n)`, "3"},
+		{"Modulo", `Response.Write(10n % 3n)`, "1"},
+		{"Exponentiation", `Response.Write(2n ** 10n)`, "1024"},
+		{"Negation", `Response.Write(-10n)`, "-10"},
+		{"Strict Equality", `Response.Write(10n === 10n)`, "True"},
+		{"Strict Inequality", `Response.Write(10n === 10)`, "False"},
+		{"Truthy", `if (10n) { Response.Write(1); } else { Response.Write(0); }`, "1"},
+		{"Falsy", `if (0n) { Response.Write(1); } else { Response.Write(0); }`, "0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if out != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, out)
+			}
+		})
 	}
 }

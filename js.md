@@ -19,21 +19,6 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 
 ---
 
-## 🛠️ PHASE 2: MODERN SYNTAX & OPERATORS (MEDIUM COMPLEXITY)
-
-**Goal:** Implement ES11/2020 and ES12/2021 syntactic sugar. Requires updating the AST, parser, and emitting specific OpCodes or conditional jumps.
-
-### Tasks:
-
-* [ ] **Optional Chaining (`?.`):** Update the parser and compiler to safely short-circuit and return `undefined` instead of throwing an error when accessing properties on `null` or `undefined`.
-* [ ] **Nullish Coalescing (`??`):** Implement the `??` operator to return the right-hand operand ONLY when the left-hand is strictly `null` or `undefined` (unlike `||` which checks falsy values).
-* [ ] **Logical Assignment (`||=`, `&&=`, `??=`):** Implement these operators, ensuring the left side is only evaluated and reassigned if the logical condition is met.
-* [ ] **Exponentiation Operator (`**`):** Implement the `**` operator for exponentiation, ensuring it correctly handles edge cases (e.g., negative bases, fractional exponents).
-* [ ] **BigInt Support:** Implement the `n` suffix for BigInt literals and ensure arithmetic operations with BigInts are correctly handled without converting to regular numbers.
-* [ ] **Test:** For each operator, write comprehensive test cases covering typical usage, edge cases, and error conditions (e.g., accessing properties on `null` with optional chaining should not throw an error).
-
----
-
 ## 🛠️ PHASE 3: TAIL CALL OPTIMIZATION (TCO) (MEDIUM COMPLEXITY)
 
 **Goal:** Ensure function calls in the tail position do not increase the execution stack size. Don't allow the `stack []Value` to grow indefinitely with deep recursion. High risk if not implemented correctly, as it can lead to memory leaks or crashes.
@@ -53,6 +38,7 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 * [ ] **Binary Data (Typed Arrays & DataView):** Implement `ArrayBuffer`, `DataView`, and typed arrays (`Uint8Array`, `Int32Array`, `Float64Array`, etc.) for high-performance I/O.
 * [ ] **Weak Collections (`WeakMap` & `WeakSet`):** Implement collections that do not prevent GC of their keys.
     * *ATTENTION:* Implementing `WeakMap` and `WeakSet` in Go is non-trivial. You may need to use a combination of `runtime.SetFinalizer` or careful weak-reference management. Ensure thoroughly tested memory safety to prevent leaks in long-running ASP applications.
+* [ ] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
 
 ---
 
@@ -69,6 +55,7 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
     * For **Objects**: Iterate properties and assign members by name.
 
 * [ ] **Memory Warning:** Be extremely careful with stack depth. Deeply nested destructuring can exhaust the stack.
+* [ ] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
 
 ---
 
@@ -81,6 +68,7 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 * [ ] **Compiler Update:** Implement `compileJScriptClassDeclaration`.
 * [ ] **Logic:** Classes are NOT hoisted, execute in Strict Mode, map `constructor` to a function, and map methods to the `.prototype`.
 * [ ] **Super Binding:** Implement the `super` keyword by tracking the "Home Object" of methods to correctly resolve the prototype chain.
+* [ ] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
 
 ---
 
@@ -92,6 +80,7 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 
 * [ ] **Proxy Object:** Intercept fundamental operations (`get`, `set`, `apply`, `construct`). Requires deep hooks into the JScript member dispatch engine (`jsMemberGet`, `jsMemberSet`).
 * [ ] **Reflect Object:** Expose the global `Reflect` API for programmatic object manipulation, ensuring parity with `Proxy` traps.
+* [ ] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
 
 ---
 
@@ -105,6 +94,7 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 * [ ] **State Machine Transformation:** The compiler must convert `function*` (`yield`) and `async` functions into resumable states.
 * [ ] **Microtask Queue:** Implement a microtask queue in the VM that processes resolved promises before returning control to the ASP engine.
 * [ ] **Constraint:** Ensure this does NOT interfere with the synchronous nature of VBScript or standard ASP objects (e.g., `Response.Write` must work correctly inside `yield` steps).
+* [ ] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
 
 ---
 
@@ -118,6 +108,7 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 * [ ] **Module Caching:** Implement a caching mechanism to prevent reloading the same module multiple times.
 * [ ] **Syntax & Semantics:** Update the parser to recognize `import` and `export` statements, and the compiler to handle module scope and bindings.
 * [ ] **Testing:** This is a high-risk change. Ensure comprehensive and rigorous testing to prevent breaking existing ASP applications.
+* [ ] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
 
 ---
 

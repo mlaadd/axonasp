@@ -22,6 +22,7 @@ package axonvm
 
 import (
 	"fmt"
+	"math/big"
 	"strconv"
 	"time"
 )
@@ -58,6 +59,8 @@ const (
 	VTArgRef
 	// VTSymbol represents the JavaScript Symbol primitive.
 	VTSymbol
+	// VTJSBigInt represents the JavaScript BigInt primitive.
+	VTJSBigInt
 )
 
 type Value struct {
@@ -67,6 +70,7 @@ type Value struct {
 	Str   string  // Strings in Go are lightweight pointers
 	Arr   *VBArray
 	Names []string // Stores local names for VTUserSub or field names for VTObject
+	Big   *big.Int // Used for JavaScript BigInt
 }
 
 // String returns the string representation of the VBScript value.
@@ -117,6 +121,11 @@ func (v Value) String() string {
 			return "Symbol()"
 		}
 		return "Symbol(" + v.Str + ")"
+	case VTJSBigInt:
+		if v.Big == nil {
+			return "0"
+		}
+		return v.Big.String()
 	default:
 		return "Unknown"
 	}
@@ -140,6 +149,10 @@ func NewBool(v bool) Value {
 		val = 1
 	}
 	return Value{Type: VTBool, Num: val}
+}
+
+func NewBigInt(v *big.Int) Value {
+	return Value{Type: VTJSBigInt, Big: v}
 }
 
 // NewDate creates a VM date value from a Go time instance.

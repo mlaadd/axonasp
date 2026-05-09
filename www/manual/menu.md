@@ -51,7 +51,7 @@
     * [Global Console Object](md/asp/console-object.md)
 * Javascript (JScript support)
     * [Use Javascript in ASP Pages](md/javascript/jscript-support.md)
-    * [ES6 Features](md/javascript/jscript-es6-support.md)
+    * [ES6 Features and Beyond](md/javascript/jscript-es6-support.md)
 * Libraries
     * [Object Overview](md/libraries/overview.md)
     * G3AXON Functions

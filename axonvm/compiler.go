@@ -82,6 +82,10 @@ func (s *SymbolTable) Get(name string) (int, bool) {
 	return idx, exists
 }
 
+func (s *SymbolTable) Names() []string {
+	return s.names
+}
+
 func (s *SymbolTable) Count() int {
 	return len(s.names)
 }
@@ -138,6 +142,7 @@ type Compiler struct {
 	jsFunctionStrictModes   map[int]bool      // Maps function start IP to strict mode
 	jsBlockScopeStack       []map[string]bool // Stack of declared block-scoped variables (let/const)
 	jsForIterScopes         []jsForIterScope  // Stack of active per-iteration for-let scopes
+	jsOptionalChainExits    []int             // Stack of placeholder positions for ?. short-circuiting
 	// withDepth tracks nesting level of With...End With blocks at compile time.
 	// A value > 0 enables the leading-dot '.' statement and expression syntax.
 	withDepth          int
@@ -1301,7 +1306,8 @@ func usesWideJumpOperand(op OpCode) bool {
 	switch op {
 	case OpJump, OpJumpIfFalse, OpJumpIfTrue, OpGotoLabel:
 		fallthrough
-	case OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter, OpJSBreak, OpJSContinue, OpJSForInCleanup:
+	case OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter, OpJSBreak, OpJSContinue, OpJSForInCleanup, OpJSForOfCleanup,
+		OpJSJumpIfNullish, OpJSJumpIfNotNullish:
 		return true
 	default:
 		return false

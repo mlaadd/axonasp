@@ -1,4 +1,4 @@
-# Use ES6 Features in Javascript Scripts
+# Use ES6 Features and beyond in Javascript Scripts
 
 ## Overview
 
@@ -794,7 +794,163 @@ Response.Write(api.greet("World")); // Output: Hello, World
 
 ---
 
-## For...Of Loops
+## Optional Chaining (?.)
+
+### Syntax
+
+```javascript
+obj?.property
+obj?.[expression]
+obj?.method()
+```
+
+### Remarks
+
+- The optional chaining operator (`?.`) allows reading the value of a property located deep within a chain of connected objects without having to expressly validate that each reference in the chain is valid.
+- If the object before the `?.` is `null` or `undefined`, the expression short-circuits and returns `undefined` instead of throwing an error.
+- Works for property access, bracket access, and function calls.
+
+### Code Example
+
+```javascript
+<script runat="server" language="JScript">
+var user = { info: { name: "Alice" } };
+Response.Write(user?.info?.name); // Output: Alice
+Response.Write(user?.settings?.theme); // Output: undefined (no error)
+
+var fn = null;
+Response.Write(fn?.()); // Output: undefined (no error)
+</script>
+```
+
+---
+
+## Nullish Coalescing (??)
+
+### Syntax
+
+```javascript
+var result = leftExpr ?? rightExpr;
+```
+
+### Remarks
+
+- The nullish coalescing operator (`??`) is a logical operator that returns its right-hand side operand when its left-hand side operand is `null` or `undefined`, and otherwise returns its left-hand side operand.
+- Unlike the OR operator (`||`), it does not return the right-hand side for other "falsy" values like `0`, `""`, or `false`.
+
+### Code Example
+
+```javascript
+<script runat="server" language="JScript">
+Response.Write(null ?? "default"); // Output: default
+Response.Write(undefined ?? "default"); // Output: default
+Response.Write(0 ?? 42); // Output: 0
+Response.Write("" ?? "hello"); // Output: (empty string)
+Response.Write(false ?? true); // Output: False
+</script>
+```
+
+---
+
+## Logical Assignment (||=, &&=, ??=)
+
+### Syntax
+
+```javascript
+a ||= b;  // Logical OR assignment
+a &&= b;  // Logical AND assignment
+a ??= b;  // Nullish coalescing assignment
+```
+
+### Remarks
+
+- `a ||= b` only assigns `b` to `a` if `a` is falsy.
+- `a &&= b` only assigns `b` to `a` if `a` is truthy.
+- `a ??= b` only assigns `b` to `a` if `a` is nullish (`null` or `undefined`).
+- These operators short-circuit; the right-hand side is only evaluated if the assignment condition is met.
+
+### Code Example
+
+```javascript
+<script runat="server" language="JScript">
+var a = 0;
+a ||= 10;
+Response.Write(a); // Output: 10
+
+var b = 5;
+b &&= 20;
+Response.Write(b); // Output: 20
+
+var c = null;
+c ??= 30;
+Response.Write(c); // Output: 30
+</script>
+```
+
+---
+
+## Exponentiation Operator (**)
+
+### Syntax
+
+```javascript
+var result = base ** exponent;
+var a **= exponent;
+```
+
+### Remarks
+
+- The exponentiation operator (`**`) returns the result of raising the first operand to the power of the second operand.
+- It is equivalent to `Math.pow()`, but also supports `BigInt`.
+
+### Code Example
+
+```javascript
+<script runat="server" language="JScript">
+Response.Write(2 ** 3); // Output: 8
+var x = 3;
+x **= 2;
+Response.Write(x); // Output: 9
+</script>
+```
+
+---
+
+## BigInt Support
+
+### Syntax
+
+```javascript
+var large = 100n;
+var another = BigInt("9007199254740991");
+```
+
+### Remarks
+
+- `BigInt` is a primitive wrapper object used to represent and manipulate primitive `bigint` values—which are too large to be represented by the `number` primitive.
+- A `BigInt` value is created by appending `n` to the end of an integer literal, or by calling the `BigInt()` constructor.
+- **Restriction:** You cannot mix `BigInt` and `Number` in the same operation (e.g., `10n + 5` throws `TypeError`). You must use explicit conversion.
+- Arithmetic operations (`+`, `-`, `*`, `/`, `%`, `**`) and comparison operators are supported.
+- `BigInt` division truncates towards zero.
+
+### Code Example
+
+```javascript
+<script runat="server" language="JScript">
+var a = 10n;
+var b = 20n;
+Response.Write(a + b); // Output: 30
+Response.Write(2n ** 64n); // Output: 18446744073709551616
+
+try {
+    Response.Write(10n + 5);
+} catch (e) {
+    Response.Write("Error: " + e.message); // Output: Error: Cannot mix BigInt and other types...
+}
+</script>
+```
+
+---
 
 ### Syntax
 

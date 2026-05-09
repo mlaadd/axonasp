@@ -260,6 +260,14 @@ const (
 	OpJSPostIndexDecrement  // [OpCode] - post-decrement (obj[idx]--)
 	OpJSPreIndexIncrement   // [OpCode] - pre-increment (++obj[idx])
 	OpJSPreIndexDecrement   // [OpCode] - pre-decrement (--obj[idx])
+	OpJSExponent            // [OpCode] - JScript exponentiation (**)
+	OpJSCoalesce            // [OpCode] - JScript ??
+	OpJSJumpIfNullish       // [OpCode, Target3, Target2, Target1, Target0] - jump if null or undefined
+	OpJSJumpIfNotNullish    // [OpCode, Target3, Target2, Target1, Target0] - jump if not null and not undefined
+	OpJSExponentAssign      // [OpCode, NameConstIdxHigh, NameConstIdxLow] - **=
+	OpJSLogicalAndAssign    // [OpCode, NameConstIdxHigh, NameConstIdxLow] - &&=
+	OpJSLogicalOrAssign     // [OpCode, NameConstIdxHigh, NameConstIdxLow] - ||=
+	OpJSCoalesceAssign      // [OpCode, NameConstIdxHigh, NameConstIdxLow] - ??=
 
 	// Strict Mode & Block Scoping
 	OpJSStrictModeEnter  // [OpCode] - enter strict mode scope
@@ -614,6 +622,22 @@ func (op OpCode) String() string {
 		return "OpJSPreIndexIncrement"
 	case OpJSPreIndexDecrement:
 		return "OpJSPreIndexDecrement"
+	case OpJSExponent:
+		return "OpJSExponent"
+	case OpJSCoalesce:
+		return "OpJSCoalesce"
+	case OpJSJumpIfNullish:
+		return "OpJSJumpIfNullish"
+	case OpJSJumpIfNotNullish:
+		return "OpJSJumpIfNotNullish"
+	case OpJSExponentAssign:
+		return "OpJSExponentAssign"
+	case OpJSLogicalAndAssign:
+		return "OpJSLogicalAndAssign"
+	case OpJSLogicalOrAssign:
+		return "OpJSLogicalOrAssign"
+	case OpJSCoalesceAssign:
+		return "OpJSCoalesceAssign"
 	case OpJSMemberIndexSet:
 		return "OpJSMemberIndexSet"
 	case OpJSStrictModeEnter:
