@@ -185,6 +185,8 @@ const (
 	OpJSMemberSet           // [OpCode, NameConstIdxHigh, NameConstIdxLow]
 	OpJSCall                // [OpCode, ArgCountHigh, ArgCountLow]
 	OpJSCallMember          // [OpCode, NameConstIdxHigh, NameConstIdxLow, ArgCountHigh, ArgCountLow]
+	OpJSTailCall            // [OpCode, ArgCountHigh, ArgCountLow]
+	OpJSTailCallMember      // [OpCode, NameConstIdxHigh, NameConstIdxLow, ArgCountHigh, ArgCountLow]
 	OpJSCreateClosure       // [OpCode, FunctionTemplateConstIdxHigh, FunctionTemplateConstIdxLow]
 	OpJSAdd                 // [OpCode]
 	OpJSStrictEq            // [OpCode]
@@ -474,6 +476,10 @@ func (op OpCode) String() string {
 		return "OpJSCall"
 	case OpJSCallMember:
 		return "OpJSCallMember"
+	case OpJSTailCall:
+		return "OpJSTailCall"
+	case OpJSTailCallMember:
+		return "OpJSTailCallMember"
 	case OpJSCreateClosure:
 		return "OpJSCreateClosure"
 	case OpJSAdd:

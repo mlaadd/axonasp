@@ -264,6 +264,9 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 		c.emit(OpJSSetName, nameIdx)
 	case *jsast.ReturnStatement:
 		c.emitJSLeaveWithScopes(c.withDepth)
+		if c.jsTryDepth == 0 && c.compileJScriptTailReturn(node.Argument) {
+			return
+		}
 		if node.Argument != nil {
 			c.compileJScriptExpression(node.Argument)
 		} else {
@@ -298,6 +301,7 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 			c.emit(OpJSBlockScopeExit)
 		}
 	case *jsast.TryStatement:
+		c.jsTryDepth++
 		tryPos := c.emit(OpJSTryEnter, 0)
 		c.compileJScriptStatement(node.Body)
 		c.emit(OpJSTryLeave)
@@ -315,6 +319,7 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 		if node.Finally != nil {
 			c.compileJScriptStatement(node.Finally)
 		}
+		c.jsTryDepth--
 		c.patchJSJump(jumpEnd)
 	case *jsast.IfStatement:
 		c.compileJScriptExpression(node.Test)
@@ -1464,6 +1469,31 @@ func (c *Compiler) compileJScriptCall(node *jsast.CallExpression) {
 		}
 		c.emit(OpJSCall, len(node.ArgumentList))
 	}
+}
+
+// compileJScriptTailReturn emits one tail-call opcode when one return argument is a call expression.
+func (c *Compiler) compileJScriptTailReturn(argument jsast.Expression) bool {
+	callExpr, ok := argument.(*jsast.CallExpression)
+	if !ok {
+		return false
+	}
+
+	switch callee := callExpr.Callee.(type) {
+	case *jsast.DotExpression:
+		c.compileJScriptExpression(callee.Left)
+		for i := range callExpr.ArgumentList {
+			c.compileJScriptExpression(callExpr.ArgumentList[i])
+		}
+		c.emit(OpJSTailCallMember, c.addConstant(NewString(callee.Identifier.Name.String())), len(callExpr.ArgumentList))
+	default:
+		c.compileJScriptExpression(callExpr.Callee)
+		for i := range callExpr.ArgumentList {
+			c.compileJScriptExpression(callExpr.ArgumentList[i])
+		}
+		c.emit(OpJSTailCall, len(callExpr.ArgumentList))
+	}
+
+	return true
 }
 
 func (c *Compiler) compileJScriptFunctionLiteral(fn *jsast.FunctionLiteral, fallbackName string) {

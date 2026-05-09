@@ -139,6 +139,7 @@ type Compiler struct {
 	jsLoopContexts          []*jsLoopContext // Loop contexts for JScript
 	jsBreakContexts         []*jsBreakContext
 	jsStrictMode            bool              // Current JScript strict mode state
+	jsTryDepth              int               // Current JScript try/catch/finally nesting depth
 	jsFunctionStrictModes   map[int]bool      // Maps function start IP to strict mode
 	jsBlockScopeStack       []map[string]bool // Stack of declared block-scoped variables (let/const)
 	jsForIterScopes         []jsForIterScope  // Stack of active per-iteration for-let scopes

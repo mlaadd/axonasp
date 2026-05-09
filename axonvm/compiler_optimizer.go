@@ -125,7 +125,7 @@ func (c *Compiler) optimizeLocalCopyPropagationPass() bool {
 			OpJSJump, OpJSJumpIfFalse, OpJSJumpIfTrue, OpJSTryEnter,
 			OpJSBreak, OpJSContinue, OpJSForInCleanup,
 			OpJSJumpIfLessFast,
-			OpCall, OpCallMember, OpCallBuiltin, OpJSCall, OpJSCallMember, OpJSNew:
+			OpCall, OpCallMember, OpCallBuiltin, OpJSCall, OpJSCallMember, OpJSTailCall, OpJSTailCallMember, OpJSNew:
 			clear(alias)
 		}
 

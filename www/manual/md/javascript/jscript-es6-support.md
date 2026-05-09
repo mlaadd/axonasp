@@ -208,6 +208,44 @@ Response.Write(multiply(5, 3));   // Output: 15
 
 ---
 
+## Tail Call Optimization (TCO)
+
+### Syntax
+
+```javascript
+function sum(n, acc) {
+    if (n === 0) {
+        return acc;
+    }
+    return sum(n - 1, acc + n);
+}
+```
+
+### Remarks
+
+- Tail-position calls in `return` statements are optimized by the JScript VM to reuse the active function frame.
+- The optimization currently applies to direct calls (`return fn(...)`) and member calls (`return obj.fn(...)`).
+- Tail-call optimization is intentionally disabled when the `return` statement is inside `try`, `catch`, or `finally` blocks to preserve exception-handler semantics.
+- If the tail-position call target resolves to a native host function, the VM executes it as a normal call and returns the result without frame reuse.
+
+### Code Example
+
+```javascript
+<script runat="server" language="JScript">
+function sum(n, acc) {
+    if (n === 0) {
+        return acc;
+    }
+    return sum(n - 1, acc + 1);
+}
+
+Response.Write(sum(100000, 0));
+// Output: 100000
+</script>
+```
+
+---
+
 ## Rest Parameters
 
 ### Syntax

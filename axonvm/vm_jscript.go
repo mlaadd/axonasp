@@ -1337,6 +1337,146 @@ func (vm *VM) jsBeginFunctionCall(fn Value, thisVal Value, args []Value, ctorObj
 	return true
 }
 
+// jsEnvHasCapturedClosures reports whether any closure currently captures envID.
+func (vm *VM) jsEnvHasCapturedClosures(envID int64) bool {
+	if envID == 0 {
+		return false
+	}
+	for _, fn := range vm.jsFunctionItems {
+		if fn != nil && fn.envID == envID {
+			return true
+		}
+	}
+	return false
+}
+
+// jsRefreshArgumentsObject rewrites one existing arguments object in place.
+func (vm *VM) jsRefreshArgumentsObject(objID int64, args []Value, params []string, envID int64) {
+	obj, ok := vm.jsObjectItems[objID]
+	if !ok {
+		obj = make(map[string]Value, len(args)+1)
+		vm.jsObjectItems[objID] = obj
+	} else {
+		clear(obj)
+	}
+	for i := 0; i < len(args); i++ {
+		obj[strconv.Itoa(i)] = args[i]
+	}
+	obj["length"] = NewInteger(int64(len(args)))
+
+	if len(params) > 0 && len(args) > 0 {
+		alias, ok := vm.jsArgumentsItems[objID]
+		if !ok || alias == nil {
+			alias = &jsArgumentsBinding{}
+			vm.jsArgumentsItems[objID] = alias
+		}
+		alias.envID = envID
+		if alias.indexToParam == nil {
+			alias.indexToParam = make(map[string]string, len(params))
+		} else {
+			clear(alias.indexToParam)
+		}
+		if alias.paramToIndex == nil {
+			alias.paramToIndex = make(map[string]string, len(params))
+		} else {
+			clear(alias.paramToIndex)
+		}
+		max := len(params)
+		if len(args) < max {
+			max = len(args)
+		}
+		for i := 0; i < max; i++ {
+			key := strconv.Itoa(i)
+			paramName := params[i]
+			alias.indexToParam[key] = paramName
+			if _, exists := alias.paramToIndex[paramName]; !exists {
+				alias.paramToIndex[paramName] = key
+			}
+		}
+	} else {
+		delete(vm.jsArgumentsItems, objID)
+	}
+}
+
+// jsTailCallValue replaces the current JScript call frame with one new call target.
+func (vm *VM) jsTailCallValue(callee Value, thisVal Value, args []Value) bool {
+	if callee.Type != VTJSFunction || len(vm.jsCallStack) == 0 {
+		return false
+	}
+
+	closure, ok := vm.jsFunctionItems[callee.Num]
+	if !ok || closure == nil || closure.isBound {
+		return false
+	}
+
+	if closure.isArrow {
+		thisVal = closure.capturedThis
+	}
+
+	frame := &vm.jsCallStack[len(vm.jsCallStack)-1]
+
+	canReuseEnv := vm.jsActiveEnvID != 0 && !vm.jsEnvHasCapturedClosures(vm.jsActiveEnvID)
+	envID := vm.jsActiveEnvID
+	bindings := make(map[string]Value, len(closure.params)+2)
+	reusedArgs := Value{Type: VTJSUndefined}
+	if canReuseEnv {
+		if env, ok := vm.jsEnvItems[envID]; ok && env != nil {
+			if env.bindings == nil {
+				env.bindings = make(map[string]Value, len(closure.params)+2)
+			}
+			bindings = env.bindings
+			if existingArgs, exists := bindings["arguments"]; exists {
+				reusedArgs = existingArgs
+			}
+			clear(bindings)
+			env.parentID = closure.envID
+		} else {
+			canReuseEnv = false
+		}
+	}
+	if !canReuseEnv {
+		envID = vm.allocJSID()
+		vm.jsEnvItems[envID] = &jsEnvFrame{parentID: closure.envID, bindings: bindings}
+	}
+
+	for i := 0; i < len(closure.params); i++ {
+		if i < len(args) {
+			bindings[closure.params[i]] = args[i]
+		} else {
+			bindings[closure.params[i]] = Value{Type: VTJSUndefined}
+		}
+	}
+	if closure.restParam != "" {
+		restValues := make([]Value, 0)
+		if len(args) > len(closure.params) {
+			restValues = append(restValues, args[len(closure.params):]...)
+		}
+		bindings[closure.restParam] = ValueFromVBArray(NewVBArrayFromValues(0, restValues))
+	}
+	if _, hasArguments := bindings["arguments"]; !hasArguments {
+		if canReuseEnv {
+			if reusedArgs.Type == VTJSObject {
+				vm.jsRefreshArgumentsObject(reusedArgs.Num, args, closure.params, envID)
+				bindings["arguments"] = reusedArgs
+			} else {
+				bindings["arguments"] = vm.jsCreateArgumentsObject(args, closure.params, envID)
+			}
+		} else {
+			bindings["arguments"] = vm.jsCreateArgumentsObject(args, closure.params, envID)
+		}
+	}
+
+	if len(vm.jsTryStack) > frame.tryDepth {
+		vm.jsTryStack = vm.jsTryStack[:frame.tryDepth]
+	}
+
+	vm.jsActiveEnvID = envID
+	vm.jsThisValue = thisVal
+	vm.ip = closure.startIP
+	vm.sp = frame.savedSP
+	return true
+}
+
 func (vm *VM) jsCreateArgumentsObject(args []Value, params []string, envID int64) Value {
 	objID := vm.allocJSID()
 	obj := make(map[string]Value, len(args)+1)

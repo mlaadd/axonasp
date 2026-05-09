@@ -827,7 +827,7 @@ func opcodeOperandSize(op OpCode) int {
 		OpLetGlobal, OpLetLocal, OpIncLocalInt, OpDecLocalInt,
 		OpCall,
 		OpJSDeclareName, OpJSGetName, OpJSSetName, OpJSMemberGet, OpJSMemberSet,
-		OpJSCreateClosure, OpJSCall, OpJSNewArray, OpJSDelete,
+		OpJSCreateClosure, OpJSCall, OpJSTailCall, OpJSNewArray, OpJSDelete,
 		OpJSNew, OpJSMemberDelete, OpJSPostIncrement, OpJSPostDecrement, OpJSPreIncrement, OpJSPreDecrement,
 		OpJSAddAssign, OpJSSubtractAssign, OpJSMultiplyAssign, OpJSDivideAssign, OpJSModuloAssign,
 		OpJSExponentAssign, OpJSLogicalAndAssign, OpJSLogicalOrAssign, OpJSCoalesceAssign,
@@ -842,7 +842,7 @@ func opcodeOperandSize(op OpCode) int {
 		OpJSCase, OpJSDefault, OpJSBreak, OpJSContinue, OpJSForInCleanup, OpJSForOfCleanup:
 		return 4
 	// 4-byte operands
-	case OpLine, OpCallMember, OpArraySet, OpCallBuiltin, OpSetDirective, OpSetOption, OpJSCallMember:
+	case OpLine, OpCallMember, OpArraySet, OpCallBuiltin, OpSetDirective, OpSetOption, OpJSCallMember, OpJSTailCallMember:
 		return 4
 	// 6-byte operands: classNameIdx(2) + fieldNameIdx(2) + isPublic(2)
 	case OpRegisterClassField:
@@ -904,7 +904,7 @@ func remapExecuteGlobalBytecode(bytecode []byte, constBase int, bytecodeBase int
 			valueIdx := int(binary.BigEndian.Uint16(bytecode[ip:])) + constBase
 			binary.BigEndian.PutUint16(bytecode[ip:], uint16(valueIdx))
 			ip += 2
-		case OpCallMember, OpArraySet, OpJSCallMember:
+		case OpCallMember, OpArraySet, OpJSCallMember, OpJSTailCallMember:
 			memberIdx := int(binary.BigEndian.Uint16(bytecode[ip:])) + constBase
 			binary.BigEndian.PutUint16(bytecode[ip:], uint16(memberIdx))
 			ip += 4
@@ -2404,6 +2404,19 @@ aspExecLoop:
 			result := vm.jsCall(callee, Value{Type: VTJSUndefined}, args)
 			vm.push(result)
 
+		case OpJSTailCall:
+			argCount := int(binary.BigEndian.Uint16(vm.bytecode[vm.ip:]))
+			vm.ip += 2
+			args := vm.ensureArgBuffer(argCount)
+			for i := argCount - 1; i >= 0; i-- {
+				args[i] = vm.pop()
+			}
+			callee := vm.pop()
+			if vm.jsTailCallValue(callee, Value{Type: VTJSUndefined}, args) {
+				continue
+			}
+			vm.jsReturn(vm.jsCall(callee, Value{Type: VTJSUndefined}, args))
+
 		case OpJSCallMember:
 			nameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
 			vm.ip += 2
@@ -2466,6 +2479,90 @@ aspExecLoop:
 			default:
 				vm.push(Value{Type: VTJSUndefined})
 			}
+
+		case OpJSTailCallMember:
+			nameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			vm.ip += 2
+			argCount := int(binary.BigEndian.Uint16(vm.bytecode[vm.ip:]))
+			vm.ip += 2
+			args := vm.ensureArgBuffer(argCount)
+			for i := argCount - 1; i >= 0; i-- {
+				args[i] = vm.pop()
+			}
+			target := vm.pop()
+			member := vm.constants[nameIdx].Str
+			if result, handled := vm.jsCallMember(target, member, args); handled {
+				vm.jsReturn(result)
+				continue
+			}
+
+			thisArg := target
+			callee := Value{Type: VTJSUndefined}
+			canTailCall := false
+
+			switch target.Type {
+			case VTNativeObject:
+				vm.jsReturn(vm.dispatchNativeCall(target.Num, member, args))
+				continue
+			case VTJSFunction:
+				switch {
+				case strings.EqualFold(member, "call"):
+					callThis := Value{Type: VTJSUndefined}
+					callArgs := args[:0]
+					if len(args) > 0 {
+						callThis = args[0]
+						callArgs = args[1:]
+					}
+					callee = target
+					thisArg = callThis
+					args = callArgs
+					canTailCall = true
+				case strings.EqualFold(member, "apply"):
+					applyThis := Value{Type: VTJSUndefined}
+					var applyArgs []Value
+					if len(args) > 0 {
+						applyThis = args[0]
+					}
+					if len(args) > 1 {
+						applyArgs = vm.jsExtractApplyArgs(args[1])
+					}
+					callee = target
+					thisArg = applyThis
+					args = applyArgs
+					canTailCall = true
+				case strings.EqualFold(member, "bind"):
+					bindThis := Value{Type: VTJSUndefined}
+					bindArgs := args[:0]
+					if len(args) > 0 {
+						bindThis = args[0]
+						bindArgs = args[1:]
+					}
+					vm.jsReturn(vm.jsBindFunction(target, bindThis, bindArgs))
+					continue
+				default:
+					var deferred bool
+					callee, deferred = vm.jsMemberGet(target, member)
+					if deferred {
+						continue
+					}
+					canTailCall = true
+				}
+			case VTJSObject, VTArray, VTString, VTDate:
+				var deferred bool
+				callee, deferred = vm.jsMemberGet(target, member)
+				if deferred {
+					continue
+				}
+				canTailCall = true
+			default:
+				vm.jsReturn(Value{Type: VTJSUndefined})
+				continue
+			}
+
+			if canTailCall && vm.jsTailCallValue(callee, thisArg, args) {
+				continue
+			}
+			vm.jsReturn(vm.jsCall(callee, thisArg, args))
 
 		case OpJSCreateClosure:
 			templateIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])

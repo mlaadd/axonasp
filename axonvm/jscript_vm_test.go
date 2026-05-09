@@ -264,6 +264,97 @@ func TestJScriptForLoopAssignmentUpdateUsesIncrementFastPath(t *testing.T) {
 	}
 }
 
+func TestJScriptTailCallOpcodeEmission(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`function sum(n, acc) {` +
+		`if (n === 0) { return acc; }` +
+		`return sum(n - 1, acc + 1);` +
+		`}` +
+		`Response.Write(sum(10, 0));` +
+		`</script>`
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	bytecode := compiler.Bytecode()
+	hasTailCall := false
+	for i := 0; i < len(bytecode); i++ {
+		if OpCode(bytecode[i]) == OpJSTailCall {
+			hasTailCall = true
+			break
+		}
+	}
+	if !hasTailCall {
+		t.Fatalf("expected OpJSTailCall in bytecode, got %v", bytecode)
+	}
+}
+
+func TestJScriptTailCallNotEmittedInsideTryCatch(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`function sumInTry(n, acc) {` +
+		`try {` +
+		`if (n === 0) { return acc; }` +
+		`return sumInTry(n - 1, acc + 1);` +
+		`} catch (e) {` +
+		`return -1;` +
+		`}` +
+		`}` +
+		`Response.Write(sumInTry(8, 0));` +
+		`</script>`
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	bytecode := compiler.Bytecode()
+	for i := 0; i < len(bytecode); i++ {
+		switch OpCode(bytecode[i]) {
+		case OpJSTailCall, OpJSTailCallMember:
+			t.Fatalf("did not expect tail-call opcode inside try/catch, got bytecode %v", bytecode)
+		}
+	}
+}
+
+func TestJScriptTailCallKeepsEnvGrowthBounded(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`function sum(n, acc) {` +
+		`if (n === 0) { return acc; }` +
+		`return sum(n - 1, acc + 1);` +
+		`}` +
+		`Response.Write(sum(100000, 0));` +
+		`</script>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	var output bytes.Buffer
+	host.SetOutput(&output)
+	host.Response().SetBuffer(false)
+	vm.SetHost(host)
+
+	baseEnvCount := len(vm.jsEnvItems)
+	baseArgsCount := len(vm.jsArgumentsItems)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+	if output.String() != "100000" {
+		t.Fatalf("expected 100000, got %q", output.String())
+	}
+
+	if len(vm.jsEnvItems)-baseEnvCount > 64 {
+		t.Fatalf("tail call env growth too high: base=%d current=%d", baseEnvCount, len(vm.jsEnvItems))
+	}
+	if len(vm.jsArgumentsItems)-baseArgsCount > 64 {
+		t.Fatalf("tail call arguments growth too high: base=%d current=%d", baseArgsCount, len(vm.jsArgumentsItems))
+	}
+}
+
 func TestJScriptSimpleForLoop(t *testing.T) {
 	source := `<script runat="server" language="JScript">var sum = 0; for (var i = 0; i < 3; i++) { sum = sum + i; } Response.Write(sum);</script>`
 	out := runASPSourceForTest(t, source)

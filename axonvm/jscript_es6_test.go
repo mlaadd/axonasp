@@ -697,3 +697,43 @@ func TestJScriptPhase2BigInt(t *testing.T) {
 		})
 	}
 }
+
+func TestJScriptTailCallDeepRecursion(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		function sum(n, acc) {
+			if (n === 0) {
+				return acc;
+			}
+			return sum(n - 1, acc + 1);
+		}
+		Response.Write(sum(100000, 0));
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "100000" {
+		t.Errorf("expected '100000', got %q", out)
+	}
+}
+
+func TestJScriptTailCallInsideTryCatchBypassesTCO(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		function sumInTry(n, acc) {
+			try {
+				if (n === 0) {
+					return acc;
+				}
+				return sumInTry(n - 1, acc + 1);
+			} catch (e) {
+				return -1;
+			}
+		}
+		Response.Write(sumInTry(128, 0));
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "128" {
+		t.Errorf("expected '128', got %q", out)
+	}
+}
