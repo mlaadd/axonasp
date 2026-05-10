@@ -77,6 +77,41 @@ line2`+"`"+`;
 	}
 }
 
+func TestJScriptStringEscapeSequences(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var okNewline = "A\nB".length === 3 && "A\nB".charCodeAt(1) === 10;
+		var okSingleQuote = 'It\'s' === "It's";
+		var okDoubleQuote = "\"ok\"" === '"ok"';
+		var okBackslash = "\\".length === 1 && "\\".charCodeAt(0) === 92;
+		var okBackspace = "\b".charCodeAt(0) === 8;
+		var okFormFeed = "\f".charCodeAt(0) === 12;
+		var okCarriageReturn = "\r".charCodeAt(0) === 13;
+		var okTab = "\t".charCodeAt(0) === 9;
+		var okVerticalTab = "\v".charCodeAt(0) === 11;
+		Response.Write(okNewline + "|" + okSingleQuote + "|" + okDoubleQuote + "|" + okBackslash + "|" + okBackspace + "|" + okFormFeed + "|" + okCarriageReturn + "|" + okTab + "|" + okVerticalTab);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "True|True|True|True|True|True|True|True|True" {
+		t.Errorf("unexpected escape sequence behavior: %q", out)
+	}
+}
+
+func TestJScriptTemplateLiteralEscapeSequences(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var s = `+"`"+`A\nB\tC`+"`"+`;
+		var ok = s.length === 5 && s.charCodeAt(1) === 10 && s.charCodeAt(3) === 9;
+		Response.Write(ok);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "True" {
+		t.Errorf("expected template literal escapes to decode, got %q", out)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ES6 Arrow Functions
 // ---------------------------------------------------------------------------
@@ -695,6 +730,362 @@ func TestJScriptPhase2BigInt(t *testing.T) {
 				t.Errorf("expected %q, got %q", tt.expected, out)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ES6 Binary Data — ArrayBuffer, TypedArrays, DataView
+// ---------------------------------------------------------------------------
+
+func TestJScriptArrayBufferCreation(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"byteLength", `var b = new ArrayBuffer(8); Response.Write(b.byteLength);`, "8"},
+		{"zero length", `var b = new ArrayBuffer(0); Response.Write(b.byteLength);`, "0"},
+		{"isView typed array", `
+			var b = new ArrayBuffer(4);
+			var u = new Uint8Array(b);
+			Response.Write(ArrayBuffer.isView(u));
+		`, "True"},
+		{"isView plain object", `Response.Write(ArrayBuffer.isView({}));`, "False"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if strings.TrimSpace(out) != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, strings.TrimSpace(out))
+			}
+		})
+	}
+}
+
+func TestJScriptUint8ArrayReadWrite(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"length from size", `var a = new Uint8Array(4); Response.Write(a.length);`, "4"},
+		{"initial zero", `var a = new Uint8Array(4); Response.Write(a[0]);`, "0"},
+		{"write and read", `var a = new Uint8Array(4); a[0] = 42; Response.Write(a[0]);`, "42"},
+		{"clamp above 255", `var a = new Uint8ClampedArray(2); a[0] = 300; Response.Write(a[0]);`, "255"},
+		{"clamp below 0", `var a = new Uint8ClampedArray(2); a[0] = -5; Response.Write(a[0]);`, "0"},
+		{"from array", `var a = new Uint8Array([10,20,30]); Response.Write(a[1]);`, "20"},
+		{"byteLength", `var a = new Uint8Array(8); Response.Write(a.byteLength);`, "8"},
+		{"byteOffset", `var a = new Uint8Array(8); Response.Write(a.byteOffset);`, "0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if strings.TrimSpace(out) != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, strings.TrimSpace(out))
+			}
+		})
+	}
+}
+
+func TestJScriptInt32ArrayReadWrite(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"write and read", `var a = new Int32Array(4); a[2] = -1234567; Response.Write(a[2]);`, "-1234567"},
+		{"length", `var a = new Int32Array(3); Response.Write(a.length);`, "3"},
+		{"byteLength", `var a = new Int32Array(3); Response.Write(a.byteLength);`, "12"},
+		{"from array", `var a = new Int32Array([100, 200, 300]); Response.Write(a[2]);`, "300"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if strings.TrimSpace(out) != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, strings.TrimSpace(out))
+			}
+		})
+	}
+}
+
+func TestJScriptFloat64ArrayReadWrite(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"write and read", `var a = new Float64Array(2); a[0] = 3.14; Response.Write(a[0]);`, "3.14"},
+		{"from array", `var a = new Float64Array([1.5, 2.5]); Response.Write(a[0] + a[1]);`, "4"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if strings.TrimSpace(out) != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, strings.TrimSpace(out))
+			}
+		})
+	}
+}
+
+func TestJScriptDataViewGetSet(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{"getInt8/setInt8", `
+			var b = new ArrayBuffer(4);
+			var dv = new DataView(b);
+			dv.setInt8(0, -42);
+			Response.Write(dv.getInt8(0));
+		`, "-42"},
+		{"getUint8/setUint8", `
+			var b = new ArrayBuffer(4);
+			var dv = new DataView(b);
+			dv.setUint8(1, 200);
+			Response.Write(dv.getUint8(1));
+		`, "200"},
+		{"getInt16 little-endian", `
+			var b = new ArrayBuffer(4);
+			var dv = new DataView(b);
+			dv.setInt16(0, 0x0102, true);
+			Response.Write(dv.getInt16(0, true));
+		`, "258"},
+		{"getInt32 big-endian", `
+			var b = new ArrayBuffer(8);
+			var dv = new DataView(b);
+			dv.setInt32(0, 12345678, false);
+			Response.Write(dv.getInt32(0, false));
+		`, "12345678"},
+		{"getInt32 big-endian sign wrap", `
+			var b = new ArrayBuffer(8);
+			var dv = new DataView(b);
+			dv.setInt32(0, 0xDEADBEEF, false);
+			Response.Write(dv.getInt32(0, false));
+		`, "-559038737"},
+		{"getFloat32", `
+			var b = new ArrayBuffer(8);
+			var dv = new DataView(b);
+			dv.setFloat32(0, 1.5, true);
+			var v = dv.getFloat32(0, true);
+			Response.Write(v > 1.4 && v < 1.6);
+		`, "True"},
+		{"getFloat64", `
+			var b = new ArrayBuffer(16);
+			var dv = new DataView(b);
+			dv.setFloat64(0, 2.718281828, true);
+			var v = dv.getFloat64(0, true);
+			Response.Write(v > 2.71 && v < 2.72);
+		`, "True"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, jscriptSrc(tt.source))
+			if err != nil {
+				t.Fatalf("failed: %v", err)
+			}
+			if strings.TrimSpace(out) != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, strings.TrimSpace(out))
+			}
+		})
+	}
+}
+
+func TestJScriptTypedArraySet(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var a = new Uint8Array(4);
+		a.set([10, 20, 30, 40]);
+		Response.Write(a[0] + "," + a[1] + "," + a[2] + "," + a[3]);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "10,20,30,40" {
+		t.Errorf("expected '10,20,30,40', got %q", out)
+	}
+}
+
+func TestJScriptTypedArraySubarray(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var a = new Uint8Array([1,2,3,4,5]);
+		var b = a.subarray(1, 3);
+		Response.Write(b.length + "," + b[0] + "," + b[1]);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "2,2,3" {
+		t.Errorf("expected '2,2,3', got %q", out)
+	}
+}
+
+func TestJScriptTypedArrayFill(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var a = new Uint8Array(4);
+		a.fill(7);
+		Response.Write(a[0] + "," + a[1] + "," + a[2] + "," + a[3]);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "7,7,7,7" {
+		t.Errorf("expected '7,7,7,7', got %q", out)
+	}
+}
+
+func TestJScriptArrayBufferSlice(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var b = new ArrayBuffer(8);
+		var dv = new DataView(b);
+		dv.setUint8(0, 1);
+		dv.setUint8(1, 2);
+		dv.setUint8(2, 3);
+		var b2 = b.slice(1, 3);
+		var dv2 = new DataView(b2);
+		Response.Write(b2.byteLength + "," + dv2.getUint8(0) + "," + dv2.getUint8(1));
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "2,2,3" {
+		t.Errorf("expected '2,2,3', got %q", out)
+	}
+}
+
+func TestJScriptTypedArrayForOf(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var a = new Uint8Array([10, 20, 30]);
+		var sum = 0;
+		for (var v of a) { sum += v; }
+		Response.Write(sum);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "60" {
+		t.Errorf("expected '60', got %q", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ES6 Well-Known Symbols
+// ---------------------------------------------------------------------------
+
+func TestJScriptWellKnownSymbolIterator(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		Response.Write(typeof Symbol.iterator === "symbol");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "True" {
+		t.Errorf("expected 'True', got %q", out)
+	}
+}
+
+func TestJScriptWellKnownSymbolToStringTag(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		Response.Write(typeof Symbol.toStringTag === "symbol");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "True" {
+		t.Errorf("expected 'True', got %q", out)
+	}
+}
+
+func TestJScriptWellKnownSymbolSpecies(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		Response.Write(typeof Symbol.species === "symbol");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "True" {
+		t.Errorf("expected 'True', got %q", out)
+	}
+}
+
+func TestJScriptWellKnownSymbolHasInstance(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		Response.Write(typeof Symbol.hasInstance === "symbol");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "True" {
+		t.Errorf("expected 'True', got %q", out)
+	}
+}
+
+func TestJScriptWellKnownSymbolToPrimitive(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		Response.Write(typeof Symbol.toPrimitive === "symbol");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "True" {
+		t.Errorf("expected 'True', got %q", out)
+	}
+}
+
+func TestJScriptSymbolFor(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var s1 = Symbol.for("myKey");
+		var s2 = Symbol.for("myKey");
+		Response.Write(s1 === s2);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "True" {
+		t.Errorf("expected 'True', got %q", out)
+	}
+}
+
+func TestJScriptSymbolKeyFor(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var s = Symbol.for("testKey");
+		Response.Write(Symbol.keyFor(s));
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "testKey" {
+		t.Errorf("expected 'testKey', got %q", out)
+	}
+}
+
+func TestJScriptSymbolKeyForUnregistered(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var s = Symbol("notRegistered");
+		var k = Symbol.keyFor(s);
+		Response.Write(k === undefined);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "True" {
+		t.Errorf("expected 'True', got %q", out)
 	}
 }
 

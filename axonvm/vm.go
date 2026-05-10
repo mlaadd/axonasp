@@ -348,6 +348,8 @@ type VM struct {
 	jsArgumentsItems               map[int64]*jsArgumentsBinding
 	jsSetItems                     map[int64]map[string]Value
 	jsMapItems                     map[int64]map[string]Value
+	jsArrayBuffers                 map[int64][]byte // backing byte slices for ArrayBuffer objects
+	jsSymbolGlobalRegistry         map[string]Value // Symbol.for global registry: description -> Symbol Value
 	jsNextSymbolID                 int64
 	jsStrictMode                   bool                  // Current strict mode state
 	jsFunctionStrictModes          map[int64]bool        // Maps function IDs to strict mode status
@@ -554,6 +556,8 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		jsArgumentsItems:               make(map[int64]*jsArgumentsBinding),
 		jsSetItems:                     make(map[int64]map[string]Value),
 		jsMapItems:                     make(map[int64]map[string]Value),
+		jsArrayBuffers:                 make(map[int64][]byte),
+		jsSymbolGlobalRegistry:         make(map[string]Value),
 		jsNextSymbolID:                 1,
 		jsFunctionStrictModes:          make(map[int64]bool),
 		jsBlockScopes:                  make([]map[string]Value, 0, 32),
@@ -1204,6 +1208,8 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.jsArgumentsItems = child.jsArgumentsItems
 	vm.jsSetItems = child.jsSetItems
 	vm.jsMapItems = child.jsMapItems
+	vm.jsArrayBuffers = child.jsArrayBuffers
+	vm.jsSymbolGlobalRegistry = child.jsSymbolGlobalRegistry
 	vm.jsNextSymbolID = child.jsNextSymbolID
 }
 

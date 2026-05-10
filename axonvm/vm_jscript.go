@@ -356,7 +356,13 @@ func (vm *VM) jsCreatePrototypeObject(owner Value) Value {
 
 func jsCtorNeedsPrototype(ctorName string) bool {
 	switch ctorName {
-	case "Array", "Object", "String", "Date", "RegExp", "Enumerator", "VBArray", "Set", "Map":
+	case "Array", "Object", "String", "Date", "RegExp", "Enumerator", "VBArray", "Set", "Map",
+		"ArrayBuffer", "DataView",
+		"Int8Array", "Uint8Array", "Uint8ClampedArray",
+		"Int16Array", "Uint16Array",
+		"Int32Array", "Uint32Array",
+		"Float32Array", "Float64Array",
+		"BigInt64Array", "BigUint64Array":
 		return true
 	default:
 		return false
@@ -583,7 +589,7 @@ func (vm *VM) ensureJSRootEnv() {
 		return
 	}
 	rootID := vm.allocJSID()
-	bindings := make(map[string]Value, 20)
+	bindings := make(map[string]Value, 40)
 	bindings["Math"] = vm.jsCreateMathObject()
 	bindings["Date"] = vm.jsCreateIntrinsicObject("", "Date")
 	bindings["RegExp"] = vm.jsCreateIntrinsicObject("", "RegExp")
@@ -594,9 +600,23 @@ func (vm *VM) ensureJSRootEnv() {
 	bindings["Object"] = vm.jsCreateIntrinsicObject("", "Object")
 	bindings["JSON"] = vm.jsCreateIntrinsicObject("", "JSON")
 	bindings["Number"] = vm.jsCreateNumberObject()
-	bindings["Symbol"] = vm.jsCreateIntrinsicObject("", "Symbol")
+	bindings["Symbol"] = vm.jsCreateSymbolObject()
 	bindings["Set"] = vm.jsCreateIntrinsicObject("", "Set")
 	bindings["Map"] = vm.jsCreateIntrinsicObject("", "Map")
+	// ES6 Binary Data constructors
+	bindings["ArrayBuffer"] = vm.jsCreateIntrinsicObject("", "ArrayBuffer")
+	bindings["DataView"] = vm.jsCreateIntrinsicObject("", "DataView")
+	bindings["Int8Array"] = vm.jsCreateIntrinsicObject("", "Int8Array")
+	bindings["Uint8Array"] = vm.jsCreateIntrinsicObject("", "Uint8Array")
+	bindings["Uint8ClampedArray"] = vm.jsCreateIntrinsicObject("", "Uint8ClampedArray")
+	bindings["Int16Array"] = vm.jsCreateIntrinsicObject("", "Int16Array")
+	bindings["Uint16Array"] = vm.jsCreateIntrinsicObject("", "Uint16Array")
+	bindings["Int32Array"] = vm.jsCreateIntrinsicObject("", "Int32Array")
+	bindings["Uint32Array"] = vm.jsCreateIntrinsicObject("", "Uint32Array")
+	bindings["Float32Array"] = vm.jsCreateIntrinsicObject("", "Float32Array")
+	bindings["Float64Array"] = vm.jsCreateIntrinsicObject("", "Float64Array")
+	bindings["BigInt64Array"] = vm.jsCreateIntrinsicObject("", "BigInt64Array")
+	bindings["BigUint64Array"] = vm.jsCreateIntrinsicObject("", "BigUint64Array")
 	bindings["NaN"] = NewDouble(math.NaN())
 	bindings["Infinity"] = NewDouble(math.Inf(1))
 	bindings["undefined"] = Value{Type: VTJSUndefined}
@@ -650,6 +670,32 @@ func (vm *VM) jsCreateNumberObject() Value {
 	vm.jsSetDescriptor(objID, "MAX_SAFE_INTEGER", jsPropertyDescriptor{Value: obj["MAX_SAFE_INTEGER"], HasValue: true, Enumerable: false, Configurable: false, Writable: false})
 	vm.jsSetDescriptor(objID, "MIN_SAFE_INTEGER", jsPropertyDescriptor{Value: obj["MIN_SAFE_INTEGER"], HasValue: true, Enumerable: false, Configurable: false, Writable: false})
 	vm.jsSetDescriptor(objID, "EPSILON", jsPropertyDescriptor{Value: obj["EPSILON"], HasValue: true, Enumerable: false, Configurable: false, Writable: false})
+	return Value{Type: VTJSObject, Num: objID}
+}
+
+// jsCreateSymbolObject allocates the global Symbol constructor object and attaches
+// well-known symbol properties (Symbol.iterator, Symbol.toStringTag, etc.).
+func (vm *VM) jsCreateSymbolObject() Value {
+	objID := vm.allocJSID()
+	obj := make(map[string]Value, 10)
+	obj["__js_type"] = NewString("Symbol")
+	obj["__js_ctor"] = NewString("Symbol")
+	// Well-known symbols as non-writable, non-enumerable, non-configurable properties
+	obj["iterator"] = jsWellKnownSymbolValue(jsWellKnownSymbolIterator, "Symbol.iterator")
+	obj["toStringTag"] = jsWellKnownSymbolValue(jsWellKnownSymbolToStringTag, "Symbol.toStringTag")
+	obj["species"] = jsWellKnownSymbolValue(jsWellKnownSymbolSpecies, "Symbol.species")
+	obj["hasInstance"] = jsWellKnownSymbolValue(jsWellKnownSymbolHasInstance, "Symbol.hasInstance")
+	obj["toPrimitive"] = jsWellKnownSymbolValue(jsWellKnownSymbolToPrimitive, "Symbol.toPrimitive")
+	vm.jsObjectItems[objID] = obj
+	props := make(map[string]jsPropertyDescriptor, 6)
+	// Make well-known symbols read-only, non-enumerable, non-configurable
+	for _, name := range []string{"iterator", "toStringTag", "species", "hasInstance", "toPrimitive"} {
+		props[name] = jsPropertyDescriptor{
+			Value: obj[name], HasValue: true,
+			Enumerable: false, Configurable: false, Writable: false,
+		}
+	}
+	vm.jsPropertyItems[objID] = props
 	return Value{Type: VTJSObject, Num: objID}
 }
 
@@ -1789,7 +1835,13 @@ func (vm *VM) jsObjectToStringTag(v Value) string {
 			tag = vm.jsObjectStringProperty(v, "__js_ctor")
 		}
 		switch tag {
-		case "Array", "Date", "Function", "RegExp", "Math", "JSON", "Enumerator", "VBArray", "String", "Number", "Boolean", "Object", "Set", "Map":
+		case "Array", "Date", "Function", "RegExp", "Math", "JSON", "Enumerator", "VBArray", "String", "Number", "Boolean", "Object", "Set", "Map",
+			"ArrayBuffer", "DataView",
+			"Int8Array", "Uint8Array", "Uint8ClampedArray",
+			"Int16Array", "Uint16Array",
+			"Int32Array", "Uint32Array",
+			"Float32Array", "Float64Array",
+			"BigInt64Array", "BigUint64Array":
 			return "[object " + tag + "]"
 		default:
 			return "[object Object]"
@@ -2100,6 +2152,21 @@ func (vm *VM) jsMemberGet(target Value, member string) (Value, bool) {
 	case VTJSObject:
 		if value, ok := vm.jsGetAliasedArgumentValue(target.Num, member); ok {
 			return value, false
+		}
+		// ArrayBuffer property get (byteLength)
+		if backing, isBuf := vm.jsArrayBuffers[target.Num]; isBuf {
+			if strings.EqualFold(member, "byteLength") {
+				return NewInteger(int64(len(backing))), false
+			}
+			if strings.EqualFold(member, "slice") {
+				// Return a bound-like reference that callers can invoke; handled via jsCallMember.
+				// Just return undefined — slice will be invoked via jsCallMember path.
+				return Value{Type: VTJSUndefined}, false
+			}
+		}
+		// Typed array / DataView property get
+		if v, handled := vm.jsTypedArrayMemberGet(target, member); handled {
+			return v, false
 		}
 		desc, hasDesc := vm.jsResolveObjectMember(target.Num, member, make(map[int64]struct{}, 4))
 		if hasDesc {
@@ -3928,6 +3995,96 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			case strings.EqualFold(member, "getItem"):
 				return vm.jsVBArrayGetItem(target, args), true
 			}
+		case "Symbol":
+			// Symbol constructor static methods
+			switch {
+			case strings.EqualFold(member, "for"):
+				key := ""
+				if len(args) > 0 {
+					key = vm.valueToString(args[0])
+				}
+				return vm.jsSymbolFor(key), true
+			case strings.EqualFold(member, "keyFor"):
+				return vm.jsSymbolKeyFor(jsArgOrUndefined(args, 0)), true
+			}
+		case "ArrayBuffer":
+			// ArrayBuffer.isView(arg) static method (called on the ctor object)
+			if strings.EqualFold(member, "isView") {
+				if len(args) == 0 {
+					return NewBool(false), true
+				}
+				if args[0].Type != VTJSObject {
+					return NewBool(false), true
+				}
+				t := vm.jsObjectStringProperty(args[0], "__js_type")
+				return NewBool(jsIsTypedArrayType(t)), true
+			}
+			// ArrayBuffer instance method: slice
+			if strings.EqualFold(member, "slice") {
+				return vm.jsArrayBufferSlice(target, args), true
+			}
+		default:
+			// Instance methods on typed arrays and DataView
+			if jsIsTypedArrayType(objType) {
+				switch {
+				case strings.EqualFold(member, "set"):
+					return vm.jsTypedArraySet(target, args), true
+				case strings.EqualFold(member, "subarray"):
+					return vm.jsTypedArraySubarray(target, args), true
+				case strings.EqualFold(member, "fill"):
+					return vm.jsTypedArrayFill(target, args), true
+				case strings.EqualFold(member, "slice"):
+					// Returns a new typed array copy of the range
+					return vm.jsTypedArraySubarray(target, args), true
+				case strings.EqualFold(member, "forEach"):
+					length := 0
+					if items, ok := vm.jsObjectItems[target.Num]; ok {
+						if lv, ok2 := items["__js_byte_length"]; ok2 {
+							elemSz := jsTypedArrayElementSize(objType)
+							if elemSz > 0 {
+								length = int(lv.Num) / elemSz
+							}
+						}
+					}
+					callback := jsArgOrUndefined(args, 0)
+					if callback.Type == VTJSFunction {
+						buf, byteOffset, _, elemSize, ok := vm.jsGetTypedArrayInfo(target)
+						if ok {
+							for i := 0; i < length; i++ {
+								v := jsReadTypedArrayElement(objType, elemSize, buf, byteOffset, i)
+								_ = vm.jsCall(callback, Value{Type: VTJSUndefined}, []Value{v, NewInteger(int64(i)), target})
+							}
+						}
+					}
+					return Value{Type: VTJSUndefined}, true
+				case strings.EqualFold(member, "indexOf"):
+					target2 := jsArgOrUndefined(args, 0)
+					fromIndex := 0
+					if len(args) > 1 {
+						fromIndex = int(vm.jsToNumber(args[1]).Flt)
+					}
+					buf, byteOffset, byteLength, elemSize, ok := vm.jsGetTypedArrayInfo(target)
+					if !ok {
+						return NewInteger(-1), true
+					}
+					length := byteLength / elemSize
+					searchVal := vm.jsToNumber(target2).Flt
+					for i := fromIndex; i < length; i++ {
+						v := jsReadTypedArrayElement(objType, elemSize, buf, byteOffset, i)
+						if vm.jsToNumber(v).Flt == searchVal {
+							return NewInteger(int64(i)), true
+						}
+					}
+					return NewInteger(-1), true
+				default:
+					// DataView method calls
+					if objType == "DataView" {
+						if v, handled := vm.jsDataViewCallMember(target, member, args); handled {
+							return v, true
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -4469,6 +4626,10 @@ func (vm *VM) jsMemberSet(target Value, member string, val Value) {
 		if vm.jsSetAliasedArgumentValue(targetID, member, val) {
 			return
 		}
+		// Typed array: handle numeric-index writes via string key.
+		if vm.jsTypedArrayMemberSet(target, member, val) {
+			return
+		}
 		if strings.HasPrefix(member, jsAccessorGetterPrefix) {
 			name := strings.TrimPrefix(member, jsAccessorGetterPrefix)
 			desc, _ := vm.jsGetDescriptor(targetID, name)
@@ -4792,6 +4953,13 @@ func (vm *VM) jsEnumerateForOfValues(source Value) []Value {
 				}
 				return out
 			}
+		default:
+			// Typed arrays are iterable
+			if jsIsTypedArrayType(class) {
+				if vals := vm.jsTypedArrayValues(source); vals != nil {
+					return vals
+				}
+			}
 		}
 	}
 
@@ -4853,6 +5021,14 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			}
 			return Value{Type: VTJSUndefined}
 		case "Set", "Map":
+			vm.jsThrowTypeError(fmt.Sprintf("Constructor %s requires 'new'", ctorName))
+			return Value{Type: VTJSUndefined}
+		case "ArrayBuffer", "DataView",
+			"Int8Array", "Uint8Array", "Uint8ClampedArray",
+			"Int16Array", "Uint16Array",
+			"Int32Array", "Uint32Array",
+			"Float32Array", "Float64Array",
+			"BigInt64Array", "BigUint64Array":
 			vm.jsThrowTypeError(fmt.Sprintf("Constructor %s requires 'new'", ctorName))
 			return Value{Type: VTJSUndefined}
 		case "isNaN":
@@ -5470,6 +5646,20 @@ func (vm *VM) jsNew(constructor Value, args []Value) Value {
 				}
 			}
 			return mapObj
+		case "ArrayBuffer":
+			byteLength := 0
+			if len(args) > 0 {
+				byteLength = int(vm.jsToNumber(args[0]).Flt)
+			}
+			return vm.jsNewArrayBuffer(byteLength)
+		case "DataView":
+			return vm.jsNewDataView(args)
+		case "Int8Array", "Uint8Array", "Uint8ClampedArray",
+			"Int16Array", "Uint16Array",
+			"Int32Array", "Uint32Array",
+			"Float32Array", "Float64Array",
+			"BigInt64Array", "BigUint64Array":
+			return vm.jsNewTypedArray(ctorName, args)
 		}
 	}
 
@@ -5511,6 +5701,12 @@ func (vm *VM) jsIndexGet(arr Value, index Value) Value {
 		}
 		return arr.Arr.Values[adjustedIndex]
 	case VTJSObject:
+		// First try typed array index access.
+		if idxInt := int(vm.jsToNumber(index).Flt); true {
+			if v, handled := vm.jsTypedArrayIndexGet(arr, idxInt); handled {
+				return v
+			}
+		}
 		key := vm.jsPropertyKeyFromValue(index)
 		if v, _ := vm.jsMemberGet(arr, key); v.Type != VTJSUndefined {
 			return v
@@ -5545,6 +5741,11 @@ func (vm *VM) jsIndexSet(arr Value, index Value, value Value) {
 			arr.Arr.Values[adjustedIndex] = value
 		}
 	case VTJSObject:
+		// Try typed array index set first.
+		idxInt := int(vm.jsToNumber(index).Flt)
+		if vm.jsTypedArrayIndexSet(arr, idxInt, value) {
+			return
+		}
 		key := vm.jsPropertyKeyFromValue(index)
 		vm.jsMemberSet(arr, key, value)
 	}

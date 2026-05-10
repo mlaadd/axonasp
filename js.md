@@ -19,51 +19,6 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 
 ---
 
-## 🛠️ PHASE 3: TAIL CALL OPTIMIZATION (TCO) (MEDIUM COMPLEXITY)
-
-**Goal:** Ensure function calls in the tail position do not increase the execution stack size. Don't allow the `stack []Value` to grow indefinitely with deep recursion. High risk if not implemented correctly, as it can lead to memory leaks or crashes.
-
-* [x] **Implementation Logic:** Thanks to the procedural `CallFrame` architecture, TCO is highly achievable. Instead of pushing a new `CallFrame`, identify if a call is a tail call. If so, replace the local variables/arguments on the current `stack []Value`, keep the current `CallFrame`, and simply jump the `ip` back to the start of the function's bytecode. This way, the stack size remains constant regardless of recursion depth. The compiler must emit a specific OpCode (e.g., OpTailCall) when it detects a tail call during compilation. The VM will then handle this OpCode by performing the TCO logic instead of a normal call. This is a critical optimization for functions that rely on recursion, such as those processing linked lists or performing mathematical computations.
-    * 1: Define the TCO Opcodes - axonvm/opcodes.go (or wherever opcodes are defined)
-        *Add two new opcodes to the JScript section of the opcode definitions:
-        - OpJSTailCall
-        - OpJSTailCallMember
-    * 2: Ensure they are correctly registered in any opcode size/string mapping functions (e.g., opcodeOperandSize, if they take the same 2-byte operand for argCount as standard calls).
-    * 3: Compiler Tracking for Try/Catch Safety - File: axonvm/compiler.go and axonvm/compiler_jscript.go
-        * TCO cannot be performed if the return statement is inside a try or catch block, as the current frame's exception handlers must remain on the stack.
-        * Add State: Add jsTryDepth int to the Compiler struct.
-        * Track Depth: In compileJScriptStatement, under case *jsast.TryStatement:, increment c.jsTryDepth++ before emitting OpJSTryEnter, and decrement c.jsTryDepth-- after emitting OpJSTryLeave (and appropriately handle finally blocks).
-    * 4: AST Detection and Bytecode Emission - File: axonvm/compiler_jscript.go
-        * Modify how ReturnStatement is compiled to detect tail-position calls.
-        * Locate case *jsast.ReturnStatement: in compileJScriptStatement.
-        * Check if the return argument is a valid tail call candidate:
-           * c.jsTryDepth == 0
-           * node.Argument is of type *jsast.CallExpression
-        * If it IS a tail call:
-            * Do not call c.compileJScriptExpression(node.Argument).
-            * Do not emit OpJSReturn.
-            * Extract the CallExpression.
-            * Compile the callee expression and arguments exactly as done in compileJScriptCall.
-            * Crucial Difference: Emit OpJSTailCall (or OpJSTailCallMember) instead of OpJSCall / OpJSCallMember.
-        * If it is NOT a tail call: Leave the existing compilation logic exactly as it is (compile expression, emit OpJSReturn).
-    * 5: VM Execution Logic (The Core TCO Swap) - File: axonvm/vm_jscript.go (or the primary procedural evaluation loop vm.go) Implement the runtime handling for OpJSTailCall and OpJSTailCallMember.
-        * Intercept the Opcode: Add case OpJSTailCall: and case OpJSTailCallMember: to the main switch statement.
-        * Fetch Target & Args: Read argCount from the bytecode operand.
-            * callee is at vm.stack[vm.sp - argCount - 1]
-            * args are from vm.stack[vm.sp - argCount : vm.sp]
-        * Handle Native Functions Normally: If callee is a native Go function, TCO is unnecessary and impossible at the VM level. Just execute it like a normal OpJSCall and push the result, then execute a normal OpJSReturn sequence (pop frame).
-    * 6: Handle VM Closures (The Actual TCO):
-        * Do NOT push a new CallFrame.
-        * Get the current frame: currentFrame := &vm.callStack[len(vm.callStack)-1]
-        * Slide the Stack: Move the callee and args down the stack to overwrite the current frame's initial stack position.
-        * Reset the Stack Pointer: vm.sp = baseFp + 1 + argCount
-        * Overwrite the Instruction Pointer: vm.ip = callee.Closure.IP (or however the closure's starting instruction is referenced).
-        * Lexical Environment: Update the current frame's active environment to the callee's captured environment.
-        * Jump back to the start of the aspExecLoop evaluation loop.
-
-* [x] **Test:** Implement a deeply recursive JScript function (e.g., function sum(n, acc) { if (n === 0) return acc; return sum(n - 1, acc + n); } return sum(100000, 0);). A depth of 100,000 will immediately trigger a stack overflow or slice out-of-bounds if TCO fails. If it succeeds, the VM correctly reused the frame. This is a critical test to ensure the TCO implementation is correct and memory-safe. Write a test verifying that functions inside try/catch block correctly bypass TCO and execute normally (verifying jsTryDepth logic).
-
----
 
 ## 🛠️ PHASE 4: DATA STRUCTURES & SYMBOLS (MEDIUM-HIGH COMPLEXITY)
 
@@ -71,8 +26,8 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 
 ### Tasks:
 
-* [ ] **Well-Known Symbols:** Expand the existing `Symbol` support to include global symbols: `Symbol.iterator`, `Symbol.toStringTag`, `Symbol.species`, `Symbol.hasInstance`, and `Symbol.toPrimitive`, ensuring they are correctly wired and recognized by the engine and can be used in user scripts.
-* [ ] **Binary Data (Typed Arrays & DataView):** Implement `ArrayBuffer`, `DataView`, and typed arrays (`Uint8Array`, `Int32Array`, `Float64Array`, etc.) for high-performance I/O.
+* [x] **Well-Known Symbols:** Expand the existing `Symbol` support to include global symbols: `Symbol.iterator`, `Symbol.toStringTag`, `Symbol.species`, `Symbol.hasInstance`, and `Symbol.toPrimitive`, ensuring they are correctly wired and recognized by the engine and can be used in user scripts.
+* [x] **Binary Data (Typed Arrays & DataView):** Implement `ArrayBuffer`, `DataView`, and typed arrays (`Uint8Array`, `Int32Array`, `Float64Array`, etc.) for high-performance I/O. This will require careful memory management to ensure that the underlying byte buffers are allocated and freed correctly without leaks. Consider using Go's `unsafe` package for efficient memory handling, but ensure that all operations are bounds-checked to prevent memory corruption.
 * [ ] **Weak Collections (`WeakMap` & `WeakSet`):** Implement collections that do not prevent GC of their keys.
     * *ATTENTION:* Implementing `WeakMap` and `WeakSet` in Go is non-trivial. You may need to use a combination of `runtime.SetFinalizer` or careful weak-reference management. Ensure thoroughly tested memory safety to prevent leaks in long-running ASP applications.
 * [ ] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
