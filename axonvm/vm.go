@@ -3372,6 +3372,87 @@ aspExecLoop:
 		case OpJSPop:
 			vm.pop()
 
+		case OpJSAddInt:
+			b, a := vm.pop(), vm.pop()
+			if a.Type == VTInteger && b.Type == VTInteger {
+				if res, ok := jsAddIntegersNoOverflow(a.Num, b.Num); ok {
+					vm.push(NewInteger(res))
+					break
+				}
+			}
+			vm.push(vm.jsAdd(a, b))
+
+		case OpJSSubInt:
+			b, a := vm.pop(), vm.pop()
+			if a.Type == VTInteger && b.Type == VTInteger {
+				if res, ok := jsSubtractIntegersNoOverflow(a.Num, b.Num); ok {
+					vm.push(NewInteger(res))
+					break
+				}
+			}
+			vm.push(vm.jsSubtract(a, b))
+
+		case OpJSIncInt:
+			nameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			vm.ip += 2
+			nameStr := vm.constants[nameIdx].Str
+			current := vm.jsGetName(nameStr)
+			var newVal Value
+			if current.Type == VTInteger {
+				if next, ok := jsAddIntegersNoOverflow(current.Num, 1); ok {
+					newVal = NewInteger(next)
+				} else {
+					newVal = NewDouble(float64(current.Num) + 1)
+				}
+			} else {
+				newVal = vm.jsIncrementNumberValue(current)
+			}
+			vm.jsSetName(nameStr, newVal)
+			vm.push(newVal)
+
+		case OpJSMathSin:
+			vm.push(NewDouble(math.Sin(vm.jsToNumber(vm.pop()).Flt)))
+
+		case OpJSMathCos:
+			vm.push(NewDouble(math.Cos(vm.jsToNumber(vm.pop()).Flt)))
+
+		case OpJSMathTan:
+			vm.push(NewDouble(math.Tan(vm.jsToNumber(vm.pop()).Flt)))
+
+		case OpJSMathAbs:
+			v := vm.pop()
+			if v.Type == VTInteger {
+				if v.Num < 0 {
+					vm.push(NewInteger(-v.Num))
+				} else {
+					vm.push(v)
+				}
+			} else {
+				vm.push(NewDouble(math.Abs(vm.jsToNumber(v).Flt)))
+			}
+
+		case OpJSMathFloor:
+			vm.push(NewDouble(math.Floor(vm.jsToNumber(vm.pop()).Flt)))
+
+		case OpJSMathCeil:
+			vm.push(NewDouble(math.Ceil(vm.jsToNumber(vm.pop()).Flt)))
+
+		case OpJSMathRound:
+			vm.push(NewDouble(math.Round(vm.jsToNumber(vm.pop()).Flt)))
+
+		case OpJSMathSqrt:
+			vm.push(NewDouble(math.Sqrt(vm.jsToNumber(vm.pop()).Flt)))
+
+		case OpJSMathMin:
+			b := vm.jsToNumber(vm.pop()).Flt
+			a := vm.jsToNumber(vm.pop()).Flt
+			vm.push(NewDouble(math.Min(a, b)))
+
+		case OpJSMathMax:
+			b := vm.jsToNumber(vm.pop()).Flt
+			a := vm.jsToNumber(vm.pop()).Flt
+			vm.push(NewDouble(math.Max(a, b)))
+
 		case OpJSRot:
 			n := int(binary.BigEndian.Uint16(vm.bytecode[vm.ip:]))
 			vm.ip += 2

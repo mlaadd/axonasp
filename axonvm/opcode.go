@@ -476,6 +476,23 @@ const (
 	// OpJSExportAll exports all members from a module source into the current module.
 	// [OpCode, ModuleConstIdxHigh, ModuleConstIdxLow]
 	OpJSExportAll
+
+	// Phase 1 JScript Math Optimizations
+	OpJSMathSin   // [OpCode]
+	OpJSMathCos   // [OpCode]
+	OpJSMathTan   // [OpCode]
+	OpJSMathAbs   // [OpCode]
+	OpJSMathFloor // [OpCode]
+	OpJSMathCeil  // [OpCode]
+	OpJSMathRound // [OpCode]
+	OpJSMathSqrt  // [OpCode]
+	OpJSMathMin   // [OpCode]
+	OpJSMathMax   // [OpCode]
+
+	// Phase 2 JScript Integer Fast Paths
+	OpJSAddInt // [OpCode]
+	OpJSSubInt // [OpCode]
+	OpJSIncInt // [OpCode, NameConstIdxHigh, NameConstIdxLow]
 )
 
 func (op OpCode) String() string {
@@ -912,6 +929,32 @@ func (op OpCode) String() string {
 		return "OpJSForOfCleanup"
 	case OpJSExportAll:
 		return "OpJSExportAll"
+	case OpJSMathSin:
+		return "OpJSMathSin"
+	case OpJSMathCos:
+		return "OpJSMathCos"
+	case OpJSMathTan:
+		return "OpJSMathTan"
+	case OpJSMathAbs:
+		return "OpJSMathAbs"
+	case OpJSMathFloor:
+		return "OpJSMathFloor"
+	case OpJSMathCeil:
+		return "OpJSMathCeil"
+	case OpJSMathRound:
+		return "OpJSMathRound"
+	case OpJSMathSqrt:
+		return "OpJSMathSqrt"
+	case OpJSMathMin:
+		return "OpJSMathMin"
+	case OpJSMathMax:
+		return "OpJSMathMax"
+	case OpJSAddInt:
+		return "OpJSAddInt"
+	case OpJSSubInt:
+		return "OpJSSubInt"
+	case OpJSIncInt:
+		return "OpJSIncInt"
 	default:
 		return "OpUnknown"
 	}

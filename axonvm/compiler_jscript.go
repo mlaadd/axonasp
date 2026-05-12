@@ -256,8 +256,38 @@ func (c *Compiler) jsPushLocalScope(isFunction bool) {
 	if !c.jsLocalEnabled {
 		return
 	}
-	scope := jsLocalScope{entries: make(map[string]int, 8), isFunction: isFunction}
+	scope := jsLocalScope{
+		entries:    make(map[string]int, 8),
+		types:      make(map[string]jsType, 8),
+		isFunction: isFunction,
+	}
 	c.jsLocalScopeStack = append(c.jsLocalScopeStack, scope)
+}
+
+func (c *Compiler) jsSetLocalType(name string, t jsType) {
+	if !c.jsLocalEnabled {
+		return
+	}
+	for i := len(c.jsLocalScopeStack) - 1; i >= 0; i-- {
+		scope := c.jsLocalScopeStack[i]
+		if _, exists := scope.entries[name]; exists {
+			scope.types[name] = t
+			return
+		}
+	}
+}
+
+func (c *Compiler) jsGetLocalType(name string) jsType {
+	if !c.jsLocalEnabled {
+		return jsTypeUnknown
+	}
+	for i := len(c.jsLocalScopeStack) - 1; i >= 0; i-- {
+		scope := c.jsLocalScopeStack[i]
+		if t, exists := scope.types[name]; exists {
+			return t
+		}
+	}
+	return jsTypeUnknown
 }
 
 func (c *Compiler) jsPopLocalScope() {
@@ -342,6 +372,43 @@ func (c *Compiler) jsResolveLocalSlot(name string) (int, bool) {
 	return 0, false
 }
 
+func (c *Compiler) jsInferredType(expr jsast.Expression) jsType {
+	switch node := expr.(type) {
+	case *jsast.NumberLiteral:
+		if _, ok := jsNumericLiteralInt64(node); ok {
+			return jsTypeInteger
+		}
+	case *jsast.Identifier:
+		return c.jsGetLocalType(node.Name.String())
+	case *jsast.BinaryExpression:
+		switch node.Operator {
+		case jstoken.OR, jstoken.AND, jstoken.EXCLUSIVE_OR, jstoken.SHIFT_LEFT, jstoken.SHIFT_RIGHT, jstoken.UNSIGNED_SHIFT_RIGHT:
+			return jsTypeInteger
+		case jstoken.PLUS, jstoken.MINUS, jstoken.MULTIPLY:
+			if c.jsInferredType(node.Left) == jsTypeInteger && c.jsInferredType(node.Right) == jsTypeInteger {
+				return jsTypeInteger
+			}
+		}
+	case *jsast.UnaryExpression:
+		if node.Operator == jstoken.INCREMENT || node.Operator == jstoken.DECREMENT {
+			if id, ok := node.Operand.(*jsast.Identifier); ok {
+				return c.jsGetLocalType(id.Name.String())
+			}
+		}
+	case *jsast.CallExpression:
+		if callee, ok := node.Callee.(*jsast.DotExpression); ok {
+			if id, ok := callee.Left.(*jsast.Identifier); ok && id.Name.String() == "Math" {
+				method := callee.Identifier.Name.String()
+				switch method {
+				case "abs", "floor", "ceil", "round":
+					return jsTypeInteger
+				}
+			}
+		}
+	}
+	return jsTypeUnknown
+}
+
 func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 	switch node := stmt.(type) {
 	case *jsast.ExpressionStatement:
@@ -351,7 +418,16 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 		for _, binding := range node.List {
 			if binding.Initializer != nil {
 				c.compileJScriptExpression(binding.Initializer)
+				t := jsTypeUnknown
+				if c.jsInferredType(binding.Initializer) == jsTypeInteger {
+					t = jsTypeInteger
+				}
 				c.compileJScriptDestructuring(binding.Target, false, false, true)
+				if t == jsTypeInteger {
+					if id, ok := binding.Target.(*jsast.Identifier); ok {
+						c.jsSetLocalType(id.Name.String(), jsTypeInteger)
+					}
+				}
 			} else {
 				// var x; -> declare x
 				if id, ok := binding.Target.(*jsast.Identifier); ok {
@@ -848,6 +924,7 @@ func (c *Compiler) compileJScriptForStatement(node *jsast.ForStatement) {
 		fastIntCounterSlot = c.jsDeclareCurrentLocal(counterHiddenName)
 		if fastIntCounterSlot >= 0 && len(c.jsLocalScopeStack) > 0 {
 			c.jsLocalScopeStack[len(c.jsLocalScopeStack)-1].entries[fastIntCounterName] = fastIntCounterSlot
+			c.jsSetLocalType(fastIntCounterName, jsTypeInteger)
 			limitHiddenName := fmt.Sprintf("__js_for_fast_limit__%d_%d", len(c.bytecode), c.jsLocalSlotCount)
 			fastIntLimitSlot = c.jsDeclareCurrentLocal(limitHiddenName)
 			if fastIntLimitSlot < 0 {
@@ -885,6 +962,7 @@ func (c *Compiler) compileJScriptForStatement(node *jsast.ForStatement) {
 			}
 			if counterSlot >= 0 {
 				fastIntVarCounterSlot = counterSlot
+				c.jsSetLocalType(fastIntVarCounterName, jsTypeInteger)
 				limitHiddenName := fmt.Sprintf("__js_for_fastvar_limit__%d_%d", len(c.bytecode), c.jsLocalSlotCount)
 				fastIntVarLimitSlot = c.jsDeclareCurrentLocal(limitHiddenName)
 				if fastIntVarLimitSlot < 0 {
@@ -1614,13 +1692,40 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 				c.compileJScriptExpression(folded)
 				return
 			}
+
+			// Phase 2: Optimize (x / 2) | 0 to x >> 1
+			if node.Operator == jstoken.OR {
+				if num, ok := foldedRight.(*jsast.NumberLiteral); ok {
+					if v, ok := num.Value.(int64); ok && v == 0 {
+						if bin, ok := foldedLeft.(*jsast.BinaryExpression); ok && bin.Operator == jstoken.SLASH {
+							if num2, ok := bin.Right.(*jsast.NumberLiteral); ok {
+								if v2, ok := num2.Value.(int64); ok && v2 == 2 {
+									c.compileJScriptExpression(bin.Left)
+									c.emit(OpConstant, c.addConstant(NewInteger(1)))
+									c.emit(OpJSRightShift)
+									return
+								}
+							}
+						}
+					}
+				}
+			}
+
 			c.compileJScriptExpression(foldedLeft)
 			c.compileJScriptExpression(foldedRight)
 			switch node.Operator {
 			case jstoken.PLUS:
-				c.emit(OpJSAdd)
+				if c.jsInferredType(foldedLeft) == jsTypeInteger && c.jsInferredType(foldedRight) == jsTypeInteger {
+					c.emit(OpJSAddInt)
+				} else {
+					c.emit(OpJSAdd)
+				}
 			case jstoken.MINUS:
-				c.emit(OpJSSubtract)
+				if c.jsInferredType(foldedLeft) == jsTypeInteger && c.jsInferredType(foldedRight) == jsTypeInteger {
+					c.emit(OpJSSubInt)
+				} else {
+					c.emit(OpJSSubtract)
+				}
 			case jstoken.MULTIPLY:
 				c.emit(OpJSMultiply)
 			case jstoken.SLASH:
@@ -1922,6 +2027,9 @@ func (c *Compiler) compileJScriptAssignment(node *jsast.AssignExpression) {
 		localSlot, hasLocal := c.jsResolveLocalSlot(name)
 		if node.Operator == jstoken.ASSIGN {
 			c.compileJScriptExpression(node.Right)
+			if hasLocal && c.jsInferredType(node.Right) == jsTypeInteger {
+				c.jsSetLocalType(name, jsTypeInteger)
+			}
 			c.emit(OpJSDup)
 			if hasLocal {
 				c.emit(OpJSSetLocal, localSlot)
@@ -2398,6 +2506,62 @@ func (c *Compiler) compileJScriptCall(node *jsast.CallExpression) {
 			c.emit(OpJSSuperCallMember, c.addConstant(NewString(callee.Identifier.Name.String())), len(node.ArgumentList))
 			return
 		}
+
+		// Phase 1: Math Object Interception & Phase 2: Math.floor(x / 2) optimization
+		if id, ok := callee.Left.(*jsast.Identifier); ok && id.Name.String() == "Math" {
+			method := callee.Identifier.Name.String()
+			switch method {
+			case "sin", "cos", "tan", "abs", "floor", "ceil", "round", "sqrt":
+				if len(node.ArgumentList) == 1 {
+					// Phase 2: Optimize Math.floor(x / 2) to x >> 1
+					if method == "floor" {
+						if bin, ok := node.ArgumentList[0].(*jsast.BinaryExpression); ok && bin.Operator == jstoken.SLASH {
+							if num, ok := bin.Right.(*jsast.NumberLiteral); ok {
+								if v, ok := num.Value.(int64); ok && v == 2 {
+									c.compileJScriptExpression(bin.Left)
+									c.emit(OpConstant, c.addConstant(NewInteger(1)))
+									c.emit(OpJSRightShift)
+									return
+								}
+							}
+						}
+					}
+
+					c.compileJScriptExpression(node.ArgumentList[0])
+					switch method {
+					case "sin":
+						c.emit(OpJSMathSin)
+					case "cos":
+						c.emit(OpJSMathCos)
+					case "tan":
+						c.emit(OpJSMathTan)
+					case "abs":
+						c.emit(OpJSMathAbs)
+					case "floor":
+						c.emit(OpJSMathFloor)
+					case "ceil":
+						c.emit(OpJSMathCeil)
+					case "round":
+						c.emit(OpJSMathRound)
+					case "sqrt":
+						c.emit(OpJSMathSqrt)
+					}
+					return
+				}
+			case "min", "max":
+				if len(node.ArgumentList) == 2 {
+					c.compileJScriptExpression(node.ArgumentList[0])
+					c.compileJScriptExpression(node.ArgumentList[1])
+					if method == "min" {
+						c.emit(OpJSMathMin)
+					} else {
+						c.emit(OpJSMathMax)
+					}
+					return
+				}
+			}
+		}
+
 		c.compileJScriptExpression(callee.Left)
 		for i := range node.ArgumentList {
 			c.compileJScriptExpression(node.ArgumentList[i])
@@ -3265,9 +3429,27 @@ func (c *Compiler) compileJScriptFunctionLiteral(fn *jsast.FunctionLiteral, fall
 func (c *Compiler) compileJScriptUpdateExpression(node *jsast.UnaryExpression) bool {
 	switch operand := node.Operand.(type) {
 	case *jsast.Identifier:
-		nameIdx := c.addConstant(NewString(operand.Name.String()))
+		name := operand.Name.String()
+		nameIdx := c.addConstant(NewString(name))
+		slot, isLocal := c.jsResolveLocalSlot(name)
+		isInt := c.jsGetLocalType(name) == jsTypeInteger
+
 		switch node.Operator {
 		case jstoken.INCREMENT:
+			if isLocal {
+				if node.Postfix {
+					c.emit(OpJSGetLocal, slot)
+					c.emit(OpJSIncLocal, slot)
+					c.emit(OpJSPop)
+				} else {
+					c.emit(OpJSIncLocal, slot)
+				}
+				return true
+			}
+			if isInt && !node.Postfix {
+				c.emit(OpJSIncInt, nameIdx)
+				return true
+			}
 			if node.Postfix {
 				c.emit(OpJSPostIncrement, nameIdx)
 			} else {
@@ -3275,6 +3457,16 @@ func (c *Compiler) compileJScriptUpdateExpression(node *jsast.UnaryExpression) b
 			}
 			return true
 		case jstoken.DECREMENT:
+			if isLocal {
+				if node.Postfix {
+					c.emit(OpJSGetLocal, slot)
+					c.emit(OpJSDecLocal, slot)
+					c.emit(OpJSPop)
+				} else {
+					c.emit(OpJSDecLocal, slot)
+				}
+				return true
+			}
 			if node.Postfix {
 				c.emit(OpJSPostDecrement, nameIdx)
 			} else {
@@ -3532,7 +3724,16 @@ func (c *Compiler) compileJScriptLexicalDeclaration(node *jsast.LexicalDeclarati
 		if isConst {
 			if binding.Initializer != nil {
 				c.compileJScriptExpression(binding.Initializer)
+				t := jsTypeUnknown
+				if c.jsInferredType(binding.Initializer) == jsTypeInteger {
+					t = jsTypeInteger
+				}
 				c.compileJScriptDestructuring(binding.Target, true, false, false)
+				if t == jsTypeInteger {
+					if id, ok := binding.Target.(*jsast.Identifier); ok {
+						c.jsSetLocalType(id.Name.String(), jsTypeInteger)
+					}
+				}
 			} else {
 				// const without initializer is a SyntaxError per spec
 				jsErr := jscript.NewJSSyntaxError(jscript.SyntaxError, 0, 0)
@@ -3546,7 +3747,16 @@ func (c *Compiler) compileJScriptLexicalDeclaration(node *jsast.LexicalDeclarati
 			// let
 			if binding.Initializer != nil {
 				c.compileJScriptExpression(binding.Initializer)
+				t := jsTypeUnknown
+				if c.jsInferredType(binding.Initializer) == jsTypeInteger {
+					t = jsTypeInteger
+				}
 				c.compileJScriptDestructuring(binding.Target, false, true, false)
+				if t == jsTypeInteger {
+					if id, ok := binding.Target.(*jsast.Identifier); ok {
+						c.jsSetLocalType(id.Name.String(), jsTypeInteger)
+					}
+				}
 			} else {
 				// let x; -> declare x
 				if id, ok := binding.Target.(*jsast.Identifier); ok {

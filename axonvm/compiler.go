@@ -187,11 +187,19 @@ type jsForIterScope struct {
 	fast     bool  // true when using non-alloc fast enter/exit opcodes
 }
 
+type jsType int
+
+const (
+	jsTypeUnknown jsType = iota
+	jsTypeInteger
+)
+
 // jsLocalScope holds compiler-time name resolution data for JScript local slots.
 // entries maps one identifier to either a local slot index (>=0) or a lexical
 // barrier marker (-1) that blocks outer local-slot capture.
 type jsLocalScope struct {
 	entries    map[string]int
+	types      map[string]jsType // inferred types for local variables
 	isFunction bool
 }
 
