@@ -870,7 +870,7 @@ func (self *_parser) parseUnaryExpression() ast.Expression {
 		if self.scope.allowAwait {
 			idx := self.idx
 			self.next()
-			if !self.scope.inAsync {
+			if !self.scope.inAsync && self.scope.outer != nil {
 				self.errorUnexpectedToken(token.AWAIT)
 				return &ast.BadExpression{
 					From: idx,

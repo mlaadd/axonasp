@@ -21,7 +21,9 @@
 package axonvm
 
 import (
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -230,8 +232,11 @@ func (vm *VM) jsImportModule(specifier string) (*jsEnvFrame, bool) {
 		return env, true
 	}
 
+	vm.ensureJSRootEnv()
+	rootEnvID := vm.jsActiveEnvID
+
 	moduleEnvID := vm.allocJSID()
-	moduleEnv := &jsEnvFrame{parentID: 0, bindings: make(map[string]Value, 16)}
+	moduleEnv := &jsEnvFrame{parentID: rootEnvID, bindings: make(map[string]Value, 16)}
 	vm.jsEnvItems[moduleEnvID] = moduleEnv
 	vm.jsModuleInstances[modulePath] = moduleEnv
 	vm.jsModuleLoading[modulePath] = struct{}{}
@@ -1555,8 +1560,8 @@ func (vm *VM) jsCreatePromiseObject() Value {
 		Value: proto, HasValue: true, Enumerable: false, Configurable: false, Writable: false,
 	})
 
-	// Static methods: Promise.resolve, Promise.reject, Promise.all, Promise.race
-	for _, name := range []string{"resolve", "reject", "all", "race"} {
+	// Static methods: Promise.resolve, Promise.reject, Promise.all, Promise.race, Promise.allSettled, Promise.any, Promise.withResolvers
+	for _, name := range []string{"resolve", "reject", "all", "race", "allSettled", "any", "withResolvers"} {
 		vm.jsSetDescriptor(objID, name, jsPropertyDescriptor{
 			Value:        vm.jsCreateIntrinsicFunction("Promise."+name, "PromiseStatic"+strings.Title(name)),
 			HasValue:     true,
@@ -3345,11 +3350,28 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			if strings.EqualFold(member, "next") {
 				return vm.jsStringIteratorNext(target), true
 			}
+		case "Uint8Array":
+			switch {
+			case strings.EqualFold(member, "toBase64"):
+				buf, byteOffset, byteLength, elemSize, ok := vm.jsGetTypedArrayInfo(target)
+				if !ok {
+					return Value{Type: VTJSUndefined}, true
+				}
+				data := buf[byteOffset : byteOffset+(byteLength/elemSize)]
+				return NewString(base64.StdEncoding.EncodeToString(data)), true
+			case strings.EqualFold(member, "toHex"):
+				buf, byteOffset, byteLength, elemSize, ok := vm.jsGetTypedArrayInfo(target)
+				if !ok {
+					return Value{Type: VTJSUndefined}, true
+				}
+				data := buf[byteOffset : byteOffset+(byteLength/elemSize)]
+				return NewString(hex.EncodeToString(data)), true
+			}
 		}
 	}
 
-	if member == "slice" || member == "forEach" || member == "map" || member == "filter" || member == "at" ||
-		strings.EqualFold(member, "slice") || strings.EqualFold(member, "forEach") || strings.EqualFold(member, "map") || strings.EqualFold(member, "filter") || strings.EqualFold(member, "at") {
+	if member == "slice" || member == "forEach" || member == "map" || member == "filter" || member == "at" || member == "findLast" || member == "toSorted" || member == "with" || member == "toReversed" || member == "toSpliced" || member == "flat" || member == "flatMap" ||
+		strings.EqualFold(member, "slice") || strings.EqualFold(member, "forEach") || strings.EqualFold(member, "map") || strings.EqualFold(member, "filter") || strings.EqualFold(member, "at") || strings.EqualFold(member, "findLast") || strings.EqualFold(member, "toSorted") || strings.EqualFold(member, "with") || strings.EqualFold(member, "toReversed") || strings.EqualFold(member, "toSpliced") || strings.EqualFold(member, "flat") || strings.EqualFold(member, "flatMap") {
 		length, isArrayLike, deferred := vm.jsArrayLikeLength(target)
 		if deferred {
 			return Value{Type: VTJSUndefined}, true
@@ -3420,6 +3442,172 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 					mapped[i] = result
 				}
 				return ValueFromVBArray(NewVBArrayFromValues(0, mapped)), true
+			case strings.EqualFold(member, "toReversed"):
+				out := make([]Value, length)
+				for i := 0; i < length; i++ {
+					if v, ok := vm.jsArrayLikeGetIndex(target, length-1-i); ok {
+						out[i] = v
+					} else {
+						out[i] = Value{Type: VTJSUndefined}
+					}
+				}
+				return ValueFromVBArray(NewVBArrayFromValues(0, out)), true
+			case strings.EqualFold(member, "toSorted"):
+				out := make([]Value, length)
+				for i := 0; i < length; i++ {
+					if v, ok := vm.jsArrayLikeGetIndex(target, i); ok {
+						out[i] = v
+					} else {
+						out[i] = Value{Type: VTJSUndefined}
+					}
+				}
+				compareFn := jsArgOrUndefined(args, 0)
+				sort.Slice(out, func(i int, j int) bool {
+					a := out[i]
+					b := out[j]
+					if compareFn.Type == VTJSFunction {
+						res := vm.jsCall(compareFn, Value{Type: VTJSUndefined}, []Value{a, b})
+						if res.Type == VTJSUndefined {
+							return vm.valueToString(a) < vm.valueToString(b)
+						}
+						return vm.jsToNumber(res).Flt < 0
+					}
+					return vm.valueToString(a) < vm.valueToString(b)
+				})
+				return ValueFromVBArray(NewVBArrayFromValues(0, out)), true
+			case strings.EqualFold(member, "with"):
+				index := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+				value := jsArgOrUndefined(args, 1)
+				if index < 0 {
+					index = length + index
+				}
+				if index < 0 || index >= length {
+					vm.jsThrowRangeError("Invalid index for with()")
+					return Value{Type: VTJSUndefined}, true
+				}
+				out := make([]Value, length)
+				for i := 0; i < length; i++ {
+					if i == index {
+						out[i] = value
+					} else if v, ok := vm.jsArrayLikeGetIndex(target, i); ok {
+						out[i] = v
+					} else {
+						out[i] = Value{Type: VTJSUndefined}
+					}
+				}
+				return ValueFromVBArray(NewVBArrayFromValues(0, out)), true
+			case strings.EqualFold(member, "toSpliced"):
+				start := jsClampIndex(int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt), length)
+				deleteCount := 0
+				if len(args) == 0 {
+					start = 0
+				} else if len(args) == 1 {
+					deleteCount = length - start
+				} else {
+					deleteCount = int(vm.jsToNumber(args[1]).Flt)
+					if deleteCount < 0 {
+						deleteCount = 0
+					}
+					if start+deleteCount > length {
+						deleteCount = length - start
+					}
+				}
+				insertItems := []Value{}
+				if len(args) > 2 {
+					insertItems = args[2:]
+				}
+
+				newLen := length - deleteCount + len(insertItems)
+				out := make([]Value, newLen)
+				outIdx := 0
+				for i := 0; i < start; i++ {
+					if v, ok := vm.jsArrayLikeGetIndex(target, i); ok {
+						out[outIdx] = v
+					} else {
+						out[outIdx] = Value{Type: VTJSUndefined}
+					}
+					outIdx++
+				}
+				for _, v := range insertItems {
+					out[outIdx] = v
+					outIdx++
+				}
+				for i := start + deleteCount; i < length; i++ {
+					if v, ok := vm.jsArrayLikeGetIndex(target, i); ok {
+						out[outIdx] = v
+					} else {
+						out[outIdx] = Value{Type: VTJSUndefined}
+					}
+					outIdx++
+				}
+				return ValueFromVBArray(NewVBArrayFromValues(0, out)), true
+			case strings.EqualFold(member, "flat"):
+				depth := 1
+				if len(args) > 0 && args[0].Type != VTJSUndefined {
+					depth = int(vm.jsToNumber(args[0]).Flt)
+				}
+				var flatten func(v Value, currentDepth int, out *[]Value)
+				flatten = func(v Value, currentDepth int, out *[]Value) {
+					vLen, isArrLike, _ := vm.jsArrayLikeLength(v)
+					if isArrLike && currentDepth < depth {
+						for i := 0; i < vLen; i++ {
+							if item, ok := vm.jsArrayLikeGetIndex(v, i); ok {
+								flatten(item, currentDepth+1, out)
+							}
+						}
+					} else {
+						*out = append(*out, v)
+					}
+				}
+				out := make([]Value, 0, length)
+				for i := 0; i < length; i++ {
+					if item, ok := vm.jsArrayLikeGetIndex(target, i); ok {
+						flatten(item, 0, &out)
+					}
+				}
+				return ValueFromVBArray(NewVBArrayFromValues(0, out)), true
+			case strings.EqualFold(member, "flatMap"):
+				callback := jsArgOrUndefined(args, 0)
+				if callback.Type != VTJSFunction {
+					return ValueFromVBArray(NewVBArrayFromValues(0, nil)), true
+				}
+				thisArg := jsArgOrUndefined(args, 1)
+				out := make([]Value, 0, length)
+				for i := 0; i < length; i++ {
+					if !vm.jsArrayLikeHasIndex(target, i) {
+						continue
+					}
+					item, _ := vm.jsArrayLikeGetIndex(target, i)
+					result := vm.jsCall(callback, thisArg, []Value{item, NewInteger(int64(i)), target})
+					resLen, isArrLike, _ := vm.jsArrayLikeLength(result)
+					if isArrLike {
+						for j := 0; j < resLen; j++ {
+							if subItem, ok := vm.jsArrayLikeGetIndex(result, j); ok {
+								out = append(out, subItem)
+							}
+						}
+					} else {
+						out = append(out, result)
+					}
+				}
+				return ValueFromVBArray(NewVBArrayFromValues(0, out)), true
+			case strings.EqualFold(member, "findLast"):
+				callback := jsArgOrUndefined(args, 0)
+				if callback.Type != VTJSFunction {
+					return Value{Type: VTJSUndefined}, true
+				}
+				thisArg := jsArgOrUndefined(args, 1)
+				for i := length - 1; i >= 0; i-- {
+					if !vm.jsArrayLikeHasIndex(target, i) {
+						continue
+					}
+					item, _ := vm.jsArrayLikeGetIndex(target, i)
+					result := vm.jsCall(callback, thisArg, []Value{item, NewInteger(int64(i)), target})
+					if vm.jsTruthy(result) {
+						return item, true
+					}
+				}
+				return Value{Type: VTJSUndefined}, true
 			case strings.EqualFold(member, "filter"):
 				callback := jsArgOrUndefined(args, 0)
 				if callback.Type != VTJSFunction {
@@ -4671,6 +4859,51 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 					entries[i] = ValueFromVBArray(NewVBArrayFromValues(0, []Value{NewString(keys[i]), vals[i]}))
 				}
 				return ValueFromVBArray(NewVBArrayFromValues(0, entries)), true
+			case strings.EqualFold(member, "hasOwn"):
+				if len(args) < 2 {
+					return NewBool(false), true
+				}
+				obj := args[0]
+				if obj.Type == VTNull || obj.Type == VTJSUndefined {
+					vm.jsThrowTypeError("Cannot convert undefined or null to object")
+					return Value{Type: VTJSUndefined}, true
+				}
+				key := vm.jsPropertyKeyFromValue(args[1])
+				return NewBool(vm.jsObjectHasOwnProperty(obj, key)), true
+			case strings.EqualFold(member, "fromEntries"):
+				if len(args) == 0 || args[0].Type == VTJSUndefined || args[0].Type == VTNull {
+					vm.jsThrowTypeError("Object.fromEntries requires an iterable")
+					return Value{Type: VTJSUndefined}, true
+				}
+				objID := vm.allocJSID()
+				objMap := make(map[string]Value, 8)
+				vm.jsObjectItems[objID] = objMap
+				vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 8)
+				if proto := vm.jsGetIntrinsicPrototype("Object"); proto.Type == VTJSObject {
+					objMap["__js_proto"] = proto
+				}
+				outObj := Value{Type: VTJSObject, Num: objID}
+				iterable := args[0]
+				iterator := vm.jsGetIterator(iterable)
+				if iterator.Type == VTJSUndefined {
+					vm.jsThrowTypeError("Object.fromEntries requires an iterable")
+					return Value{Type: VTJSUndefined}, true
+				}
+				for {
+					nextVal := vm.jsIteratorNextValue(iterator)
+					if nextVal.Type == VTJSUndefined {
+						break
+					}
+					len, isArr, _ := vm.jsArrayLikeLength(nextVal)
+					if !isArr || len < 2 {
+						continue
+					}
+					keyVal, _ := vm.jsArrayLikeGetIndex(nextVal, 0)
+					val, _ := vm.jsArrayLikeGetIndex(nextVal, 1)
+					keyStr := vm.jsPropertyKeyFromValue(keyVal)
+					vm.jsMemberSet(outObj, keyStr, val)
+				}
+				return outObj, true
 			case strings.EqualFold(member, "assign"):
 				if len(args) == 0 || args[0].Type == VTJSUndefined || args[0].Type == VTNull {
 					vm.jsThrowTypeError("Object.assign target cannot be null or undefined")
@@ -5147,6 +5380,46 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 				switch {
 				case strings.EqualFold(member, "set"):
 					return vm.jsTypedArraySet(target, args), true
+				case objType == "Uint8Array" && strings.EqualFold(member, "fromBase64"):
+					if len(args) == 0 || args[0].Type == VTJSUndefined {
+						vm.jsThrowTypeError("fromBase64 requires a string")
+						return Value{Type: VTJSUndefined}, true
+					}
+					data, err := base64.StdEncoding.DecodeString(vm.valueToString(args[0]))
+					if err != nil {
+						vm.jsThrowTypeError("Invalid base64 string")
+						return Value{Type: VTJSUndefined}, true
+					}
+					bufObj := vm.jsNewArrayBuffer(len(data))
+					copy(vm.jsArrayBuffers[bufObj.Num], data)
+					return vm.jsNewTypedArray("Uint8Array", []Value{bufObj}), true
+				case objType == "Uint8Array" && strings.EqualFold(member, "fromHex"):
+					if len(args) == 0 || args[0].Type == VTJSUndefined {
+						vm.jsThrowTypeError("fromHex requires a string")
+						return Value{Type: VTJSUndefined}, true
+					}
+					data, err := hex.DecodeString(vm.valueToString(args[0]))
+					if err != nil {
+						vm.jsThrowTypeError("Invalid hex string")
+						return Value{Type: VTJSUndefined}, true
+					}
+					bufObj := vm.jsNewArrayBuffer(len(data))
+					copy(vm.jsArrayBuffers[bufObj.Num], data)
+					return vm.jsNewTypedArray("Uint8Array", []Value{bufObj}), true
+				case objType == "Uint8Array" && strings.EqualFold(member, "toBase64"):
+					buf, byteOffset, byteLength, elemSize, ok := vm.jsGetTypedArrayInfo(target)
+					if !ok {
+						return Value{Type: VTJSUndefined}, true
+					}
+					data := buf[byteOffset : byteOffset+(byteLength/elemSize)]
+					return NewString(base64.StdEncoding.EncodeToString(data)), true
+				case objType == "Uint8Array" && strings.EqualFold(member, "toHex"):
+					buf, byteOffset, byteLength, elemSize, ok := vm.jsGetTypedArrayInfo(target)
+					if !ok {
+						return Value{Type: VTJSUndefined}, true
+					}
+					data := buf[byteOffset : byteOffset+(byteLength/elemSize)]
+					return NewString(hex.EncodeToString(data)), true
 				case strings.EqualFold(member, "subarray"):
 					return vm.jsTypedArraySubarray(target, args), true
 				case strings.EqualFold(member, "fill"):
@@ -5221,6 +5494,18 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 	}
 
 	return Value{Type: VTJSUndefined}, false
+}
+
+func (vm *VM) jsCreateErrorObject(name string, msg string) Value {
+	objID := vm.allocJSID()
+	obj := make(map[string]Value, 4)
+	obj["__js_type"] = NewString("Error")
+	obj["__js_ctor"] = NewString(name)
+	obj["name"] = NewString(name)
+	obj["message"] = NewString(msg)
+	vm.jsObjectItems[objID] = obj
+	vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 4)
+	return Value{Type: VTJSObject, Num: objID}
 }
 
 // jsNumberToString formats a numeric primitive using JScript-compatible defaults.
@@ -6221,8 +6506,20 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			return vm.jsPromiseStaticAll(args)
 		case "PromiseStaticRace":
 			return vm.jsPromiseStaticRace(args)
+		case "PromiseStaticAllSettled":
+			return vm.jsPromiseStaticAllSettled(args)
+		case "PromiseStaticAny":
+			return vm.jsPromiseStaticAny(args)
+		case "PromiseStaticWithResolvers":
+			return vm.jsPromiseStaticWithResolvers(args)
 		case "PromiseAllResolver":
 			vm.jsHandlePromiseAllResolver(callee, args)
+			return Value{Type: VTJSUndefined}
+		case "PromiseAllSettledHandler":
+			vm.jsHandlePromiseAllSettledHandler(callee, args)
+			return Value{Type: VTJSUndefined}
+		case "PromiseAnyRejecter":
+			vm.jsHandlePromiseAnyRejecter(callee, args)
 			return Value{Type: VTJSUndefined}
 		case "PromiseFinallyHandler":
 			return vm.jsHandlePromiseFinallyHandler(callee, args)
@@ -6332,9 +6629,7 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 
 func (vm *VM) jsThrow(v Value) {
 	if len(vm.jsTryStack) == 0 {
-		vm.raise(vbscript.InternalError, "Unhandled JScript exception")
-		vm.push(Value{Type: VTJSUndefined})
-		return
+		panic(&jsAsyncRejectionError{reason: v})
 	}
 	target := vm.jsTryStack[len(vm.jsTryStack)-1]
 	vm.jsTryStack = vm.jsTryStack[:len(vm.jsTryStack)-1]

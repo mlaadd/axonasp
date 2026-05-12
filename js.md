@@ -17,20 +17,74 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 4. After implementing the features, update the documentation in `./www/manual/md/javascript/jscript-es6-support.md` to reflect the new capabilities and any limitations.
 5. Please think and do your best job. I trust you.
 
+**Objective:** Implement missing ECMAScript 2020+ features, ergonomic APIs, and advanced architectural updates into the AxonASP JScript engine.
+
 ---
 
+Here is the comprehensive, phased prompt you can provide to your coding agent. It is strictly organized from the easiest, lowest-risk library additions to the most complex architectural and AST changes. It incorporates checkpoints for testing to ensure the VM does not break.
 
-## 🛠️ PHASE 4: DATA STRUCTURES & SYMBOLS (MEDIUM-HIGH COMPLEXITY)
+---
 
-**Goal:** Implement memory-safe collections, low-level buffers, and internal engine symbols.
+### Phase 3: Deep Runtime & Collections (Medium-High Risk)
 
-### Tasks:
+These changes touch the core of how Maps, WeakMaps, and Garbage Collection interact with our `Value` struct.
 
-* [x] **Well-Known Symbols:** Expand the existing `Symbol` support to include global symbols: `Symbol.iterator`, `Symbol.toStringTag`, `Symbol.species`, `Symbol.hasInstance`, and `Symbol.toPrimitive`, ensuring they are correctly wired and recognized by the engine and can be used in user scripts.
-* [x] **Binary Data (Typed Arrays & DataView):** Implement `ArrayBuffer`, `DataView`, and typed arrays (`Uint8Array`, `Int32Array`, `Float64Array`, etc.) for high-performance I/O. This will require careful memory management to ensure that the underlying byte buffers are allocated and freed correctly without leaks. Consider using Go's `unsafe` package for efficient memory handling, but ensure that all operations are bounds-checked to prevent memory corruption.
-* [ ] **Weak Collections (`WeakMap` & `WeakSet`):** Implement collections that do not prevent GC of their keys.
-    * *ATTENTION:* Implementing `WeakMap` and `WeakSet` in Go is non-trivial. You may need to use a combination of `runtime.SetFinalizer` or careful weak-reference management. Ensure thoroughly tested memory safety to prevent leaks in long-running ASP applications.
-* [ ] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
+**Subphase 3.1: Symbol-Based Keys for Maps/WeakMaps**
+
+* **Target:** Support `Symbol` keys in `Map` and `WeakMap`.
+* **Implementation Tips:**
+* Currently, Maps likely serialize keys to strings or rely on specific Go map types. Ensure the internal map structure (e.g., `jsMapItems`) can distinguish between a String `"foo"` and `Symbol("foo")`.
+* Use the `jsSymbolGlobalRegistry` and symbol IDs to generate unique Go map keys internally.
+
+
+**Subphase 3.2: Weak Collections**
+
+* **Target:** `WeakRef`, `FinalizationRegistry`.
+* **Implementation Tips:**
+* *Warning:* Go's garbage collector does not natively expose JS-style weak references directly to user-land without `runtime.SetFinalizer` tricks, which can be expensive.
+* Implement `WeakRef` by storing the object ID. If the object ID is deleted from `jsObjectItems` during a VM cleanup sweep, `deref()` returns undefined.
+
+
+---
+
+### Phase 4: AST and Compiler Overhauls (High Risk)
+
+These features require modifications to `compiler_jscript.go` (Parser/Lexer) and `opcode.go`.
+
+**Subphase 4.1: Private Class Fields (`#`)**
+
+* **Target:** Class Fields and Private properties.
+* **Implementation Tips:**
+* **Lexer/Parser:** Update the AST to recognize the `#` prefix inside class bodies.
+* **Compiler:** Emit a new hidden initialization sequence during `OpJSNewClass`.
+* **VM (`vm_jscript.go`):** To maintain zero-allocation speed, do NOT use a separate dictionary for private fields. Instead, mangle the property name internally (e.g., map `#name` to a hidden string key like `\x00__priv_name`) so `OpJSMemberGet` can never accidentally access it via standard bracket notation `obj["#name"]`. Check lexical scope at compile-time to ensure validity.
+
+
+
+**Subphase 4.2: Explicit Resource Management (`using`)**
+
+* **Target:** `using` declarations and `Symbol.dispose`.
+* **Implementation Tips:**
+* **Parser:** Add support for `using varName = expr;`.
+* **Compiler:** This is syntactic sugar for a `try...finally` block. Wrap the current lexical scope in an implicit `OpJSTryEnter`.
+* **VM:** In the implicit `finally` block, emit opcodes to fetch `varName[Symbol.dispose]` and execute it (`OpJSCallMember`). Handle multiple `using` declarations by pushing them onto a stack and disposing in reverse order.
+
+
+--
+
+### Phase 5: Hard Constraints & Major Libraries (Extreme Complexity)
+
+These are massive undertakings. Do not start these unless Phase 1-4 are 100% stable.
+
+**Subphase 5.1: RegExp Engine Replacement (Optional/Deferred)**
+
+* **Target:** Named Capture Groups, Lookbehind, Lookahead.
+* **Implementation Tips:** Go's native `regexp` package guarantees linear time (O(n)) to prevent ReDoS attacks, which means it explicitly omits Lookaround and Backreferences. To support full JS RegExp, we would need to integrate a PCRE-compatible engine (like `regexp2`). Note: This breaks our strict "no external engines" rule, so advise the user before proceeding.
+
+**Subphase 5.2: Temporal API**
+
+* **Target:** The `Temporal` global object.
+* **Implementation Tips:** This is a massive API. Implement it as a completely isolated native Go file (e.g., `lib_temporal.go`) that registers itself to the JScript global context. Avoid coupling its heavy date-math logic into the core VM loop.
 
 ---
 
@@ -71,66 +125,6 @@ Follow the subphase breakdown below for a structured implementation of Proxies a
         * [ ] **Memory Profile:** Run `go test -bench . -benchmem`. Proxy traps involve nested VM calls; ensure `CallFrame` allocations remain strictly stack-bound (Zero-Allocation axiom).
         * [ ] **Error Codes:** Ensure correct use of error codes from `jscripterrorcodes.go` for trap violations and TypeErrors.
         * [ ] **Documentation:** Update `jscript-es6-support.md` detailing the supported Proxy traps and the `Reflect` API features.
-
----
-
-## 🛠️ PHASE 8: STATE MACHINES (GENERATORS & ASYNC/AWAIT) (EXTREME COMPLEXITY)
-**Goal:** Support pause/resume capabilities and asynchronous execution without blocking the ASP thread and keeping the synchronous execution model intact. This is a critical phase that requires deep integration with the VM's execution model and careful handling of the microtask queue to ensure that asynchronous operations do not interfere with the synchronous nature of ASP. If coded wrong, it will create infinite loops or locks in the VM pool.
-
-### Tasks:
-
-*🛠️ SUBPHASE 8.1: MICROTASK QUEUE & PROMISES (MEDIUM COMPLEXITY)
-**Goal:** Establish the foundational asynchronous primitives. Because our engine runs synchronously per HTTP request, Promises act as state containers, and the Microtask Queue is processed synchronously when the execution stack is empty or explicitly awaited.
-
-* [x] **Native Promise Object:** Implement `Promise` in JScript (`resolve`, `reject`, `.then`, `.catch`, `.finally`).
-* [x] **VM Microtask Queue:** Add a `jsMicrotaskQueue []func()` to the `VM` struct.
-* [x] **Queue Processing:** Update the main `Run()` loop (or create a dedicated dispatcher) to pump/execute the `jsMicrotaskQueue` whenever the CallStack size reaches 0, or explicitly when an `await` instruction is hit.
-* [x] **VM Reset Integrity:** Ensure `jsMicrotaskQueue` is perfectly cleared inside `resetDynamicMaps()` in `vm_pool.go` so queued tasks do not leak to the next user's HTTP request.
-
-* [x] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
-
-*🛠️ SUBPHASE 8.2: STATE MACHINES (GENERATORS & ASYNC/AWAIT) (HIGH COMPLEXITY)
-**Goal:** Support pause/resume capabilities and asynchronous execution transparently.
-* [x] **Check implementation**: ES6 Finally is a bit complex, it returns a promise that resolves with the original value after the finally callback finishes, check if your current implementation is following the ES6 finally specification.
-* [x] **Compiler Transformation:** The compiler must convert `function*` (`yield`) and `async` functions into resumable state machines.
-* [x] **Architectural Advantage (Pause/Resume):** Use the explicit `CallFrame`, `sp`, `fp`, and `ip` state array to your advantage. Pausing a generator or an `await` call simply means popping the current `CallFrame` and saving it into a closure or Promise structure, allowing the VM to execute other code or microtasks, and pushing it back onto `vm.callStack` to resume.
-* [x] **The "Blocking Await" Shortcut:** Because we are in a dedicated goroutine, `await` does NOT need to yield to the Go scheduler. When `await` is called, the VM can simply loop and pump the Microtask queue until the specific Promise is resolved, blocking the execution synchronously but preserving strict ES6 semantic execution order.
-* [x] **Constraint:** Ensure this does NOT interfere with the synchronous nature of VBScript or standard ASP objects (e.g., `Response.Write` must work correctly inside `yield` steps).
-
-* [x] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
-
-* [x] **🛠️ SUBPHASE 8.3: ES MODULES (ESM) CACHE & REGISTRY (CRITICAL ARCHITECTURE)**
-**Goal:** Implement the split-caching architecture required to support `import` / `export` without destroying performance or leaking memory between concurrent ASP requests. This is a critical architectural change that requires careful design to ensure that module state does not leak between requests and that the caching mechanism is efficient and thread-safe. Caution must be taken to ensure that the global AST cache is read-only and shared across all requests, while the request-local registry is properly cleared after each request to prevent state leakage. Memory management is crucial here, as improperly handled module instances could lead to memory leaks or cross-request contamination.
-
-* [x] **The Global AST Cache (Read-Only):** Modify the existing compiler/cache layer so that when an `import './module.js'` or `import './module.<extension>'` is encountered, the file is read and compiled into AST/Bytecode ONCE globally. Protect this shared cache using Go's `sync.RWMutex`.
-* [x] **The Request-Local Registry (Execution Memory):** Add a `jsModuleInstances map[string]*jsEnvFrame` (or similar environment pointer) to the `VM` struct. This represents the memory state of the modules *for the current user's request only*.
-* [x] **Singleton Emulation:** When a script calls `import`, the VM must check its request-local registry. If the module is not there, it retrieves the AST from the Global Cache, executes it to populate the variables, and stores the resulting environment in the local registry. If it is already there, it simply returns the existing environment reference.
-* [x] **VM Reset Integrity (CRITICAL):** Update `resetDynamicMaps()` in `vm_pool.go` to explicitly clear the request-local module registry (`clear(vm.jsModuleInstances)`). This guarantees that module state (e.g., `let loggedInUser = 'Admin';`) is destroyed when the request ends and does not leak to the next user's VM.
-* [x] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features? Did you ensure that the module caching and registry logic is robust against concurrent requests and does not leak memory or state between them? Did you documented the new caching architecture and its implications in `jscript-es6-support.md`? Did you update this file with the itens completed in this phase?
-
-
-*🛠️ SUBPHASE 8.4: MODULE BINDING & EXECUTION (HIGH COMPLEXITY)
-
-**Goal:** Connect the syntax to the new cache architecture.
-
-* [x] **AST & OpCodes:** Add support for `jsast.ImportDeclaration` and `jsast.ExportDeclaration`. Introduce specific OpCodes (e.g., `OpJSImport`, `OpJSExport`) to handle the resolution.
-* [x] **Synchronous Resolution:** Since the VM has a dedicated goroutine, module resolution (reading from disk if not in the global cache) must happen synchronously.
-* [x] **ASP Context Injection:** Ensure that standard ASP objects (`Response`, `Request`, `Session`) are automatically injected or accessible within the isolated Lexical Environment of the loaded module, preventing `ReferenceError` crashes when modules interact with the server.
-* [x] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features? Did you update this file with the itens completed in this phase? Did you ensure that the module binding logic correctly handles circular dependencies and does not cause infinite loops or memory leaks? Did you add comprehensive test cases for module loading, execution, and interaction with ASP objects? Did you created a test in ./www/tests/test_module_loading.asp that verifies the correct loading and execution of modules, including edge cases like circular dependencies and error handling? Did you updated the documentation in `jscript-es6-support.md` to explain how module loading works, its limitations, and any special considerations for ASP developers?
-* [x] **Documentation:** Update `jscript-es6-support.md` with detailed explanations of how module loading works, the caching architecture, and any limitations or best practices for ASP developers when using modules.
-
----
-
-## 🛠️ PHASE 9: ECMASCRIPT MODULES 
-
-**Goal:** Check and implement full support for `import` / `export`.
-
-### Tasks:
-
-* [ ] *Default import/export and namespace import/export:* Default import/export and namespace import/export wildcard forms are currently not fully implemented. Please implement it, ensuring that the compiler correctly transforms these forms into the appropriate AST and bytecode, and that the VM can execute them without errors. For example, `export default function() {}` should be transformed into a named export with a default property, and `import * as ns from './module.js'` should create a namespace object with all exports as properties. Do not hardcode any of the transformations; they should be derived from the AST structure. Do not forget to add comprehensive test cases for these forms in both Go and ASP test files.
-* [ ] *Error handling:* Check if the VM correctly throws syntax errors for invalid module code, and runtime errors for issues during execution (e.g., missing exports, circular dependencies without proper handling) using the jscripterrorcodes.go for the correct error codes. If necessary, implement new error codes specific to module loading and execution errors. Don't hardcode errors.
-* [ ] *The Request-Local Registry (Execution Memory)*: Check if the VM's request-local registry correctly stores and retrieves module instances, ensuring that each HTTP request or VM from the pool has its own isolated module state and that there is no cross-request contamination. Verify that the registry is properly cleared after each request to prevent memory leaks or state leakage between users.
-* [ ] **Final checklist**: Did you followed the final checklist at the end of this document after implementing these features?
 
 ---
 

@@ -49,6 +49,7 @@ type Mode uint
 
 const (
 	IgnoreRegExpErrors Mode = 1 << iota // Ignore RegExp compatibility errors (allow backtracking)
+	ModeModule                          // Parse as an ES module (enables top-level await)
 )
 
 type options struct {
@@ -210,6 +211,9 @@ func (self *_parser) slice(idx0, idx1 file.Idx) string {
 
 func (self *_parser) parse() (*ast.Program, error) {
 	self.openScope()
+	if self.mode&ModeModule != 0 {
+		self.scope.allowAwait = true
+	}
 	defer self.closeScope()
 	self.next()
 	program := self.parseProgram()

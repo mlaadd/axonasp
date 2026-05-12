@@ -47,7 +47,12 @@ func (c *Compiler) compileJScriptBlock(source string) {
 	// so the GoJa parser accepts it and dispatchNativeCall(member="") can execute it.
 	source = jscriptCallAssignmentPattern.ReplaceAllString(source, `$1($2, $3);`)
 
-	program, err := jsparser.ParseFile(nil, c.sourceName, source, 0)
+	mode := jsparser.Mode(0)
+	if c.isJSModule {
+		mode |= jsparser.ModeModule
+	}
+
+	program, err := jsparser.ParseFile(nil, c.sourceName, source, mode)
 	if err != nil {
 		panic(c.newJScriptCompileErrorFromParse(err, "jscript parse error"))
 	}
@@ -55,7 +60,7 @@ func (c *Compiler) compileJScriptBlock(source string) {
 	prevLocalEnabled := c.jsLocalEnabled
 	prevLocalSlotCount := c.jsLocalSlotCount
 	prevLocalScopeStack := c.jsLocalScopeStack
-	c.jsLocalEnabled = !jsProgramContainsNestedFunction(program.Body)
+	c.jsLocalEnabled = !c.isJSModule && !jsProgramContainsNestedFunction(program.Body)
 	c.jsLocalSlotCount = 0
 	c.jsLocalScopeStack = make([]jsLocalScope, 0, 8)
 	if c.jsLocalEnabled {

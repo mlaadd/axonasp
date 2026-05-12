@@ -438,6 +438,180 @@ func (vm *VM) jsPromiseStaticRace(args []Value) Value {
 	return resultPromise
 }
 
+func (vm *VM) jsPromiseStaticAllSettled(args []Value) Value {
+	if len(args) == 0 || args[0].Type != VTArray {
+		return vm.jsPromiseStaticReject([]Value{NewString("TypeError: Promise.allSettled requires an array")})
+	}
+
+	values := args[0].Arr.Values
+	if len(values) == 0 {
+		return vm.jsPromiseStaticResolve([]Value{ValueFromVBArray(NewVBArrayFromValues(0, nil))})
+	}
+
+	resultPromiseID := vm.allocJSID()
+	resultPromise := Value{Type: VTJSPromise, Num: resultPromiseID}
+	resultPObj := &jsPromiseObject{state: jsPromisePending}
+	vm.jsPromiseItems[resultPromiseID] = resultPObj
+
+	results := make([]Value, len(values))
+	remaining := len(values)
+
+	allStateID := vm.allocJSID()
+	allState := make(map[string]Value, 3)
+	allState["results"] = ValueFromVBArray(NewVBArrayFromValues(0, results))
+	allState["remaining"] = NewInteger(int64(remaining))
+	allState["promise"] = resultPromise
+	vm.jsObjectItems[allStateID] = allState
+
+	for i, v := range values {
+		idx := i
+		p := vm.jsPromiseStaticResolve([]Value{v})
+
+		resolver := vm.jsCreatePromiseAllSettledHandler(allStateID, idx, true)
+		rejecter := vm.jsCreatePromiseAllSettledHandler(allStateID, idx, false)
+
+		vm.jsPromiseThen(p, []Value{resolver, rejecter})
+	}
+
+	return resultPromise
+}
+
+func (vm *VM) jsCreatePromiseAllSettledHandler(stateID int64, index int, isResolve bool) Value {
+	objID := vm.allocJSID()
+	obj := make(map[string]Value, 4)
+	obj["__js_type"] = NewString("Function")
+	obj["__js_ctor"] = NewString("PromiseAllSettledHandler")
+	obj["__js_all_state"] = Value{Type: VTJSObject, Num: stateID}
+	obj["__js_all_index"] = NewInteger(int64(index))
+	obj["__js_is_resolve"] = NewBool(isResolve)
+	vm.jsObjectItems[objID] = obj
+	return Value{Type: VTJSFunction, Num: objID}
+}
+
+func (vm *VM) jsHandlePromiseAllSettledHandler(callee Value, args []Value) {
+	stateVal := vm.jsObjectItems[callee.Num]["__js_all_state"]
+	indexVal := vm.jsObjectItems[callee.Num]["__js_all_index"]
+	isResolve := vm.jsObjectItems[callee.Num]["__js_is_resolve"].Num != 0
+
+	state := vm.jsObjectItems[stateVal.Num]
+	resultsArr := state["results"].Arr
+	remaining := state["remaining"].Num
+	promise := state["promise"]
+
+	index := int(indexVal.Num)
+	val := jsArgOrUndefined(args, 0)
+
+	objID := vm.allocJSID()
+	obj := make(map[string]Value, 2)
+	vm.jsObjectItems[objID] = obj
+	vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 2)
+	if isResolve {
+		obj["status"] = NewString("fulfilled")
+		obj["value"] = val
+	} else {
+		obj["status"] = NewString("rejected")
+		obj["reason"] = val
+	}
+	resultsArr.Values[index] = Value{Type: VTJSObject, Num: objID}
+	remaining--
+	state["remaining"] = NewInteger(remaining)
+
+	if remaining == 0 {
+		vm.jsResolvePromise(promise, state["results"])
+	}
+}
+
+func (vm *VM) jsPromiseStaticAny(args []Value) Value {
+	if len(args) == 0 || args[0].Type != VTArray {
+		return vm.jsPromiseStaticReject([]Value{NewString("TypeError: Promise.any requires an array")})
+	}
+
+	values := args[0].Arr.Values
+	if len(values) == 0 {
+		return vm.jsPromiseStaticReject([]Value{NewString("AggregateError: All promises were rejected")})
+	}
+
+	resultPromiseID := vm.allocJSID()
+	resultPromise := Value{Type: VTJSPromise, Num: resultPromiseID}
+	resultPObj := &jsPromiseObject{state: jsPromisePending}
+	vm.jsPromiseItems[resultPromiseID] = resultPObj
+
+	errors := make([]Value, len(values))
+	remaining := len(values)
+
+	anyStateID := vm.allocJSID()
+	anyState := make(map[string]Value, 3)
+	anyState["errors"] = ValueFromVBArray(NewVBArrayFromValues(0, errors))
+	anyState["remaining"] = NewInteger(int64(remaining))
+	anyState["promise"] = resultPromise
+	vm.jsObjectItems[anyStateID] = anyState
+
+	resolve := vm.jsCreatePromiseResolveFunction(resultPromise)
+
+	for i, v := range values {
+		idx := i
+		p := vm.jsPromiseStaticResolve([]Value{v})
+
+		rejecter := vm.jsCreatePromiseAnyRejecter(anyStateID, idx)
+
+		vm.jsPromiseThen(p, []Value{resolve, rejecter})
+	}
+
+	return resultPromise
+}
+
+func (vm *VM) jsCreatePromiseAnyRejecter(stateID int64, index int) Value {
+	objID := vm.allocJSID()
+	obj := make(map[string]Value, 3)
+	obj["__js_type"] = NewString("Function")
+	obj["__js_ctor"] = NewString("PromiseAnyRejecter")
+	obj["__js_any_state"] = Value{Type: VTJSObject, Num: stateID}
+	obj["__js_any_index"] = NewInteger(int64(index))
+	vm.jsObjectItems[objID] = obj
+	return Value{Type: VTJSFunction, Num: objID}
+}
+
+func (vm *VM) jsHandlePromiseAnyRejecter(callee Value, args []Value) {
+	stateVal := vm.jsObjectItems[callee.Num]["__js_any_state"]
+	indexVal := vm.jsObjectItems[callee.Num]["__js_any_index"]
+
+	state := vm.jsObjectItems[stateVal.Num]
+	errorsArr := state["errors"].Arr
+	remaining := state["remaining"].Num
+	promise := state["promise"]
+
+	index := int(indexVal.Num)
+	val := jsArgOrUndefined(args, 0)
+
+	errorsArr.Values[index] = val
+	remaining--
+	state["remaining"] = NewInteger(remaining)
+
+	if remaining == 0 {
+		vm.jsRejectPromise(promise, vm.jsCreateErrorObject("AggregateError", "All promises were rejected"))
+	}
+}
+
+func (vm *VM) jsPromiseStaticWithResolvers(args []Value) Value {
+	promiseID := vm.allocJSID()
+	promise := Value{Type: VTJSPromise, Num: promiseID}
+	pObj := &jsPromiseObject{state: jsPromisePending}
+	vm.jsPromiseItems[promiseID] = pObj
+
+	resolve := vm.jsCreatePromiseResolveFunction(promise)
+	reject := vm.jsCreatePromiseRejectFunction(promise)
+
+	objID := vm.allocJSID()
+	obj := make(map[string]Value, 3)
+	obj["promise"] = promise
+	obj["resolve"] = resolve
+	obj["reject"] = reject
+	vm.jsObjectItems[objID] = obj
+	vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 3)
+
+	return Value{Type: VTJSObject, Num: objID}
+}
+
 // jsEnqueueMicrotask adds a task to the microtask queue.
 func (vm *VM) jsEnqueueMicrotask(task func()) {
 	vm.jsMicrotaskQueue = append(vm.jsMicrotaskQueue, task)
@@ -445,6 +619,14 @@ func (vm *VM) jsEnqueueMicrotask(task func()) {
 
 // jsProcessMicrotasks executes all pending microtasks until the queue is empty.
 func (vm *VM) jsProcessMicrotasks() {
+	if vm.jsProcessingMicrotasks {
+		return
+	}
+	vm.jsProcessingMicrotasks = true
+	defer func() {
+		vm.jsProcessingMicrotasks = false
+	}()
+
 	for len(vm.jsMicrotaskQueue) > 0 {
 		task := vm.jsMicrotaskQueue[0]
 		vm.jsMicrotaskQueue = vm.jsMicrotaskQueue[1:]

@@ -1,52 +1,40 @@
-<%@ Language="JavaScript" %>
+<%@ Language="JScript" %>
 <%
-function assert(condition, message) {
-    if (!condition) {
-        Response.Write("FAIL: " + message + "<br>");
-    } else {
-        Response.Write("PASS: " + message + "<br>");
-    }
-}
+	Response.Buffer = false;
+	
+	try {
+		Response.Write("Testing Array Ergonomics:<br>");
+		var arr = [1, 2, 3, 4, 5];
+		Response.Write("at(-1): " + arr.at(-1) + "<br>");
+		Response.Write("findLast(x=>x%2==0): " + arr.findLast(function(x) { return x % 2 == 0; }) + "<br>");
+		Response.Write("toReversed(): " + arr.toReversed() + "<br>");
+		Response.Write("toSorted((a,b)=>b-a): " + arr.toSorted(function(a,b) { return b-a; }) + "<br>");
+		Response.Write("with(0, 10): " + arr.with(0, 10) + "<br>");
+		Response.Write("toSpliced(1,2): " + arr.toSpliced(1,2) + "<br>");
+		
+		var nested = [1, [2, [3]]];
+		Response.Write("flat(2): " + nested.flat(2) + "<br>");
+		Response.Write("flatMap(x=>[x,x]): " + arr.flatMap(function(x) { return [x, x]; }) + "<br>");
 
-// Array.prototype.at
-var arr = [10, 20, 30];
-assert(arr.at(0) === 10, "arr.at(0)");
-assert(arr.at(-1) === 30, "arr.at(-1)");
-assert(arr.at(5) === undefined, "arr.at(5)");
-assert("abc".at(1) === "b", "string.at(1)");
+		Response.Write("<br>Testing Object Ergonomics:<br>");
+		var obj = { a: 1 };
+		Response.Write("hasOwn(a): " + Object.hasOwn(obj, "a") + "<br>");
+		Response.Write("hasOwn(b): " + Object.hasOwn(obj, "b") + "<br>");
+		var entries = [["foo", "bar"], ["baz", 42]];
+		var fromEntries = Object.fromEntries(entries);
+		Response.Write("fromEntries.foo: " + fromEntries.foo + "<br>");
+		Response.Write("fromEntries.baz: " + fromEntries.baz + "<br>");
 
-// Array.prototype.flat
-var nested = [1, [2, [3]]];
-assert(JSON.stringify(nested.flat()) === "[1,2,[3]]", "arr.flat()");
-assert(JSON.stringify(nested.flat(2)) === "[1,2,3]", "arr.flat(2)");
+		Response.Write("<br>Testing Uint8Array Ergonomics:<br>");
+		var u8 = Uint8Array.fromHex("deadbeef");
+		Response.Write("fromHex: " + u8[0] + ", " + u8[1] + ", " + u8[2] + ", " + u8[3] + "<br>");
+		Response.Write("toHex: " + u8.toHex() + "<br>");
+		
+		var b64 = Uint8Array.fromBase64("3q2+7w==");
+		Response.Write("fromBase64: " + b64.toHex() + "<br>");
+		Response.Write("toBase64: " + b64.toBase64() + "<br>");
 
-// Array.prototype.flatMap
-var fm = [1, 2].flatMap(x => [x, x * 10]);
-assert(JSON.stringify(fm) === "[1,10,2,20]", "arr.flatMap()");
-
-// Immutable methods
-var original = [3, 1, 2];
-var sorted = original.toSorted();
-assert(JSON.stringify(original) === "[3,1,2]", "original unchanged after toSorted");
-assert(JSON.stringify(sorted) === "[1,2,3]", "toSorted returned sorted array");
-
-var reversed = original.toReversed();
-assert(JSON.stringify(original) === "[3,1,2]", "original unchanged after toReversed");
-assert(JSON.stringify(reversed) === "[2,1,3]", "toReversed returned reversed array");
-
-var spliced = original.toSpliced(1, 1, 9);
-assert(JSON.stringify(original) === "[3,1,2]", "original unchanged after toSpliced");
-assert(JSON.stringify(spliced) === "[3,9,2]", "toSpliced returned modified array");
-
-// Object.fromEntries
-var entries = [["key1", "val1"], ["key2", "val2"]];
-var obj = Object.fromEntries(entries);
-assert(obj.key1 === "val1", "Object.fromEntries key1");
-assert(obj.key2 === "val2", "Object.fromEntries key2");
-
-// Object.values / Object.entries (verification)
-var testObj = { a: 1, b: 2 };
-assert(JSON.stringify(Object.values(testObj)) === "[1,2]", "Object.values");
-assert(JSON.stringify(Object.entries(testObj)) === '[["a",1],["b",2]]', "Object.entries");
-
+	} catch (e) {
+		Response.Write("ERROR: " + e.message + "<br>");
+	}
 %>

@@ -381,6 +381,7 @@ type VM struct {
 	jsPromiseItems                 map[int64]*jsPromiseObject
 	jsGeneratorItems               map[int64]*jsGeneratorObject
 	jsMicrotaskQueue               []func()
+	jsProcessingMicrotasks         bool
 	jsSymbolGlobalRegistry         map[string]Value // Symbol.for global registry: description -> Symbol Value
 	jsNextSymbolID                 int64
 	jsStrictMode                   bool                  // Current strict mode state
@@ -1411,6 +1412,14 @@ func (vm *VM) Run() (err error) {
 					panic(endSignal)
 				}
 				err = nil
+				return
+			}
+			if are, ok := r.(*jsAsyncRejectionError); ok {
+				if vm.suppressTerminate {
+					panic(are)
+				}
+				vm.raise(vbscript.InternalError, "Unhandled JScript exception: "+vm.valueToString(are.reason))
+				err = vm.lastError
 				return
 			}
 			if bufferErr, ok := r.(*asp.ResponseBufferLimitError); ok {
@@ -2838,6 +2847,7 @@ aspExecLoop:
 			vm.jsSetName(vm.constants[nameIdx].Str, value)
 
 		case OpJSImport:
+			savedIP := vm.ip - 1
 			moduleIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
 			vm.ip += 2
 			specCount := int(binary.BigEndian.Uint16(vm.bytecode[vm.ip:]))
@@ -2845,7 +2855,11 @@ aspExecLoop:
 			moduleSpecifier := vm.constants[moduleIdx].Str
 			moduleEnv, ok := vm.jsImportModule(moduleSpecifier)
 			if !ok {
-				// Keep bytecode cursor consistent even after import failure.
+				// If jsImportModule already threw a JScript exception, vm.ip was moved.
+				// We must not advance it further.
+				if vm.ip != savedIP+5 {
+					goto aspExecLoop
+				}
 				for i := 0; i < specCount; i++ {
 					vm.ip += 4
 				}
@@ -3302,7 +3316,8 @@ aspExecLoop:
 				}
 				res := vm.jsGetPromiseResult(p)
 				if vm.jsGetPromiseState(p) == jsPromiseRejected {
-					panic(&jsAsyncRejectionError{reason: res})
+					vm.jsThrow(res)
+					goto aspExecLoop
 				}
 				vm.push(res)
 			} else {
@@ -4265,11 +4280,8 @@ aspExecLoop:
 		goto aspExecLoop
 	}
 
-	if len(vm.jsMicrotaskQueue) > 0 {
+	if len(vm.callStack) == 0 && len(vm.jsCallStack) == 0 && len(vm.jsMicrotaskQueue) > 0 {
 		vm.jsProcessMicrotasks()
-		if vm.ip < len(vm.bytecode) {
-			goto aspExecLoop
-		}
 	}
 
 	if vm.host != nil && vm.host.Response() != nil {
