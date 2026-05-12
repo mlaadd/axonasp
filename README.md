@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-    <img src="https://img.shields.io/badge/version-2.1-blue.svg" alt="Version 2.0"/>
+    <img src="https://img.shields.io/badge/version-2.1-blue.svg" alt="Version 2.1"/>
   <img src="https://img.shields.io/badge/Go-1.26+-00ADD8.svg" alt="Go Version"/>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg" alt="Platform"/>
   <img src="https://img.shields.io/badge/license-MPL-green.svg" alt="License"/>

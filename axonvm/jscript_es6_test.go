@@ -968,6 +968,19 @@ func TestJScriptTDZ(t *testing.T) {
 	}
 }
 
+func TestJScriptConstReassignmentTopLevelThrowsTypeError(t *testing.T) {
+	_, err := runJScript2(t, jscriptSrc(`
+		const PI = 3.14;
+		PI = 3.15;
+	`))
+	if err == nil {
+		t.Fatal("expected TypeError for top-level const reassignment, got nil")
+	}
+	if !strings.Contains(err.Error(), "constant variable") {
+		t.Fatalf("expected const reassignment TypeError, got: %v", err)
+	}
+}
+
 func TestJScriptUnicodeCodePointEscape(t *testing.T) {
 	code := `
 		var s = "\u{1D306}";

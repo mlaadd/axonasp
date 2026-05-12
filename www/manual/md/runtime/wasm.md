@@ -1,7 +1,9 @@
 # WebAssembly (WASM) Support
 
 ## Overview
-AxonASP provides experimental support for compilation to WebAssembly (WASM). This allows the entire ASP Virtual Machine and compiler to run directly inside a modern web browser, enabling serverless execution of Classic ASP scripts on the client side.
+AxonASP provides experimental support for compilation to WebAssembly (WASM). This allows the entire ASP Virtual Machine and compiler to run directly inside a modern web browser, enabling serverless execution of Classic ASP scripts on the client side, using VBScript and JavaScript for logic.
+
+You can use this to create even build client-side applications using VBScript/ASP as the scripting language. The WASM playgroud is available in [http://g3pix.com.br/axonasp/wasm/](http://g3pix.com.br/axonasp/wasm/), demonstrating how to load and run ASP code natively in the browser.
 
 The WASM module encapsulates the single-pass compiler and the stack-based VM, exposing a simple JavaScript API (`AxonASP.execute`) to compile and run ASP code and capture its output.
 
@@ -47,12 +49,12 @@ The following objects cannot be instantiated (`Server.CreateObject`) in the WASM
 - `Scripting.FileSystemObject`
 - `WScript.Shell`
 
-*Note: Core language features, basic intrinsics (Response, Request, Server, Application, Session), and safe data structure objects (e.g., Scripting.Dictionary) remain fully functional.*
+*Note: Most of the core language features, most of basic intrinsics (Application, Session), and safe data structure objects (e.g., Scripting.Dictionary) remain fully functional. Response, Request, Server will be limited in functionality.*
 
 ## Using the WASM Playground
 The AxonASP project includes a built-in playground to test ASP code natively in your browser. 
 
-Once compiled, navigate to the `wasm/` directory and host it using a local web server (e.g., using `python -m http.server 8080`). Open the `default.asp` file (which acts as a standard HTML page for the playground) in your browser.
+Once compiled, navigate to the `wasm/` directory and host it using the AxonASP server or a local web server (e.g., using `python -m http.server 8080`). Open the `default.asp` file (which acts as a standard HTML page for the playground) in your browser.
 
 The playground demonstrates how to load the module using `wasm_exec.js` and interact with the engine using JavaScript:
 

@@ -2344,7 +2344,7 @@ func (c *Compiler) detectUnitStepLiteralFromEmission(exprStart int) (bool, int64
 		step = constVal.Num
 	case VTDouble:
 		switch constVal.Flt {
-case 1:
+		case 1:
 			step = 1
 		case -1:
 			step = -1

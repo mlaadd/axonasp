@@ -85,8 +85,33 @@ func (c *Compiler) compileJScriptBlock(source string) {
 		defer func() { c.jsStrictMode = prevStrictMode }()
 	}
 
+	// Top-level script/module scope has lexical semantics for let/const/class.
+	// Register these names in a dedicated block scope so const reassignment and
+	// TDZ checks behave like ES6 outside nested blocks as well.
+	topLetNames, topConstNames := jsGetBlockLexicalNames(program.Body)
+	hasTopLexical := len(topLetNames) > 0 || len(topConstNames) > 0
+	if hasTopLexical {
+		c.emit(OpJSBlockScopeEnter)
+		for _, name := range topLetNames {
+			if c.jsLocalEnabled {
+				c.jsAddLocalBarrier(name)
+			}
+			c.emit(OpJSTDZRegisterLet, c.addConstant(NewString(name)))
+		}
+		for _, name := range topConstNames {
+			if c.jsLocalEnabled {
+				c.jsAddLocalBarrier(name)
+			}
+			c.emit(OpJSTDZRegisterConst, c.addConstant(NewString(name)))
+		}
+	}
+
 	for i := range program.Body {
 		c.compileJScriptStatement(program.Body[i])
+	}
+
+	if hasTopLexical {
+		c.emit(OpJSBlockScopeExit)
 	}
 
 	if c.jsLocalEnabled {
@@ -126,6 +151,25 @@ func (c *Compiler) compileJScriptEvalSnippet(source string) {
 		defer func() { c.jsStrictMode = prevStrictMode }()
 	}
 
+	// Eval code also executes in a lexical program scope for let/const/class.
+	topLetNames, topConstNames := jsGetBlockLexicalNames(program.Body)
+	hasTopLexical := len(topLetNames) > 0 || len(topConstNames) > 0
+	if hasTopLexical {
+		c.emit(OpJSBlockScopeEnter)
+		for _, name := range topLetNames {
+			if c.jsLocalEnabled {
+				c.jsAddLocalBarrier(name)
+			}
+			c.emit(OpJSTDZRegisterLet, c.addConstant(NewString(name)))
+		}
+		for _, name := range topConstNames {
+			if c.jsLocalEnabled {
+				c.jsAddLocalBarrier(name)
+			}
+			c.emit(OpJSTDZRegisterConst, c.addConstant(NewString(name)))
+		}
+	}
+
 	lastIdx := len(program.Body) - 1
 	for i := 0; i < lastIdx; i++ {
 		c.compileJScriptStatement(program.Body[i])
@@ -137,6 +181,10 @@ func (c *Compiler) compileJScriptEvalSnippet(source string) {
 	} else {
 		c.compileJScriptStatement(last)
 		c.emit(OpJSLoadUndefined)
+	}
+
+	if hasTopLexical {
+		c.emit(OpJSBlockScopeExit)
 	}
 
 	if hasStrictMode {
