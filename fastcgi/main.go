@@ -25,6 +25,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -252,6 +253,21 @@ func cleanupFastCGIListenerArtifact(network, address string) {
 	_ = os.Remove(address)
 }
 
+// isExpectedFastCGIShutdownError reports whether fcgi.Serve failed because the
+// listener was intentionally closed during a graceful shutdown/restart.
+func isExpectedFastCGIShutdownError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+
+	// Linux typically reports this exact text when Accept unblocks after Close.
+	return strings.Contains(err.Error(), "use of closed network connection")
+}
+
 // applyRuntimeSettings applies timezone and Go memory limit based on loaded configuration.
 func applyRuntimeSettings() {
 	if MemoryLimitMB > 0 {
@@ -396,6 +412,9 @@ func main() {
 
 	go func() {
 		if err := fcgi.Serve(listener, mux); err != nil {
+			if isExpectedFastCGIShutdownError(err) {
+				return
+			}
 			axonvm.ReportInternalError(axonvm.ErrFastCGIProtocolError, err, "FastCGI server returned an execution error.", ListenNetwork+"://"+ListenAddr, 0)
 			os.Exit(1)
 		}
