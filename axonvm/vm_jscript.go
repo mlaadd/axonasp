@@ -1691,6 +1691,46 @@ func (vm *VM) jsValueMapKey(v Value) string {
 	}
 }
 
+// jsMapKeyToValue converts an internal Map backing-store key back into a JS value when possible.
+func (vm *VM) jsMapKeyToValue(key string) Value {
+	if key == "u" {
+		return Value{Type: VTJSUndefined}
+	}
+	if key == "n" {
+		return Value{Type: VTNull}
+	}
+	if strings.HasPrefix(key, "b:") {
+		return NewBool(key == "b:1")
+	}
+	if strings.HasPrefix(key, "num:") {
+		numText := strings.TrimPrefix(key, "num:")
+		if numText == "nan" {
+			return NewDouble(math.NaN())
+		}
+		if n, err := strconv.ParseInt(numText, 10, 64); err == nil {
+			return NewInteger(n)
+		}
+		if f, err := strconv.ParseFloat(numText, 64); err == nil {
+			return NewDouble(f)
+		}
+	}
+	if strings.HasPrefix(key, "s:") {
+		return NewString(strings.TrimPrefix(key, "s:"))
+	}
+	if strings.HasPrefix(key, "big:") {
+		text := strings.TrimPrefix(key, "big:")
+		if bi, ok := new(big.Int).SetString(text, 10); ok {
+			return Value{Type: VTJSBigInt, Big: bi}
+		}
+	}
+	if strings.HasPrefix(key, "sym:") {
+		if n, err := strconv.ParseInt(strings.TrimPrefix(key, "sym:"), 10, 64); err == nil {
+			return Value{Type: VTSymbol, Num: n}
+		}
+	}
+	return NewString(key)
+}
+
 func (vm *VM) jsPropertyKeyFromValue(v Value) string {
 	v = resolveCallable(vm, v)
 	if v.Type == VTSymbol {
@@ -3237,6 +3277,13 @@ func (vm *VM) jsMemberGet(target Value, member string) (Value, bool) {
 	case VTJSObject:
 		if value, ok := vm.jsGetAliasedArgumentValue(target.Num, member); ok {
 			return value, false
+		}
+		if strings.EqualFold(member, "size") {
+			if targetType := vm.jsObjectStringProperty(target, "__js_type"); targetType == "Set" || targetType == "Map" {
+				if store, ok := vm.jsCollectionStore(target, targetType, "size"); ok {
+					return NewInteger(int64(len(store))), false
+				}
+			}
 		}
 		// ArrayBuffer property get (byteLength)
 		if backing, isBuf := vm.jsArrayBuffers[target.Num]; isBuf {
@@ -6370,7 +6417,7 @@ func (vm *VM) jsEnumerateForOfValues(source Value) []Value {
 			if mapData, ok := vm.jsMapItems[source.Num]; ok {
 				out := make([]Value, 0, len(mapData))
 				for k, v := range mapData {
-					out = append(out, ValueFromVBArray(NewVBArrayFromValues(0, []Value{NewString(k), v})))
+					out = append(out, ValueFromVBArray(NewVBArrayFromValues(0, []Value{vm.jsMapKeyToValue(k), v})))
 				}
 				return out
 			}
@@ -6646,7 +6693,7 @@ func (vm *VM) jsThrowTypeError(msg string) {
 	}
 	target := vm.jsTryStack[len(vm.jsTryStack)-1]
 	vm.jsTryStack = vm.jsTryStack[:len(vm.jsTryStack)-1]
-	vm.jsErrStack = append(vm.jsErrStack, NewString("TypeError: "+msg))
+	vm.jsErrStack = append(vm.jsErrStack, vm.jsCreateErrorObject("TypeError", msg))
 	vm.ip = target
 }
 
@@ -6659,7 +6706,7 @@ func (vm *VM) jsThrowReferenceError(msg string) {
 	}
 	target := vm.jsTryStack[len(vm.jsTryStack)-1]
 	vm.jsTryStack = vm.jsTryStack[:len(vm.jsTryStack)-1]
-	vm.jsErrStack = append(vm.jsErrStack, NewString("ReferenceError: "+msg))
+	vm.jsErrStack = append(vm.jsErrStack, vm.jsCreateErrorObject("ReferenceError", msg))
 	vm.ip = target
 }
 

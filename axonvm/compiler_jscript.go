@@ -4164,15 +4164,24 @@ func (c *Compiler) compileJScriptDefaultParamGuards(paramList *jsast.ParameterLi
 		}
 		paramName := p.Name.String()
 		nameIdx := c.addConstant(NewString(paramName))
+		localSlot, hasLocal := c.jsResolveLocalSlot(paramName)
 
 		// if (param === undefined) { param = defaultExpr; }
-		c.emit(OpJSGetName, nameIdx)
+		if hasLocal {
+			c.emit(OpJSGetLocal, localSlot)
+		} else {
+			c.emit(OpJSGetName, nameIdx)
+		}
 		c.emit(OpJSLoadUndefined)
 		c.emit(OpJSStrictEq)
 		// JumpIfFalse skips the default assignment when param is NOT undefined.
 		skipJump := c.emitJSJump(OpJSJumpIfFalse)
 		c.compileJScriptExpression(b.Initializer)
-		c.emit(OpJSSetName, nameIdx)
+		if hasLocal {
+			c.emit(OpJSSetLocal, localSlot)
+		} else {
+			c.emit(OpJSSetName, nameIdx)
+		}
 		c.patchJSJump(skipJump)
 	}
 }

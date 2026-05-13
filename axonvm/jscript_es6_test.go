@@ -489,8 +489,7 @@ func TestJScriptDefaultParams(t *testing.T) {
 
 func TestJScriptDefaultParamSyntax(t *testing.T) {
 	out, err := runJScript2(t, jscriptSrc(`
-		function multiply(a, b) {
-			if (b === undefined) b = 2;
+		function multiply(a, b = 2) {
 			return a * b;
 		}
 		Response.Write(multiply(5));
@@ -786,6 +785,7 @@ func TestJScriptSetAndMapBasics(t *testing.T) {
 	out, err := runJScript2(t, jscriptSrc(`
 		var s = new Set();
 		s.add("a").add("b");
+		var setSize = s.size;
 		var before = s.has("a") && s.has("b");
 		var deleted = s.delete("a");
 		var after = s.has("a");
@@ -800,7 +800,7 @@ func TestJScriptSetAndMapBasics(t *testing.T) {
 		m.clear();
 		var mCleared = m.has("k2");
 
-		Response.Write((before && deleted && !after && !cleared) ? "yes" : "no");
+		Response.Write((setSize === 2 && before && deleted && !after && !cleared) ? "yes" : "no");
 		Response.Write("|");
 		Response.Write((mBefore && mDeleted && !mAfter && !mCleared) ? "yes" : "no");
 	`))
@@ -809,6 +809,22 @@ func TestJScriptSetAndMapBasics(t *testing.T) {
 	}
 	if out != "yes|yes" {
 		t.Errorf("expected 'yes|yes', got %q", out)
+	}
+}
+
+func TestJScriptBigIntMixedTypeErrorMessage(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		try {
+			Response.Write(10n + 5);
+		} catch (e) {
+			Response.Write(e.message);
+		}
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Cannot mix BigInt and other types, use explicit conversions" {
+		t.Errorf("expected BigInt mix error message, got %q", out)
 	}
 }
 

@@ -111,6 +111,20 @@ func TestJScriptDestructuringArrayNested(t *testing.T) {
 	}
 }
 
+func TestJScriptDestructuringArrayNestedMap(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var map = new Map([ ["id", 42] ]);
+		var [[key, val]] = map;
+		Response.Write(key + "|" + val);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "id|42" {
+		t.Errorf("expected 'id|42', got %q", out)
+	}
+}
+
 func TestJScriptDestructuringArrayString(t *testing.T) {
 	out, err := runJScript2(t, jscriptSrc(`
 		var [x, y, z] = "ABC";

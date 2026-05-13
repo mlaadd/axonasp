@@ -85,6 +85,36 @@ func TestJScriptLocalSlotRespectsLetShadowing(t *testing.T) {
 	}
 }
 
+func TestJScriptDefaultParamUsesLocalSlot(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`function multiply(a, b = 2) { return a * b; }` +
+		`Response.Write(multiply(5));` +
+		`Response.Write("|");` +
+		`Response.Write(multiply(5, 3));` +
+		`</script>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	hasSetLocal := false
+	for i := 0; i < len(compiler.Bytecode()); i++ {
+		if OpCode(compiler.Bytecode()[i]) == OpJSSetLocal {
+			hasSetLocal = true
+			break
+		}
+	}
+	if !hasSetLocal {
+		t.Fatalf("expected OpJSSetLocal in bytecode for default parameter lowering, got %v", compiler.Bytecode())
+	}
+
+	out := runASPSourceForTest(t, source)
+	if out != "10|15" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
 func BenchmarkJScriptFunctionFastInt1M(b *testing.B) {
 	source := `<%@ Language="JScript" %><%` +
 		`function runLoop() {` +
