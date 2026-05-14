@@ -1,4 +1,4 @@
-//go:build wasm || lib_g3http_disabled
+//go:build lib_g3http_disabled
 
 /*
  * AxonASP Server

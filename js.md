@@ -21,21 +21,6 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 
 ---
 
----
-
-### Phase 5: RegExp (Replace the JS RegExp engine with a PCRE-compatible REGEXP2 to support full ES6+ features)
-
-**Subphase 5.1: RegExp Engine Replacement**
-
-* **Target:** Named Capture Groups, Lookbehind, Lookahead.
-* **Implementation Tips:** Go's native `regexp` package guarantees linear time (O(n)) to prevent ReDoS attacks, which means it explicitly omits Lookaround and Backreferences. To support full JS RegExp, we would need to integrate a PCRE-compatible engine (like `regexp2`). Note: This breaks our strict "no external engines" rule, so advise the user before proceeding.
-    * RegExp Sticky Flag & Properties
-        * [ ] **RegExp.prototype.flags:** Implement the getter for `flags`. It must return a string of active flags (`g`, `i`, `m`, `u`, `y`) in alphabetical order.
-        * [ ] **Sticky Flag (y) Logic:** Modify the `RegExp` execution logic inside `vm_jscript.go`. If the `y` flag is present, ensure the matching engine explicitly anchors the search to start *exactly* at the `lastIndex` property of the RegExp object. Update `lastIndex` upon match or reset it to `0` on failure.
-        * [ ] **Validation:** Create `test_regexp_sticky.asp`. Create a sticky regex and advance `lastIndex` manually to ensure matches only occur exactly at that index.
-
-
----
 
 ## 🛠️ PHASE 6: PROXIES & REFLECTION (HIGH COMPLEXITY)
 

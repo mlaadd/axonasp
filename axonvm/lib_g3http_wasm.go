@@ -1,4 +1,4 @@
-//go:build !lib_g3http_disabled && !(js && wasm)
+//go:build js && wasm && !lib_g3http_disabled
 
 /*
  * AxonASP Server
@@ -88,7 +88,14 @@ func (h *G3HTTP) executeRequest(reqUrl, method, bodyStr string) Value {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	// =========================================================================
+	// WASM SPECIFIC HEADERS
+	// =========================================================================
+	req.Header.Add("js.fetch:mode", "cors")
+	req.Header.Add("js.fetch:credentials", "include")
+
 	client := &http.Client{Timeout: 10 * time.Second}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return NewEmpty()

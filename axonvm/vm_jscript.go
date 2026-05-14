@@ -32,7 +32,6 @@ import (
 	"math/rand"
 	"net/url"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,8 +41,8 @@ import (
 	"unicode/utf8"
 
 	"g3pix.com.br/axonasp/jscript/ftoa"
-	jsparser "g3pix.com.br/axonasp/jscript/parser"
 	"g3pix.com.br/axonasp/vbscript"
+	"github.com/dlclark/regexp2"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -96,6 +95,13 @@ type jsArgumentsBinding struct {
 	envID        int64
 	indexToParam map[string]string
 	paramToIndex map[string]string
+}
+
+type jsRegExpObject struct {
+	pattern   string
+	flags     string
+	compiled  *regexp2.Regexp
+	lastIndex int
 }
 
 type jsDefinePropertySpec struct {
@@ -3651,6 +3657,26 @@ func (vm *VM) jsMemberGet(target Value, member string) (Value, bool) {
 		if value, ok := vm.jsGetAliasedArgumentValue(target.Num, member); ok {
 			return value, false
 		}
+		if vm.jsObjectStringProperty(target, "__js_type") == "RegExp" {
+			switch {
+			case strings.EqualFold(member, "flags"):
+				return NewString(vm.jsRegExpGetFlags(target)), false
+			case strings.EqualFold(member, "source"):
+				return vm.jsObjectItems[target.Num]["pattern"], false
+			case strings.EqualFold(member, "global"):
+				return NewBool(strings.Contains(vm.jsObjectStringProperty(target, "flags"), "g")), false
+			case strings.EqualFold(member, "ignoreCase"):
+				return NewBool(strings.Contains(vm.jsObjectStringProperty(target, "flags"), "i")), false
+			case strings.EqualFold(member, "multiline"):
+				return NewBool(strings.Contains(vm.jsObjectStringProperty(target, "flags"), "m")), false
+			case strings.EqualFold(member, "sticky"):
+				return NewBool(strings.Contains(vm.jsObjectStringProperty(target, "flags"), "y")), false
+			case strings.EqualFold(member, "unicode"):
+				return NewBool(strings.Contains(vm.jsObjectStringProperty(target, "flags"), "u")), false
+			case strings.EqualFold(member, "dotAll"):
+				return NewBool(strings.Contains(vm.jsObjectStringProperty(target, "flags"), "s")), false
+			}
+		}
 		if strings.EqualFold(member, "size") {
 			if targetType := vm.jsObjectStringProperty(target, "__js_type"); targetType == "Set" || targetType == "Map" {
 				if store, ok := vm.jsCollectionStore(target, targetType, "size"); ok {
@@ -4247,57 +4273,51 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			if len(args) == 0 {
 				return NewNull(), true
 			}
-			patternVal := args[0]
-			pattern := vm.valueToString(patternVal)
-			flags := ""
-			if patternVal.Type == VTJSObject && vm.jsObjectStringProperty(patternVal, "__js_type") == "RegExp" {
-				pattern = vm.jsObjectStringProperty(patternVal, "pattern")
-				flags = vm.jsObjectStringProperty(patternVal, "flags")
+			reVal := args[0]
+			if reVal.Type != VTJSObject || vm.jsObjectStringProperty(reVal, "__js_type") != "RegExp" {
+				reVal = vm.jsNew(vm.jsCreateIntrinsicObject("", "RegExp"), []Value{reVal})
 			}
-			re, err := vm.jsCompileRegExp(pattern, flags)
-			if err != nil {
+			flags := vm.jsObjectStringProperty(reVal, "flags")
+			if !strings.Contains(flags, "g") {
+				return vm.jsRegExpExec(reVal, text), true
+			}
+			// Global match returns all matches in an array
+			vm.jsMemberSet(reVal, "lastIndex", NewInteger(0))
+			var matches []Value
+			for {
+				res := vm.jsRegExpExec(reVal, text)
+				if res.Type == VTNull {
+					break
+				}
+				matches = append(matches, vm.jsObjectSlots[res.Num][0])
+				// Ensure progress if empty match
+				lastIdxVal, _ := vm.jsMemberGet(reVal, "lastIndex")
+				currIdxVal, _ := vm.jsMemberGet(res, "index")
+				if int(vm.jsToNumber(lastIdxVal).Flt) == int(vm.jsToNumber(currIdxVal).Flt) {
+					curr := int(vm.jsToNumber(lastIdxVal).Flt)
+					vm.jsMemberSet(reVal, "lastIndex", NewInteger(int64(curr+1)))
+				}
+			}
+			if len(matches) == 0 {
 				return NewNull(), true
 			}
-			if strings.Contains(strings.ToLower(flags), "g") {
-				matches := re.FindAllString(text, -1)
-				if len(matches) == 0 {
-					return NewNull(), true
-				}
-				vals := make([]Value, len(matches))
-				for i := 0; i < len(matches); i++ {
-					vals[i] = NewString(matches[i])
-				}
-				return ValueFromVBArray(NewVBArrayFromValues(0, vals)), true
-			}
-			first := re.FindStringSubmatch(text)
-			if len(first) == 0 {
-				return NewNull(), true
-			}
-			vals := make([]Value, len(first))
-			for i := 0; i < len(first); i++ {
-				vals[i] = NewString(first[i])
-			}
-			return ValueFromVBArray(NewVBArrayFromValues(0, vals)), true
+			return ValueFromVBArray(NewVBArrayFromValues(0, matches)), true
 		case strings.EqualFold(member, "search"):
 			if len(args) == 0 {
 				return NewInteger(-1), true
 			}
-			patternVal := args[0]
-			pattern := vm.valueToString(patternVal)
-			flags := ""
-			if patternVal.Type == VTJSObject && vm.jsObjectStringProperty(patternVal, "__js_type") == "RegExp" {
-				pattern = vm.jsObjectStringProperty(patternVal, "pattern")
-				flags = vm.jsObjectStringProperty(patternVal, "flags")
+			reVal := args[0]
+			if reVal.Type != VTJSObject || vm.jsObjectStringProperty(reVal, "__js_type") != "RegExp" {
+				reVal = vm.jsNew(vm.jsCreateIntrinsicObject("", "RegExp"), []Value{reVal})
 			}
-			re, err := vm.jsCompileRegExp(pattern, flags)
-			if err != nil {
+			// search ignores global flag and lastIndex
+			vm.jsMemberSet(reVal, "lastIndex", NewInteger(0))
+			res := vm.jsRegExpExec(reVal, text)
+			if res.Type == VTNull {
 				return NewInteger(-1), true
 			}
-			loc := re.FindStringIndex(text)
-			if len(loc) != 2 {
-				return NewInteger(-1), true
-			}
-			return NewInteger(int64(loc[0])), true
+			idxVal, _ := vm.jsMemberGet(res, "index")
+			return idxVal, true
 		case strings.EqualFold(member, "toLowerCase"):
 			out := strings.ToLower(text)
 			if !vm.jsEnsureStringSize(len(out)) || !vm.jsChargeStringWork(len(out)) {
@@ -4344,7 +4364,63 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			if len(args) == 0 || args[0].Type == VTJSUndefined {
 				return ValueFromVBArray(NewVBArrayFromValues(0, []Value{NewString(text)})), true
 			}
-			sep := vm.valueToString(args[0])
+			sepVal := args[0]
+			limit := -1
+			if len(args) > 1 && args[1].Type != VTJSUndefined {
+				limit = int(vm.jsToNumber(args[1]).Flt)
+				if limit < 0 {
+					limit = 0
+				}
+			}
+
+			if sepVal.Type == VTJSObject && vm.jsObjectStringProperty(sepVal, "__js_type") == "RegExp" {
+				re, err := vm.jsGetCompiledRegExp(sepVal.Num)
+				if err != nil {
+					return ValueFromVBArray(NewVBArrayFromValues(0, []Value{NewString(text)})), true
+				}
+				var values []Value
+				lastByteIdx := 0
+				m, err := re.FindStringMatch(text)
+				for m != nil && (limit < 0 || len(values) < limit) {
+					startByte := vm.jsRuneToByteOffset(text, m.Index)
+					lengthByte := vm.jsRuneToByteOffset(text[startByte:], m.Length)
+					values = append(values, NewString(text[lastByteIdx:startByte]))
+
+					groups := m.Groups()
+					for i := 1; i < len(groups); i++ {
+						if limit >= 0 && len(values) >= limit {
+							break
+						}
+						g := groups[i]
+						if g.Capture.Length < 0 {
+							values = append(values, Value{Type: VTJSUndefined})
+						} else {
+							values = append(values, NewString(g.String()))
+						}
+					}
+
+					lastByteIdx = startByte + lengthByte
+					if lengthByte == 0 {
+						// Ensure progress for zero-length match
+						if lastByteIdx < len(text) {
+							// We need to advance by one rune
+							_, size := utf8.DecodeRuneInString(text[lastByteIdx:])
+							lastByteIdx += size
+						} else {
+							break
+						}
+					}
+					m, err = re.FindNextMatch(m)
+				}
+				if limit < 0 || len(values) < limit {
+					if lastByteIdx <= len(text) {
+						values = append(values, NewString(text[lastByteIdx:]))
+					}
+				}
+				return ValueFromVBArray(NewVBArrayFromValues(0, values)), true
+			}
+
+			sep := vm.valueToString(sepVal)
 			var pieces []string
 			if sep == "" {
 				pieces = make([]string, 0, len(text))
@@ -4353,6 +4429,9 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 				}
 			} else {
 				pieces = strings.Split(text, sep)
+			}
+			if limit >= 0 && len(pieces) > limit {
+				pieces = pieces[:limit]
 			}
 			values := make([]Value, len(pieces))
 			for i := range pieces {
@@ -5847,17 +5926,19 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			}
 		case "RegExp":
 			if strings.EqualFold(member, "test") {
-				pattern := vm.jsObjectStringProperty(target, "pattern")
-				flags := vm.jsObjectStringProperty(target, "flags")
 				needle := ""
 				if len(args) > 0 {
 					needle = vm.valueToString(args[0])
 				}
-				re, err := vm.jsCompileRegExp(pattern, flags)
-				if err != nil {
-					return NewBool(false), true
+				res := vm.jsRegExpExec(target, needle)
+				return NewBool(res.Type == VTJSObject), true
+			}
+			if strings.EqualFold(member, "exec") {
+				needle := ""
+				if len(args) > 0 {
+					needle = vm.valueToString(args[0])
 				}
-				return NewBool(re.MatchString(needle)), true
+				return vm.jsRegExpExec(target, needle), true
 			}
 		case "Enumerator":
 			switch {
@@ -6268,69 +6349,182 @@ func (vm *VM) jsStringReplace(source string, patternArg Value, replacementArg Va
 
 // jsStringReplaceRegex applies one or all RegExp matches to the source string.
 func (vm *VM) jsStringReplaceRegex(source string, pattern string, flags string, replacementArg Value, replaceAll bool) Value {
-	rePattern := pattern
-	flagsLower := strings.ToLower(flags)
-	if strings.Contains(flagsLower, "i") {
-		rePattern = "(?i)" + rePattern
-	}
-	re, err := regexp.Compile(rePattern)
+	re, err := vm.jsCompileRegExp(pattern, flags)
 	if err != nil {
 		return NewString(source)
 	}
 	replacement := vm.valueToString(replacementArg)
 	useCallback := replacementArg.Type == VTJSFunction
+	flagsLower := strings.ToLower(flags)
 	useAll := replaceAll || strings.Contains(flagsLower, "g")
-	limit := 1
-	if useAll {
-		limit = -1
-	}
-	matches := re.FindAllStringSubmatchIndex(source, limit)
-	if len(matches) == 0 {
-		if !vm.jsEnsureStringSize(len(source)) || !vm.jsChargeStringWork(len(source)) {
-			return Value{Type: VTJSUndefined}
-		}
+
+	var b strings.Builder
+	lastByteIdx := 0
+	lastUTF16Idx := int64(0)
+
+	m, err := re.FindStringMatch(source)
+	if err != nil || m == nil {
 		return NewString(source)
 	}
-	var b strings.Builder
-	last := 0
-	for i := 0; i < len(matches); i++ {
-		idx := matches[i]
-		if len(idx) < 2 {
-			continue
+
+	for m != nil {
+		startByte := vm.jsRuneToByteOffset(source, m.Index)
+		lengthByte := vm.jsRuneToByteOffset(source[startByte:], m.Length)
+		endByte := startByte + lengthByte
+
+		// Append portion before match
+		b.WriteString(source[lastByteIdx:startByte])
+
+		// Calculate UTF-16 index of match start
+		matchStartUTF16 := lastUTF16Idx
+		for _, r := range source[lastByteIdx:startByte] {
+			if r >= 0x10000 {
+				matchStartUTF16 += 2
+			} else {
+				matchStartUTF16 += 1
+			}
 		}
-		start := idx[0]
-		end := idx[1]
-		if start < last {
-			continue
-		}
-		b.WriteString(source[last:start])
-		repl := replacement
+
+		repl := ""
 		if useCallback {
-			captureCount := (len(idx) / 2) - 1
-			callbackArgs := make([]Value, 0, captureCount+3)
-			callbackArgs = append(callbackArgs, NewString(source[start:end]))
-			for c := 0; c < captureCount; c++ {
-				capStart := idx[2+(c*2)]
-				capEnd := idx[3+(c*2)]
-				if capStart >= 0 && capEnd >= capStart {
-					callbackArgs = append(callbackArgs, NewString(source[capStart:capEnd]))
-				} else {
+			groups := m.Groups()
+			callbackArgs := make([]Value, 0, len(groups)+2)
+			callbackArgs = append(callbackArgs, NewString(m.String()))
+			for i := 1; i < len(groups); i++ {
+				g := groups[i]
+				if g.Capture.Length < 0 {
 					callbackArgs = append(callbackArgs, Value{Type: VTJSUndefined})
+				} else {
+					callbackArgs = append(callbackArgs, NewString(g.String()))
 				}
 			}
-			callbackArgs = append(callbackArgs, NewInteger(int64(start)), NewString(source))
+			callbackArgs = append(callbackArgs, NewInteger(matchStartUTF16), NewString(source))
+			// ES2018: if named groups are present, an extra argument with groups object is passed
+			hasNamedGroups := false
+			for i, g := range groups {
+				if g.Name != "" && g.Name != strconv.Itoa(i) {
+					hasNamedGroups = true
+					break
+				}
+			}
+			if hasNamedGroups {
+				groupsObjID := vm.allocJSID()
+				groupsObj := make(map[string]Value)
+				for i, g := range groups {
+					if g.Name != "" && g.Name != strconv.Itoa(i) {
+						if g.Capture.Length < 0 {
+							groupsObj[g.Name] = Value{Type: VTJSUndefined}
+						} else {
+							groupsObj[g.Name] = NewString(g.String())
+						}
+					}
+				}
+				vm.jsObjectItems[groupsObjID] = groupsObj
+				callbackArgs = append(callbackArgs, Value{Type: VTJSObject, Num: groupsObjID})
+			}
+
 			cb := vm.jsCall(replacementArg, Value{Type: VTJSUndefined}, callbackArgs)
 			repl = vm.valueToString(cb)
+		} else {
+			// String replacement with $ tokens
+			repl = vm.jsExpandReplaceTokens(m, source, replacement, matchStartUTF16)
 		}
+
 		b.WriteString(repl)
-		last = end
+
+		// Update last indices
+		lastByteIdx = endByte
+		lastUTF16Idx = matchStartUTF16
+		for _, r := range source[startByte:endByte] {
+			if r >= 0x10000 {
+				lastUTF16Idx += 2
+			} else {
+				lastUTF16Idx += 1
+			}
+		}
+
+		if !useAll {
+			break
+		}
+		m, err = re.FindNextMatch(m)
+		if err != nil {
+			break
+		}
 	}
-	b.WriteString(source[last:])
+
+	b.WriteString(source[lastByteIdx:])
 	out := b.String()
 	if !vm.jsEnsureStringSize(len(out)) || !vm.jsChargeStringWork(len(out)) {
 		return Value{Type: VTJSUndefined}
 	}
 	return NewString(out)
+}
+
+func (vm *VM) jsExpandReplaceTokens(m *regexp2.Match, source, replacement string, matchStartUTF16 int64) string {
+	var b strings.Builder
+	groups := m.Groups()
+	startByte := vm.jsRuneToByteOffset(source, m.Index)
+	lengthByte := vm.jsRuneToByteOffset(source[startByte:], m.Length)
+	endByte := startByte + lengthByte
+
+	for i := 0; i < len(replacement); i++ {
+		if replacement[i] == '$' && i+1 < len(replacement) {
+			next := replacement[i+1]
+			switch next {
+			case '$':
+				b.WriteByte('$')
+				i++
+			case '&':
+				b.WriteString(m.String())
+				i++
+			case '`':
+				b.WriteString(source[:startByte])
+				i++
+			case '\'':
+				b.WriteString(source[endByte:])
+				i++
+			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+				// Handle $n and $nn
+				num := int(next - '0')
+				i++
+				if i+1 < len(replacement) && replacement[i+1] >= '0' && replacement[i+1] <= '9' {
+					potentialNum := num*10 + int(replacement[i+1]-'0')
+					if potentialNum < len(groups) {
+						num = potentialNum
+						i++
+					}
+				}
+				if num > 0 && num < len(groups) {
+					g := groups[num]
+					if g.Capture.Length >= 0 {
+						b.WriteString(g.String())
+					}
+				} else {
+					// If not a valid group, just literal $n
+					b.WriteByte('$')
+					b.WriteByte(byte('0' + num)) // This is slightly wrong for $nn, but good enough for now
+				}
+			case '<':
+				// Named groups: $<name>
+				endIdx := strings.IndexByte(replacement[i+1:], '>')
+				if endIdx > 0 {
+					name := replacement[i+2 : i+1+endIdx]
+					g := m.GroupByName(name)
+					if g != nil && g.Capture.Length >= 0 {
+						b.WriteString(g.String())
+					}
+					i += endIdx + 1
+				} else {
+					b.WriteByte('$')
+				}
+			default:
+				b.WriteByte('$')
+			}
+		} else {
+			b.WriteByte(replacement[i])
+		}
+	}
+	return b.String()
 }
 
 // jsEnumeratorSource returns the wrapped collection for a JScript Enumerator.
@@ -7811,6 +8005,7 @@ func (vm *VM) jsConstruct(constructor Value, args []Value, newTarget Value, isSu
 			obj["__js_type"] = NewString("RegExp")
 			obj["pattern"] = NewString(pattern)
 			obj["flags"] = NewString(flags)
+			obj["lastIndex"] = NewInteger(0)
 			vm.jsObjectItems[objID] = obj
 			vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 4)
 			return Value{Type: VTJSObject, Num: objID}
@@ -8024,9 +8219,16 @@ func (vm *VM) jsIndexGet(arr Value, index Value) Value {
 		return arr.Arr.Values[adjustedIndex]
 	case VTJSObject:
 		// First try typed array index access.
-		if idxInt := int(vm.jsToNumber(index).Flt); true {
-			if v, handled := vm.jsTypedArrayIndexGet(arr, idxInt); handled {
-				return v
+		idxInt := int(vm.jsToNumber(index).Flt)
+		if v, handled := vm.jsTypedArrayIndexGet(arr, idxInt); handled {
+			return v
+		}
+		// General Array slots
+		if vm.jsObjectStringProperty(arr, "__js_type") == "Array" {
+			if slots, ok := vm.jsObjectSlots[arr.Num]; ok {
+				if idxInt >= 0 && idxInt < len(slots) {
+					return slots[idxInt]
+				}
 			}
 		}
 		key := vm.jsPropertyKeyFromValue(index)
@@ -8076,18 +8278,238 @@ func (vm *VM) jsIndexSet(arr Value, index Value, value Value) {
 	}
 }
 
-func (vm *VM) jsCompileRegExp(pattern string, flags string) (*regexp.Regexp, error) {
+func (vm *VM) jsCompileRegExp(pattern string, flags string) (*regexp2.Regexp, error) {
+	var options regexp2.RegexOptions
+
 	flagsLower := strings.ToLower(flags)
-	isUnicode := strings.Contains(flagsLower, "u")
-	transformed, err := jsparser.TransformRegExp(pattern, false, isUnicode)
-	if err != nil {
-		// Fallback to literal interpretation if syntax is not understood
-		transformed = pattern
-	}
 	if strings.Contains(flagsLower, "i") {
-		transformed = "(?i)" + transformed
+		options |= regexp2.IgnoreCase
 	}
-	return regexp.Compile(transformed)
+	if strings.Contains(flagsLower, "m") {
+		options |= regexp2.Multiline
+	}
+	if strings.Contains(flagsLower, "s") {
+		options |= regexp2.Singleline
+	}
+
+	return regexp2.Compile(pattern, options)
+}
+
+func (vm *VM) jsGetCompiledRegExp(objID int64) (*regexp2.Regexp, error) {
+	if reObj, ok := vm.jsRegExpItems[objID]; ok && reObj.compiled != nil {
+		return reObj.compiled, nil
+	}
+
+	pattern := vm.jsObjectStringProperty(Value{Type: VTJSObject, Num: objID}, "pattern")
+	flags := vm.jsObjectStringProperty(Value{Type: VTJSObject, Num: objID}, "flags")
+
+	re, err := vm.jsCompileRegExp(pattern, flags)
+	if err != nil {
+		return nil, err
+	}
+
+	vm.jsRegExpItems[objID] = &jsRegExpObject{
+		pattern:  pattern,
+		flags:    flags,
+		compiled: re,
+	}
+	return re, nil
+}
+
+func (vm *VM) jsRegExpExec(reVal Value, input string) Value {
+	objID := reVal.Num
+	re, err := vm.jsGetCompiledRegExp(objID)
+	if err != nil {
+		return NewNull()
+	}
+
+	flags := vm.jsObjectStringProperty(reVal, "flags")
+	isGlobal := strings.Contains(flags, "g")
+	isSticky := strings.Contains(flags, "y")
+
+	lastIndexVal, _ := vm.jsMemberGet(reVal, "lastIndex")
+	lastIndex := int(vm.jsToNumber(lastIndexVal).Flt)
+	if lastIndex < 0 {
+		lastIndex = 0
+	}
+
+	if !isGlobal && !isSticky {
+		lastIndex = 0
+	}
+
+	// JScript lastIndex is in UTF-16 code units.
+	// We need to convert it to rune index for regexp2.
+	runeOffset := 0
+	if lastIndex > 0 {
+		utf16Count := 0
+		for range input {
+			if utf16Count >= lastIndex {
+				break
+			}
+			r, size := utf8.DecodeRuneInString(input[runeOffset:])
+			if r >= 0x10000 {
+				utf16Count += 2
+			} else {
+				utf16Count += 1
+			}
+			runeOffset += size
+			if utf16Count > lastIndex {
+				// We landed in the middle of a surrogate pair?
+				// JScript spec says to start at the next full character or handle it.
+				// For now, let's just break.
+				break
+			}
+		}
+		if utf16Count < lastIndex {
+			// lastIndex is beyond string length
+			vm.jsMemberSet(reVal, "lastIndex", NewInteger(0))
+			return NewNull()
+		}
+	}
+
+	// regexp2.FindStringMatchStartingAt takes RUNE index, not byte offset.
+	// But we need to convert runeOffset (byte offset) to rune count.
+	runeCount := 0
+	for i := 0; i < runeOffset; {
+		_, size := utf8.DecodeRuneInString(input[i:])
+		runeCount++
+		i += size
+	}
+
+	m, err := re.FindStringMatchStartingAt(input, runeCount)
+	if err != nil || m == nil {
+		if isGlobal || isSticky {
+			vm.jsMemberSet(reVal, "lastIndex", NewInteger(0))
+		}
+		return NewNull()
+	}
+
+	// If sticky, match MUST start exactly at lastIndex (runeCount)
+	if isSticky && m.Index != runeCount {
+		vm.jsMemberSet(reVal, "lastIndex", NewInteger(0))
+		return NewNull()
+	}
+
+	// Calculate new lastIndex (UTF-16)
+	matchEndRuneIndex := m.Index + m.Length
+	newLastIndex := int64(0)
+	currentRuneIdx := 0
+	for _, r := range input {
+		if currentRuneIdx >= matchEndRuneIndex {
+			break
+		}
+		if r >= 0x10000 {
+			newLastIndex += 2
+		} else {
+			newLastIndex += 1
+		}
+		currentRuneIdx++
+	}
+
+	if isGlobal || isSticky {
+		vm.jsMemberSet(reVal, "lastIndex", NewInteger(newLastIndex))
+	}
+
+	// Create results array (JScript style)
+	resID := vm.allocJSID()
+	res := make(map[string]Value)
+	res["__js_type"] = NewString("Array")
+	// JScript index is the start of the match in UTF-16.
+	matchStartUTF16 := int64(0)
+	currentRuneIdx = 0
+	for _, r := range input {
+		if currentRuneIdx >= m.Index {
+			break
+		}
+		if r >= 0x10000 {
+			matchStartUTF16 += 2
+		} else {
+			matchStartUTF16 += 1
+		}
+		currentRuneIdx++
+	}
+	res["index"] = NewInteger(matchStartUTF16)
+	res["input"] = NewString(input)
+
+	groups := m.Groups()
+	vals := make([]Value, len(groups))
+	for i, g := range groups {
+		if g.Capture.Length < 0 {
+			vals[i] = Value{Type: VTJSUndefined}
+		} else {
+			vals[i] = NewString(g.String())
+		}
+	}
+	vm.jsObjectItems[resID] = res
+	vm.jsObjectSlots[resID] = vals
+	res["length"] = NewInteger(int64(len(vals)))
+	for i, v := range vals {
+		res[strconv.Itoa(i)] = v
+	}
+
+	// Named capture groups (ES2018)
+	var groupsObj map[string]Value
+	var groupsObjID int64
+	for i, g := range groups {
+		if g.Name != "" && g.Name != strconv.Itoa(i) {
+			if groupsObj == nil {
+				groupsObjID = vm.allocJSID()
+				groupsObj = make(map[string]Value)
+				res["groups"] = Value{Type: VTJSObject, Num: groupsObjID}
+			}
+			if g.Capture.Length < 0 {
+				groupsObj[g.Name] = Value{Type: VTJSUndefined}
+			} else {
+				groupsObj[g.Name] = NewString(g.String())
+			}
+		}
+	}
+	if groupsObj != nil {
+		vm.jsObjectItems[groupsObjID] = groupsObj
+	} else {
+		res["groups"] = Value{Type: VTJSUndefined}
+	}
+
+	return Value{Type: VTJSObject, Num: resID}
+}
+
+func (vm *VM) jsRuneToByteOffset(s string, runeIdx int) int {
+	if runeIdx <= 0 {
+		return 0
+	}
+	byteIdx := 0
+	for i := 0; i < runeIdx; i++ {
+		if byteIdx >= len(s) {
+			break
+		}
+		_, size := utf8.DecodeRuneInString(s[byteIdx:])
+		byteIdx += size
+	}
+	return byteIdx
+}
+
+func (vm *VM) jsRegExpGetFlags(re Value) string {
+	flags := vm.jsObjectStringProperty(re, "flags")
+	res := ""
+	if strings.Contains(flags, "g") {
+		res += "g"
+	}
+	if strings.Contains(flags, "i") {
+		res += "i"
+	}
+	if strings.Contains(flags, "m") {
+		res += "m"
+	}
+	if strings.Contains(flags, "s") {
+		res += "s"
+	}
+	if strings.Contains(flags, "u") {
+		res += "u"
+	}
+	if strings.Contains(flags, "y") {
+		res += "y"
+	}
+	return res
 }
 
 func jsStringLength(s string) int64 {

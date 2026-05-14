@@ -351,6 +351,7 @@ type VM struct {
 	adodbParametersCollectionItems map[int64]*adodbCommand
 	adodbFieldItems                map[int64]*adodbFieldProxy
 	regExpItems                    map[int64]*regExpNativeObject
+	jsRegExpItems                  map[int64]*jsRegExpObject
 	regExpMatchesCollectionItems   map[int64]*regExpMatchesCollection
 	regExpMatchItems               map[int64]*regExpMatch
 	regExpSubMatchesItems          map[int64]*regExpSubMatches
@@ -584,6 +585,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		adodbParametersCollectionItems: make(map[int64]*adodbCommand),
 		adodbFieldItems:                make(map[int64]*adodbFieldProxy),
 		regExpItems:                    make(map[int64]*regExpNativeObject),
+		jsRegExpItems:                  make(map[int64]*jsRegExpObject),
 		regExpMatchesCollectionItems:   make(map[int64]*regExpMatchesCollection),
 		regExpMatchItems:               make(map[int64]*regExpMatch),
 		regExpSubMatchesItems:          make(map[int64]*regExpSubMatches),

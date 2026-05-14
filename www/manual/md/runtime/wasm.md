@@ -37,7 +37,6 @@ The following objects cannot be instantiated (`Server.CreateObject`) in the WASM
 - `G3FC`
 - `G3FILES`
 - `G3FILEUPLOADER`
-- `G3HTTP`
 - `G3IMAGE`
 - `G3MAIL`
 - `G3PDF`
