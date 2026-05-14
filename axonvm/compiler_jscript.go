@@ -106,9 +106,7 @@ func (c *Compiler) compileJScriptBlock(source string) {
 		}
 	}
 
-	for i := range program.Body {
-		c.compileJScriptStatement(program.Body[i])
-	}
+	c.compileJScriptScopedStatements(program.Body)
 
 	if hasTopLexical {
 		c.emit(OpJSBlockScopeExit)
@@ -171,8 +169,8 @@ func (c *Compiler) compileJScriptEvalSnippet(source string) {
 	}
 
 	lastIdx := len(program.Body) - 1
-	for i := 0; i < lastIdx; i++ {
-		c.compileJScriptStatement(program.Body[i])
+	if lastIdx > 0 {
+		c.compileJScriptScopedStatements(program.Body[:lastIdx])
 	}
 
 	last := program.Body[lastIdx]
@@ -501,6 +499,9 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 	case *jsast.LexicalDeclaration:
 		// Handle ES6 let/const declarations with block scoping
 		c.compileJScriptLexicalDeclaration(node)
+	case *jsast.UsingDeclaration:
+		// Fallback path for top-level or non-block contexts.
+		c.compileJScriptUsingDeclaration(node, nil)
 	case *jsast.FunctionDeclaration:
 		if node.Function == nil {
 			return
@@ -563,9 +564,7 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 				c.emit(OpJSTDZRegisterConst, c.addConstant(NewString(name)))
 			}
 		}
-		for i := range node.List {
-			c.compileJScriptStatement(node.List[i])
-		}
+		c.compileJScriptScopedStatements(node.List)
 		if hasLexical {
 			c.emit(OpJSBlockScopeExit)
 		}
@@ -648,6 +647,110 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 		}
 	case *jsast.SwitchStatement:
 		c.compileJScriptSwitchStatement(node)
+	}
+}
+
+type jsUsingBinding struct {
+	name     string
+	symbolID int64
+}
+
+func jsStatementHasUsingDeclaration(stmts []jsast.Statement) bool {
+	for i := range stmts {
+		if _, ok := stmts[i].(*jsast.UsingDeclaration); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Compiler) emitJScriptDisposeBindings(bindings []jsUsingBinding) {
+	for i := len(bindings) - 1; i >= 0; i-- {
+		nameIdx := c.addConstant(NewString(bindings[i].name))
+		symbolKey := jsSymbolPropertyPrefix + strconv.FormatInt(bindings[i].symbolID, 10)
+		symbolKeyIdx := c.addConstant(NewString(symbolKey))
+		c.emit(OpJSGetName, nameIdx)
+		c.emit(OpConstant, symbolKeyIdx)
+		c.emit(OpJSCallComputedMember, 0)
+		c.emit(OpJSPop)
+	}
+}
+
+func (c *Compiler) compileJScriptScopedStatements(stmts []jsast.Statement) {
+	if !jsStatementHasUsingDeclaration(stmts) {
+		for i := range stmts {
+			c.compileJScriptStatement(stmts[i])
+		}
+		return
+	}
+
+	usingBindings := make([]jsUsingBinding, 0, 4)
+	c.jsTryDepth++
+	tryPos := c.emit(OpJSTryEnter, 0)
+	for i := range stmts {
+		if usingDecl, ok := stmts[i].(*jsast.UsingDeclaration); ok {
+			c.compileJScriptUsingDeclaration(usingDecl, &usingBindings)
+			continue
+		}
+		c.compileJScriptStatement(stmts[i])
+	}
+	c.emit(OpJSTryLeave)
+	c.emitJScriptDisposeBindings(usingBindings)
+	jumpEnd := c.emitJSJump(OpJSJump)
+
+	catchStart := len(c.bytecode)
+	c.patchJSJumpTo(tryPos+1, catchStart)
+
+	errName := fmt.Sprintf("__js_using_err_%d", c.tempCounter)
+	c.tempCounter++
+	errNameIdx := c.addConstant(NewString(errName))
+	c.emit(OpJSDeclareName, errNameIdx)
+	c.emit(OpJSLoadCatchError)
+	c.emit(OpJSSetName, errNameIdx)
+	c.emitJScriptDisposeBindings(usingBindings)
+	c.emit(OpJSGetName, errNameIdx)
+	c.emit(OpJSThrow)
+
+	c.jsTryDepth--
+	c.patchJSJump(jumpEnd)
+}
+
+func (c *Compiler) compileJScriptUsingDeclaration(node *jsast.UsingDeclaration, bindings *[]jsUsingBinding) {
+	symbolID := int64(jsWellKnownSymbolDispose)
+	if node.IsAsync {
+		symbolID = int64(jsWellKnownSymbolAsyncDispose)
+	}
+
+	for _, binding := range node.List {
+		if binding.Initializer != nil {
+			c.compileJScriptExpression(binding.Initializer)
+			t := jsTypeUnknown
+			if c.jsInferredType(binding.Initializer) == jsTypeInteger {
+				t = jsTypeInteger
+			}
+			c.compileJScriptDestructuring(binding.Target, false, true, false)
+			if t == jsTypeInteger {
+				if id, ok := binding.Target.(*jsast.Identifier); ok {
+					c.jsSetLocalType(id.Name.String(), jsTypeInteger)
+				}
+			}
+		} else {
+			if id, ok := binding.Target.(*jsast.Identifier); ok {
+				if c.jsLocalEnabled {
+					c.jsAddLocalBarrier(id.Name.String())
+				}
+				nameIdx := c.addConstant(NewString(id.Name.String()))
+				c.emit(OpJSLetDeclare, nameIdx)
+			}
+		}
+
+		if bindings != nil {
+			names := make([]string, 0, 2)
+			jsExtractBindingNames(binding.Target, &names)
+			for j := range names {
+				*bindings = append(*bindings, jsUsingBinding{name: names[j], symbolID: symbolID})
+			}
+		}
 	}
 }
 
@@ -2792,6 +2895,12 @@ func jsStatementContainsNestedFunction(stmt jsast.Statement) bool {
 		if node.Finally != nil && jsStatementContainsNestedFunction(node.Finally) {
 			return true
 		}
+	case *jsast.UsingDeclaration:
+		for _, b := range node.List {
+			if b != nil && jsExpressionContainsNestedFunction(b.Initializer) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -2948,6 +3057,12 @@ func jsStatementCapturesLoopNames(stmt jsast.Statement, names map[string]struct{
 			}
 		}
 	case *jsast.LexicalDeclaration:
+		for _, b := range node.List {
+			if b != nil && jsExpressionCapturesLoopNames(b.Initializer, names) {
+				return true
+			}
+		}
+	case *jsast.UsingDeclaration:
 		for _, b := range node.List {
 			if b != nil && jsExpressionCapturesLoopNames(b.Initializer, names) {
 				return true
@@ -3229,6 +3344,12 @@ func jsStatementReferencesLoopNames(stmt jsast.Statement, names map[string]struc
 			}
 		}
 	case *jsast.LexicalDeclaration:
+		for _, b := range node.List {
+			if b != nil && jsExpressionReferencesLoopNames(b.Initializer, names) {
+				return true
+			}
+		}
+	case *jsast.UsingDeclaration:
 		for _, b := range node.List {
 			if b != nil && jsExpressionReferencesLoopNames(b.Initializer, names) {
 				return true
@@ -3666,6 +3787,10 @@ func jsGetBlockLexicalNames(stmts []jsast.Statement) ([]string, []string) {
 				} else {
 					jsExtractBindingNames(binding.Target, &letNames)
 				}
+			}
+		} else if decl, ok := s.(*jsast.UsingDeclaration); ok {
+			for _, binding := range decl.List {
+				jsExtractBindingNames(binding.Target, &letNames)
 			}
 		} else if decl, ok := s.(*jsast.ClassDeclaration); ok {
 			if decl.Class != nil && decl.Class.Name != nil {

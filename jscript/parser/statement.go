@@ -73,7 +73,13 @@ func (self *_parser) parseStatement() ast.Statement {
 		self.insertSemicolon = true
 	case token.CONST:
 		return self.parseLexicalDeclaration(self.token)
+	case token.USING:
+		return self.parseUsingDeclaration(false)
 	case token.ASYNC:
+		if self.peek() == token.USING {
+			self.next() // async
+			return self.parseUsingDeclaration(true)
+		}
 		if f := self.parseMaybeAsyncFunction(true); f != nil {
 			return &ast.FunctionDeclaration{
 				Function: f,
@@ -1017,6 +1023,30 @@ func (self *_parser) parseLexicalDeclaration(tok token.Token) *ast.LexicalDeclar
 		Idx:   idx,
 		Token: tok,
 		List:  list,
+	}
+}
+
+func (self *_parser) parseUsingDeclaration(isAsync bool) *ast.UsingDeclaration {
+	idx := self.idx
+	self.next() // consume using
+
+	if !self.scope.allowLet {
+		self.error(idx, "Using declaration cannot appear in a single-statement context")
+	}
+
+	list := self.parseVariableDeclarationList()
+	// All using declarations must have an initializer
+	for _, item := range list {
+		if item.Initializer == nil {
+			self.error(item.Idx1(), "Missing initializer in using declaration")
+		}
+	}
+	self.semicolon()
+
+	return &ast.UsingDeclaration{
+		Idx:     idx,
+		IsAsync: isAsync,
+		List:    list,
 	}
 }
 

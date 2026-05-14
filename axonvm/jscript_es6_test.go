@@ -2088,3 +2088,97 @@ func TestJScriptPrivateClassFields(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, out)
 	}
 }
+
+func TestJScriptUsingDisposesOnScopeExit(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var events = [];
+		var resource = {
+			[Symbol.dispose]: function() {
+				events.push("dispose");
+			}
+		};
+		{
+			using r = resource;
+			events.push("body");
+		}
+		Response.Write(events.join(","));
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "body,dispose" {
+		t.Errorf("expected 'body,dispose', got %q", out)
+	}
+}
+
+func TestJScriptUsingDisposesOnThrow(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var resource = {
+			[Symbol.dispose]: function() {
+				Response.Write("D");
+			}
+		};
+		try {
+			{
+				using r = resource;
+				throw "boom";
+			}
+		} catch (e) {
+			Response.Write("C");
+		}
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "DC" {
+		t.Errorf("expected 'DC', got %q", out)
+	}
+}
+
+func TestJScriptUsingDisposesInReverseOrder(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var aRes = { [Symbol.dispose]: function() { Response.Write("A"); } };
+		var bRes = { [Symbol.dispose]: function() { Response.Write("B"); } };
+		{
+			using a = aRes;
+			using b = bRes;
+		}
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "BA" {
+		t.Errorf("expected 'BA', got %q", out)
+	}
+}
+
+func TestJScriptAsyncUsingCallsSymbolAsyncDispose(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var resource = {
+			[Symbol.asyncDispose]: function() {
+				Response.Write("A");
+			}
+		};
+		{
+			async using r = resource;
+			Response.Write("I");
+		}
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "IA" {
+		t.Errorf("expected 'IA', got %q", out)
+	}
+}
+
+func TestJScriptUsingRequiresInitializer(t *testing.T) {
+	_, err := runJScript2(t, jscriptSrc(`
+		{
+			using r;
+		}
+	`))
+	if err == nil {
+		t.Fatal("expected compile error for using declaration without initializer")
+	}
+}

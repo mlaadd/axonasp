@@ -475,6 +475,12 @@ type (
 		List  []*Binding
 	}
 
+	UsingDeclaration struct {
+		Idx     file.Idx
+		IsAsync bool
+		List    []*Binding
+	}
+
 	WhileStatement struct {
 		While file.Idx
 		Test  Expression
@@ -547,6 +553,7 @@ func (*VariableStatement) _statementNode()   {}
 func (*WhileStatement) _statementNode()      {}
 func (*WithStatement) _statementNode()       {}
 func (*LexicalDeclaration) _statementNode()  {}
+func (*UsingDeclaration) _statementNode()    {}
 func (*FunctionDeclaration) _statementNode() {}
 func (*ClassDeclaration) _statementNode()    {}
 func (*ImportDeclaration) _statementNode()   {}
@@ -738,6 +745,7 @@ func (self *VariableStatement) Idx0() file.Idx   { return self.Var }
 func (self *WhileStatement) Idx0() file.Idx      { return self.While }
 func (self *WithStatement) Idx0() file.Idx       { return self.With }
 func (self *LexicalDeclaration) Idx0() file.Idx  { return self.Idx }
+func (self *UsingDeclaration) Idx0() file.Idx    { return self.Idx }
 func (self *FunctionDeclaration) Idx0() file.Idx { return self.Function.Idx0() }
 func (self *ClassDeclaration) Idx0() file.Idx    { return self.Class.Idx0() }
 func (self *ImportDeclaration) Idx0() file.Idx   { return self.Import }
@@ -856,6 +864,7 @@ func (self *VariableStatement) Idx1() file.Idx   { return self.List[len(self.Lis
 func (self *WhileStatement) Idx1() file.Idx      { return self.Body.Idx1() }
 func (self *WithStatement) Idx1() file.Idx       { return self.Body.Idx1() }
 func (self *LexicalDeclaration) Idx1() file.Idx  { return self.List[len(self.List)-1].Idx1() }
+func (self *UsingDeclaration) Idx1() file.Idx    { return self.List[len(self.List)-1].Idx1() }
 func (self *FunctionDeclaration) Idx1() file.Idx { return self.Function.Idx1() }
 func (self *ClassDeclaration) Idx1() file.Idx    { return self.Class.Idx1() }
 func (self *ImportDeclaration) Idx1() file.Idx {

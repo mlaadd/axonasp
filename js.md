@@ -24,30 +24,6 @@ This document serves as a high-precision checklist for implementing ECMAScript 6
 Here is the comprehensive, phased prompt you can provide to your coding agent. It is strictly organized from the easiest, lo
 st-risk library additions to the most complex architectural and AST changes. It incorporates checkpoints for testing to ensure the VM does not break.
 
----
-
-### Phase 4: AST and Compiler Overhauls (High Risk)
-
-These features require modifications to `compiler_jscript.go` (Parser/Lexer) and `opcode.go`.
-
-**Subphase 4.1: Private Class Fields (`#`)**
-
-* **Target:** Class Fields and Private properties.
-* **Implementation Tips:**
-* **Lexer/Parser:** Update the AST to recognize the `#` prefix inside class bodies.
-* **Compiler:** Emit a new hidden initialization sequence during `OpJSNewClass`.
-* **VM (`vm_jscript.go`):** To maintain zero-allocation speed, do NOT use a separate dictionary for private fields. Instead, mangle the property name internally (e.g., map `#name` to a hidden string key like `\x00__priv_name`) so `OpJSMemberGet` can never accidentally access it via standard bracket notation `obj["#name"]`. Check lexical scope at compile-time to ensure validity.
-
-
-
-**Subphase 4.2: Explicit Resource Management (`using`)**
-
-* **Target:** `using` declarations and `Symbol.dispose`.
-* **Implementation Tips:**
-* **Parser:** Add support for `using varName = expr;`.
-* **Compiler:** This is syntactic sugar for a `try...finally` block. Wrap the current lexical scope in an implicit `OpJSTryEnter`.
-* **VM:** In the implicit `finally` block, emit opcodes to fetch `varName[Symbol.dispose]` and execute it (`OpJSCallMember`). Handle multiple `using` declarations by pushing them onto a stack and disposing in reverse order.
-
 
 --
 
@@ -55,15 +31,10 @@ These features require modifications to `compiler_jscript.go` (Parser/Lexer) and
 
 These are massive undertakings. Do not start these unless Phase 1-4 are 100% stable.
 
-**Subphase 5.1: RegExp Engine Replacement (Optional/Deferred)**
+**Subphase 5.1: RegExp Engine Replacement**
 
 * **Target:** Named Capture Groups, Lookbehind, Lookahead.
 * **Implementation Tips:** Go's native `regexp` package guarantees linear time (O(n)) to prevent ReDoS attacks, which means it explicitly omits Lookaround and Backreferences. To support full JS RegExp, we would need to integrate a PCRE-compatible engine (like `regexp2`). Note: This breaks our strict "no external engines" rule, so advise the user before proceeding.
-
-**Subphase 5.2: Temporal API**
-
-* **Target:** The `Temporal` global object.
-* **Implementation Tips:** This is a massive API. Implement it as a completely isolated native Go file (e.g., `lib_temporal.go`) that registers itself to the JScript global context. Avoid coupling its heavy date-math logic into the core VM loop.
 
 ---
 

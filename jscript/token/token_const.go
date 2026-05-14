@@ -126,6 +126,7 @@ const (
 	DEBUGGER
 
 	INSTANCEOF
+	USING
 
 	ESCAPED_RESERVED_WORD
 	// Non-reserved keywords below
@@ -242,6 +243,7 @@ var token2string = [...]string{
 	CONTINUE:                    "continue",
 	DEBUGGER:                    "debugger",
 	INSTANCEOF:                  "instanceof",
+	USING:                       "using",
 }
 
 var keywordTable = map[string]_keyword{
@@ -325,6 +327,9 @@ var keywordTable = map[string]_keyword{
 	},
 	"instanceof": {
 		token: INSTANCEOF,
+	},
+	"using": {
+		token: USING,
 	},
 	"const": {
 		token: CONST,

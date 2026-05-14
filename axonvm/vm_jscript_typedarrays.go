@@ -55,11 +55,13 @@ func jsNumberToInt32(n float64) int32 {
 // ---------------------------------------------------------------------------
 
 const (
-	jsWellKnownSymbolIterator    int64 = -1
-	jsWellKnownSymbolToStringTag int64 = -2
-	jsWellKnownSymbolSpecies     int64 = -3
-	jsWellKnownSymbolHasInstance int64 = -4
-	jsWellKnownSymbolToPrimitive int64 = -5
+	jsWellKnownSymbolIterator     int64 = -1
+	jsWellKnownSymbolToStringTag  int64 = -2
+	jsWellKnownSymbolSpecies      int64 = -3
+	jsWellKnownSymbolHasInstance  int64 = -4
+	jsWellKnownSymbolToPrimitive  int64 = -5
+	jsWellKnownSymbolDispose      int64 = -6
+	jsWellKnownSymbolAsyncDispose int64 = -7
 )
 
 // jsWellKnownSymbolValue returns a pre-constructed Value for a well-known symbol ID.

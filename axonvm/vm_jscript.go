@@ -1672,10 +1672,12 @@ func (vm *VM) jsCreateSymbolObject() Value {
 	obj["species"] = jsWellKnownSymbolValue(jsWellKnownSymbolSpecies, "Symbol.species")
 	obj["hasInstance"] = jsWellKnownSymbolValue(jsWellKnownSymbolHasInstance, "Symbol.hasInstance")
 	obj["toPrimitive"] = jsWellKnownSymbolValue(jsWellKnownSymbolToPrimitive, "Symbol.toPrimitive")
+	obj["dispose"] = jsWellKnownSymbolValue(jsWellKnownSymbolDispose, "Symbol.dispose")
+	obj["asyncDispose"] = jsWellKnownSymbolValue(jsWellKnownSymbolAsyncDispose, "Symbol.asyncDispose")
 	vm.jsObjectItems[objID] = obj
 	props := make(map[string]jsPropertyDescriptor, 6)
 	// Make well-known symbols read-only, non-enumerable, non-configurable
-	for _, name := range []string{"iterator", "toStringTag", "species", "hasInstance", "toPrimitive"} {
+	for _, name := range []string{"iterator", "toStringTag", "species", "hasInstance", "toPrimitive", "dispose", "asyncDispose"} {
 		props[name] = jsPropertyDescriptor{
 			Value: obj[name], HasValue: true,
 			Enumerable: false, Configurable: false, Writable: false,
