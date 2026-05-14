@@ -386,11 +386,13 @@ type VM struct {
 	jsIntlNumberFormatItems        map[int64]*jsIntlNumberFormatObject
 	jsPromiseItems                 map[int64]*jsPromiseObject
 	jsGeneratorItems               map[int64]*jsGeneratorObject
+	jsProxyItems                   map[int64]*jsProxyObject
 	jsMicrotaskQueue               []func()
 	jsProcessingMicrotasks         bool
 	jsSymbolGlobalRegistry         map[string]Value // Symbol.for global registry: description -> Symbol Value
 	jsRegisteredSymbolIDs          map[int64]struct{}
 	jsNextSymbolID                 int64
+	jsRootEnvID                    int64                 // ID of the JScript root environment frame
 	jsStrictMode                   bool                  // Current strict mode state
 	jsFunctionStrictModes          map[int64]bool        // Maps function IDs to strict mode status
 	jsBlockScopes                  []map[string]Value    // Stack of block-scoped (let/const) variable values
@@ -620,6 +622,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		jsIntlNumberFormatItems:        make(map[int64]*jsIntlNumberFormatObject),
 		jsPromiseItems:                 make(map[int64]*jsPromiseObject),
 		jsGeneratorItems:               make(map[int64]*jsGeneratorObject),
+		jsProxyItems:                   make(map[int64]*jsProxyObject),
 		jsSymbolGlobalRegistry:         make(map[string]Value),
 		jsRegisteredSymbolIDs:          make(map[int64]struct{}),
 		jsNextSymbolID:                 1,
@@ -1391,6 +1394,8 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.jsArrayBuffers = child.jsArrayBuffers
 	vm.jsSymbolGlobalRegistry = child.jsSymbolGlobalRegistry
 	vm.jsNextSymbolID = child.jsNextSymbolID
+	vm.jsProxyItems = child.jsProxyItems
+	vm.jsRootEnvID = child.jsRootEnvID
 }
 
 // syncExecuteLocalState propagates stack and frame state back after Execute/Eval.
@@ -3308,7 +3313,8 @@ aspExecLoop:
 		case OpJSInstanceOf:
 			right := vm.pop()
 			left := vm.pop()
-			vm.push(NewBool(left.Type == VTJSObject && right.Type == VTJSFunction))
+			isObject := left.Type == VTJSObject || left.Type == VTJSFunction || left.Type == VTJSProxy || left.Type == VTJSPromise || left.Type == VTJSGenerator || left.Type == VTNativeObject
+			vm.push(NewBool(isObject && (right.Type == VTJSFunction || right.Type == VTJSObject)))
 
 		case OpJSIn:
 			right := vm.pop()

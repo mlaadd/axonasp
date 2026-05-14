@@ -2420,3 +2420,51 @@ func TestJScriptUsingRequiresInitializer(t *testing.T) {
 		t.Fatal("expected compile error for using declaration without initializer")
 	}
 }
+
+func TestJScriptProxyInit(t *testing.T) {
+	tests := []struct {
+		code     string
+		expected string
+	}{
+		{`typeof Proxy`, "function"},
+		{`typeof Reflect`, "object"},
+		{`new Proxy({}, {}) instanceof Object`, "True"},
+		{`(function(){ var p = new Proxy({}, {}); return typeof p; })()`, "object"},
+		{`typeof new Proxy(function(){}, {})`, "function"},
+	}
+
+	for _, tt := range tests {
+		out, err := runJScript2(t, jscriptSrc(`Response.Write(`+tt.code+`);`))
+		if err != nil {
+			t.Errorf("code %q failed: %v", tt.code, err)
+			continue
+		}
+		if out != tt.expected {
+			t.Errorf("code %q: expected %q, got %q", tt.code, tt.expected, out)
+		}
+	}
+}
+
+func TestJScriptProxyGetSet(t *testing.T) {
+	tests := []struct {
+		code     string
+		expected string
+	}{
+		{`(function(){ var p = new Proxy({a:1}, {get: function(t, k){ return t[k]*2; }}); return p.a; })()`, "2"},
+		{`(function(){ var p = new Proxy({a:1}, {get: function(t, k){ return "hi"; }}); return p.b; })()`, "hi"},
+		{`(function(){ var p = new Proxy({a:1}, {}); return p.a; })()`, "1"},
+		{`(function(){ var t={x:1}; var p=new Proxy(t, {set: function(t,k,v){ t[k]=v+1; return true; }}); p.x=10; return t.x; })()`, "11"},
+		{`(function(){ "use strict"; var p=new Proxy({}, {set: function(){ return false; }}); try { p.a=1; return "fail"; } catch(e) { return "ok"; } })()`, "ok"},
+	}
+
+	for _, tt := range tests {
+		out, err := runJScript2(t, jscriptSrc(`Response.Write(`+tt.code+`);`))
+		if err != nil {
+			t.Errorf("code %q failed: %v", tt.code, err)
+			continue
+		}
+		if out != tt.expected {
+			t.Errorf("code %q: expected %q, got %q", tt.code, tt.expected, out)
+		}
+	}
+}

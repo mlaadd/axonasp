@@ -165,6 +165,12 @@ type jsForOfEnumerator struct {
 	index  int
 }
 
+type jsProxyObject struct {
+	Target  Value
+	Handler Value
+	Revoked bool
+}
+
 type jsPromiseState uint8
 
 const (
@@ -1618,10 +1624,11 @@ func (vm *VM) jsJSONStringifyApplyToJSON(v Value) Value {
 }
 
 func (vm *VM) ensureJSRootEnv() {
-	if vm.jsActiveEnvID != 0 {
+	if vm.jsRootEnvID != 0 {
 		return
 	}
 	rootID := vm.allocJSID()
+	vm.jsRootEnvID = rootID
 	bindings := make(map[string]Value, 40)
 	bindings["Intl"] = vm.jsCreateIntlObject()
 	bindings["Math"] = vm.jsCreateMathObject()
@@ -1633,6 +1640,8 @@ func (vm *VM) ensureJSRootEnv() {
 	bindings["Array"] = vm.jsCreateIntrinsicObject("", "Array")
 	bindings["Object"] = vm.jsCreateIntrinsicObject("", "Object")
 	bindings["JSON"] = vm.jsCreateIntrinsicObject("", "JSON")
+	bindings["Proxy"] = vm.jsCreateIntrinsicFunction("Proxy", "Proxy")
+	bindings["Reflect"] = vm.jsCreateReflectObject()
 	bindings["Promise"] = vm.jsCreatePromiseObject()
 	bindings["Number"] = vm.jsCreateNumberObject()
 	bindings["Symbol"] = vm.jsCreateSymbolObject()
@@ -1671,7 +1680,9 @@ func (vm *VM) ensureJSRootEnv() {
 		bindings["eval"] = Value{Type: VTBuiltin, Num: int64(evalIdx)}
 	}
 	vm.jsEnvItems[rootID] = &jsEnvFrame{parentID: 0, bindings: bindings}
-	vm.jsActiveEnvID = rootID
+	if vm.jsActiveEnvID == 0 {
+		vm.jsActiveEnvID = rootID
+	}
 	vm.jsThisValue = Value{Type: VTJSUndefined}
 	vm.jsPopulatePrototypes(bindings)
 }
@@ -1691,6 +1702,16 @@ func (vm *VM) jsCreateMathObject() Value {
 	obj["SQRT1_2"] = NewDouble(1 / math.Sqrt2)
 	vm.jsObjectItems[objID] = obj
 	vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 10)
+	return Value{Type: VTJSObject, Num: objID}
+}
+
+// jsCreateReflectObject allocates the global Reflect namespace object.
+func (vm *VM) jsCreateReflectObject() Value {
+	objID := vm.allocJSID()
+	obj := make(map[string]Value, 1)
+	obj["__js_type"] = NewString("Reflect")
+	vm.jsObjectItems[objID] = obj
+	vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 8)
 	return Value{Type: VTJSObject, Num: objID}
 }
 
@@ -2138,6 +2159,13 @@ func (vm *VM) jsGetName(name string) Value {
 		}
 		envID = env.parentID
 	}
+	if vm.jsRootEnvID != 0 {
+		if root, ok := vm.jsEnvItems[vm.jsRootEnvID]; ok {
+			if val, ok := root.bindings[name]; ok {
+				return val
+			}
+		}
+	}
 	if idx, ok := vm.lookupJSGlobalIndex(name); ok {
 		return vm.Globals[idx]
 	}
@@ -2339,7 +2367,18 @@ func (vm *VM) jsTypeOf(v Value) string {
 		return "symbol"
 	case VTJSFunction:
 		return "function"
-	case VTJSObject, VTNativeObject, VTObject, VTArray:
+	case VTJSProxy:
+		if proxy, ok := vm.jsProxyItems[v.Num]; ok && !proxy.Revoked {
+			targetType := proxy.Target.Type
+			if targetType == VTJSFunction || targetType == VTBuiltin || targetType == VTUserSub {
+				return "function"
+			}
+			if targetType == VTJSProxy {
+				return vm.jsTypeOf(proxy.Target)
+			}
+		}
+		return "object"
+	case VTJSObject, VTNativeObject, VTObject, VTArray, VTJSPromise, VTJSGenerator:
 		return "object"
 	default:
 		return "undefined"
@@ -3585,12 +3624,71 @@ func (vm *VM) jsReturn(retVal Value) {
 	vm.push(retVal)
 }
 
+func (vm *VM) jsPropertyKeyToValue(key string) Value {
+	if strings.HasPrefix(key, jsSymbolPropertyPrefix) {
+		idStr := strings.TrimPrefix(key, jsSymbolPropertyPrefix)
+		if id, err := strconv.ParseInt(idStr, 10, 64); err == nil {
+			return Value{Type: VTSymbol, Num: id}
+		}
+	}
+	return NewString(key)
+}
+
+func (vm *VM) jsProxyGet(proxy Value, member string, receiver Value) (Value, bool) {
+	pObj, ok := vm.jsProxyItems[proxy.Num]
+	if !ok || pObj.Revoked {
+		vm.jsThrowTypeError("Cannot perform 'get' on a proxy that has been revoked")
+		return Value{Type: VTJSUndefined}, false
+	}
+
+	// 1. Get the 'get' trap from handler
+	trap, _ := vm.jsMemberGet(pObj.Handler, "get")
+
+	if trap.Type == VTJSUndefined || trap.Type == VTNull {
+		// 2. Forward to target
+		return vm.jsMemberGet(pObj.Target, member)
+	}
+
+	// 3. Invoke the trap: trap(target, property, receiver)
+	args := []Value{pObj.Target, vm.jsPropertyKeyToValue(member), receiver}
+	result := vm.jsCall(trap, pObj.Handler, args)
+	return result, false
+}
+
+func (vm *VM) jsProxySet(proxy Value, member string, val Value, receiver Value) {
+	pObj, ok := vm.jsProxyItems[proxy.Num]
+	if !ok || pObj.Revoked {
+		vm.jsThrowTypeError("Cannot perform 'set' on a proxy that has been revoked")
+		return
+	}
+
+	// 1. Get the 'set' trap
+	trap, _ := vm.jsMemberGet(pObj.Handler, "set")
+
+	if trap.Type == VTJSUndefined || trap.Type == VTNull {
+		// 2. Forward to target
+		vm.jsMemberSet(pObj.Target, member, val)
+		return
+	}
+
+	// 3. Invoke the trap: trap(target, property, value, receiver)
+	args := []Value{pObj.Target, vm.jsPropertyKeyToValue(member), val, receiver}
+	result := vm.jsCall(trap, pObj.Handler, args)
+
+	// 4. Check return value in strict mode
+	if vm.jsStrictMode && !vm.jsTruthy(result) {
+		vm.jsThrowTypeError(fmt.Sprintf("'set' on proxy: trap returned falsy for property '%s'", member))
+	}
+}
+
 func (vm *VM) jsMemberGet(target Value, member string) (Value, bool) {
 	if target.Type == VTJSUninitialized {
 		vm.jsThrowReferenceError("Must call super constructor in derived class before accessing 'this'")
 		return Value{Type: VTJSUndefined}, false
 	}
 	switch target.Type {
+	case VTJSProxy:
+		return vm.jsProxyGet(target, member, target)
 	case VTNativeObject:
 		return vm.dispatchMemberGet(target, member), false
 	case VTString:
@@ -6786,6 +6884,9 @@ func (vm *VM) jsMemberSet(target Value, member string, val Value) {
 		return
 	}
 	switch target.Type {
+	case VTJSProxy:
+		vm.jsProxySet(target, member, val, target)
+		return
 	case VTNativeObject:
 		vm.dispatchMemberSet(target.Num, member, val)
 	case VTJSObject, VTJSFunction:
@@ -7248,6 +7349,9 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 		// Native JScript functions (without closures)
 		ctorName := vm.jsObjectStringProperty(callee, "__js_ctor")
 		switch ctorName {
+		case "Proxy":
+			vm.jsThrowTypeError("Constructor Proxy requires 'new'")
+			return Value{Type: VTJSUndefined}
 		case "ArrayValues":
 			return vm.jsCreateArrayIterator(thisVal, 0)
 		case "ArrayKeys":
@@ -7347,6 +7451,9 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			if len(args) > 0 {
 				return vm.jsNew(callee, args)
 			}
+			return Value{Type: VTJSUndefined}
+		case "Proxy":
+			vm.jsThrowTypeError("Constructor Proxy requires 'new'")
 			return Value{Type: VTJSUndefined}
 		case "Set", "Map", "WeakMap", "WeakSet":
 			vm.jsThrowTypeError(fmt.Sprintf("Constructor %s requires 'new'", ctorName))
@@ -7911,39 +8018,66 @@ func (vm *VM) jsNew(constructor Value, args []Value) Value {
 func (vm *VM) jsConstruct(constructor Value, args []Value, newTarget Value, isSuper bool) Value {
 	if constructor.Type == VTJSFunction {
 		closure := vm.jsFunctionItems[constructor.Num]
-		if closure != nil && closure.isDerived {
-			// Derived class constructor: 'this' is uninitialized until super() is called.
-			if vm.jsBeginFunctionCall(constructor, Value{Type: VTJSUninitialized}, args, Value{Type: VTJSUninitialized}, true, newTarget, isSuper) {
+		if closure != nil {
+			if closure.isDerived {
+				// Derived class constructor: 'this' is uninitialized until super() is called.
+				if vm.jsBeginFunctionCall(constructor, Value{Type: VTJSUninitialized}, args, Value{Type: VTJSUninitialized}, true, newTarget, isSuper) {
+					return Value{Type: VTJSUndefined}
+				}
+				return Value{Type: VTJSUninitialized}
+			}
+
+			instanceID := vm.allocJSID()
+			vm.jsObjectItems[instanceID] = make(map[string]Value, 8)
+			vm.jsPropertyItems[instanceID] = make(map[string]jsPropertyDescriptor, 8)
+			instance := Value{Type: VTJSObject, Num: instanceID}
+			// Use prototype from newTarget (which might be the subclass if this is a base constructor call via super())
+			proto, deferred := vm.jsMemberGet(newTarget, "prototype")
+			if !deferred && proto.Type == VTJSObject {
+				vm.jsObjectItems[instanceID]["__js_proto"] = proto
+			} else {
+				fallback := vm.jsGetIntrinsicPrototype("Object")
+				if fallback.Type == VTJSObject {
+					vm.jsObjectItems[instanceID]["__js_proto"] = fallback
+				}
+			}
+			if vm.jsBeginFunctionCall(constructor, instance, args, instance, true, newTarget, isSuper) {
 				return Value{Type: VTJSUndefined}
 			}
-			return Value{Type: VTJSUninitialized}
+			return instance
 		}
-
-		instanceID := vm.allocJSID()
-		vm.jsObjectItems[instanceID] = make(map[string]Value, 8)
-		vm.jsPropertyItems[instanceID] = make(map[string]jsPropertyDescriptor, 8)
-		instance := Value{Type: VTJSObject, Num: instanceID}
-		// Use prototype from newTarget (which might be the subclass if this is a base constructor call via super())
-		proto, deferred := vm.jsMemberGet(newTarget, "prototype")
-		if !deferred && proto.Type == VTJSObject {
-			vm.jsObjectItems[instanceID]["__js_proto"] = proto
-		} else {
-			fallback := vm.jsGetIntrinsicPrototype("Object")
-			if fallback.Type == VTJSObject {
-				vm.jsObjectItems[instanceID]["__js_proto"] = fallback
-			}
-		}
-		if vm.jsBeginFunctionCall(constructor, instance, args, instance, true, newTarget, isSuper) {
-			return Value{Type: VTJSUndefined}
-		}
-		return instance
 	}
-	if constructor.Type == VTJSObject {
+
+	if constructor.Type == VTJSObject || constructor.Type == VTJSFunction {
 		ctorName := vm.jsObjectStringProperty(constructor, "__js_ctor")
 		switch ctorName {
 		case "Symbol":
 			vm.jsThrowTypeError("Symbol is not a constructor")
 			return Value{Type: VTJSUndefined}
+		case "Proxy":
+			if len(args) < 2 {
+				vm.jsThrowTypeError("Constructor Proxy requires 2 arguments: target and handler")
+				return Value{Type: VTJSUndefined}
+			}
+			target := args[0]
+			handler := args[1]
+			isObject := func(v Value) bool {
+				switch v.Type {
+				case VTJSObject, VTJSFunction, VTJSPromise, VTJSGenerator, VTJSProxy, VTNativeObject, VTArray, VTObject:
+					return true
+				}
+				return false
+			}
+			if !isObject(target) || !isObject(handler) {
+				vm.jsThrowTypeError("Proxy target and handler must be objects")
+				return Value{Type: VTJSUndefined}
+			}
+			proxyID := vm.allocJSID()
+			vm.jsProxyItems[proxyID] = &jsProxyObject{
+				Target:  target,
+				Handler: handler,
+			}
+			return Value{Type: VTJSProxy, Num: proxyID}
 		case "Date":
 			if len(args) == 0 {
 				return NewDate(time.Now().In(builtinCurrentLocation(vm)))
@@ -8204,6 +8338,10 @@ func (vm *VM) jsIndexGet(arr Value, index Value) Value {
 		return val
 	}
 	switch arr.Type {
+	case VTJSProxy:
+		key := vm.jsPropertyKeyFromValue(index)
+		val, _ := vm.jsMemberGet(arr, key)
+		return val
 	case VTArray:
 		if arr.Arr == nil {
 			return Value{Type: VTJSUndefined}
@@ -8258,6 +8396,9 @@ func (vm *VM) jsIndexGet(arr Value, index Value) Value {
 // jsIndexSet implements array[index] = value assignment.
 func (vm *VM) jsIndexSet(arr Value, index Value, value Value) {
 	switch arr.Type {
+	case VTJSProxy:
+		key := vm.jsPropertyKeyFromValue(index)
+		vm.jsMemberSet(arr, key, value)
 	case VTArray:
 		if arr.Arr == nil {
 			return

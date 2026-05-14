@@ -1990,4 +1990,55 @@ Response.Write("Application Version: " + version);
 </script>
 ```
 
+---
+
+## Metaprogramming (Proxy and Reflect)
+
+### Proxy
+
+The `Proxy` object enables you to create a proxy for another object, which can intercept and redefine fundamental operations for that object.
+
+#### Syntax
+
+```javascript
+var proxy = new Proxy(target, handler);
+```
+
+#### Remarks
+
+- **Target:** The object to wrap (can be any object, including functions).
+- **Handler:** An object whose properties are functions which define the behavior of the proxy when an operation is performed on it.
+- Calling `Proxy` without `new` throws a `TypeError`.
+- Both `target` and `handler` must be objects; otherwise, a `TypeError` is thrown.
+- **Supported Traps:**
+    - `get(target, property, receiver)`: Intercepts property reads.
+    - `set(target, property, value, receiver)`: Intercepts property writes. Must return `true` to indicate success. In **Strict Mode**, returning `false` (or any falsy value) throws a `TypeError`.
+- **Support Note:** AxonASP now supports `get` and `set` traps for member access (`obj.prop`) and indexed access (`obj[key]`). Interception for other operations (like `apply`, `construct`, `has`, `deleteProperty`) will be implemented in subsequent phases.
+
+### Reflect
+
+`Reflect` is a built-in object that provides methods for interceptable JScript operations.
+
+#### Remarks
+
+- `Reflect` is a namespace object, not a constructor. You cannot use `new Reflect()`.
+- **Support Note:** AxonASP currently provides the `Reflect` global namespace. Static methods (like `Reflect.get`, `Reflect.set`) will be implemented in subsequent phases.
+
+### Code Example
+
+```javascript
+<script runat="server" language="JScript">
+// 1. Basic Proxy creation
+var target = { a: 1 };
+var handler = {};
+var proxy = new Proxy(target, handler);
+
+Response.Write(typeof proxy); // Output: object
+Response.Write(proxy instanceof Object); // Output: True
+
+// 2. Reflect namespace
+Response.Write(typeof Reflect); // Output: object
+</script>
+```
+
 

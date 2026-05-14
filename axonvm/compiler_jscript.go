@@ -3501,6 +3501,13 @@ func (c *Compiler) compileJScriptFunctionLiteral(fn *jsast.FunctionLiteral, fall
 		c.compileJScriptClassFields()
 	}
 
+	// Detect "use strict" directive at the beginning of the function body
+	hasStrictMode, _ := c.detectUseStrictDirective(fn.Body.List)
+	prevStrictMode := c.jsStrictMode
+	if hasStrictMode {
+		c.jsStrictMode = true
+	}
+
 	if fn.Body != nil {
 		for i := range fn.Body.List {
 			c.compileJScriptStatement(fn.Body.List[i])
@@ -3591,6 +3598,9 @@ func (c *Compiler) compileJScriptFunctionLiteral(fn *jsast.FunctionLiteral, fall
 	if c.jsStrictMode {
 		params = append(params, jsStrictModeFlag)
 	}
+	// Restore strict mode after we've used it to set the flag in params
+	c.jsStrictMode = prevStrictMode
+
 	if fn.Generator {
 		params = append(params, jsGeneratorFlag)
 	}

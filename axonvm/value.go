@@ -67,6 +67,8 @@ const (
 	VTJSPromise
 	// VTJSGenerator points to one dynamic Generator ID in VM jsGeneratorItems.
 	VTJSGenerator
+	// VTJSProxy points to one dynamic Proxy ID in VM jsProxyItems.
+	VTJSProxy
 )
 
 type Value struct {
@@ -136,6 +138,10 @@ func (v Value) String() string {
 		return v.Big.String()
 	case VTJSPromise:
 		return "[object Promise]"
+	case VTJSGenerator:
+		return "[object Generator]"
+	case VTJSProxy:
+		return "[object Proxy]"
 	default:
 		return "Unknown"
 	}
