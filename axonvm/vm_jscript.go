@@ -41,6 +41,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"g3pix.com.br/axonasp/jscript"
 	"g3pix.com.br/axonasp/jscript/ftoa"
 	"g3pix.com.br/axonasp/vbscript"
 	"github.com/dlclark/regexp2"
@@ -889,6 +890,11 @@ func (vm *VM) jsEval(args []Value) Value {
 	child := vm.cloneForExecuteLocal(startIP)
 	if err := child.Run(); err != nil {
 		vm.syncExecuteGlobalState(child)
+		if vmErr, ok := err.(*VMError); ok {
+			vm.jsThrowJSError(jscript.JSSyntaxErrorCode(vmErr.Code))
+			return Value{Type: VTJSUndefined}
+		}
+		vm.jsThrowTypeError(err.Error())
 		return Value{Type: VTJSUndefined}
 	}
 
@@ -1346,12 +1352,8 @@ func (vm *VM) jsDefineProperty(target Value, name string, kind int, val Value) {
 }
 
 func (vm *VM) jsGetDescriptor(objID int64, key string) (jsPropertyDescriptor, bool) {
-	if p, isProxy := vm.jsProxyItems[objID]; isProxy {
-		// TODO: Implement getOwnPropertyDescriptor trap
-		if p.Target.Type == VTJSObject || p.Target.Type == VTJSFunction {
-			return vm.jsGetDescriptor(p.Target.Num, key)
-		}
-		return jsPropertyDescriptor{}, false
+	if _, isProxy := vm.jsProxyItems[objID]; isProxy {
+		return vm.jsProxyGetOwnPropertyDescriptor(Value{Type: VTJSProxy, Num: objID}, key)
 	}
 	props, ok := vm.jsPropertyItems[objID]
 	if ok {
@@ -1741,6 +1743,12 @@ func (vm *VM) jsCreateReflectObject() Value {
 	createReflectMethod("has", "ReflectHas", 2)
 	createReflectMethod("deleteProperty", "ReflectDeleteProperty", 2)
 	createReflectMethod("ownKeys", "ReflectOwnKeys", 1)
+	createReflectMethod("defineProperty", "ReflectDefineProperty", 3)
+	createReflectMethod("getOwnPropertyDescriptor", "ReflectGetOwnPropertyDescriptor", 2)
+	createReflectMethod("getPrototypeOf", "ReflectGetPrototypeOf", 1)
+	createReflectMethod("isExtensible", "ReflectIsExtensible", 1)
+	createReflectMethod("preventExtensions", "ReflectPreventExtensions", 1)
+	createReflectMethod("setPrototypeOf", "ReflectSetPrototypeOf", 2)
 
 	vm.jsPropertyItems[objID] = props
 	return Value{Type: VTJSObject, Num: objID}
@@ -3726,7 +3734,7 @@ func (vm *VM) jsPropertyKeyToValue(key string) Value {
 func (vm *VM) jsProxyGet(proxy Value, member string, receiver Value) (Value, bool) {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
-		vm.jsThrowTypeError("Cannot perform 'get' on a proxy that has been revoked")
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
 		return Value{Type: VTJSUndefined}, false
 	}
 
@@ -3747,7 +3755,7 @@ func (vm *VM) jsProxyGet(proxy Value, member string, receiver Value) (Value, boo
 func (vm *VM) jsProxySet(proxy Value, member string, val Value, receiver Value) {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
-		vm.jsThrowTypeError("Cannot perform 'set' on a proxy that has been revoked")
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
 		return
 	}
 
@@ -3773,7 +3781,7 @@ func (vm *VM) jsProxySet(proxy Value, member string, val Value, receiver Value) 
 func (vm *VM) jsProxyHas(proxy Value, member string) bool {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
-		vm.jsThrowTypeError("Cannot perform 'has' on a proxy that has been revoked")
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
 		return false
 	}
 
@@ -3790,7 +3798,7 @@ func (vm *VM) jsProxyHas(proxy Value, member string) bool {
 func (vm *VM) jsProxyDelete(proxy Value, member string) bool {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
-		vm.jsThrowTypeError("Cannot perform 'deleteProperty' on a proxy that has been revoked")
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
 		return false
 	}
 
@@ -3811,7 +3819,7 @@ func (vm *VM) jsProxyDelete(proxy Value, member string) bool {
 func (vm *VM) jsProxyOwnKeys(proxy Value) []string {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
-		vm.jsThrowTypeError("Cannot perform 'ownKeys' on a proxy that has been revoked")
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
 		return nil
 	}
 
@@ -3844,6 +3852,153 @@ func (vm *VM) jsProxyOwnKeys(proxy Value) []string {
 		return nil
 	}
 	return keys
+}
+
+func (vm *VM) jsProxyDefineProperty(proxy Value, member string, attributes Value) bool {
+	pObj, ok := vm.jsProxyItems[proxy.Num]
+	if !ok || pObj.Revoked {
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
+		return false
+	}
+	trap, _ := vm.jsMemberGet(pObj.Handler, "defineProperty")
+	if trap.Type == VTJSUndefined || trap.Type == VTNull {
+		objID := pObj.Target.Num
+		current, currentExists := vm.jsGetDescriptor(objID, member)
+		if !currentExists && !vm.jsObjectIsExtensible(pObj.Target) {
+			return false
+		}
+		spec := vm.jsReadDefinePropertySpec(attributes)
+		if !vm.jsValidateDefinePropertyTransition(current, currentExists, spec) {
+			return false
+		}
+		finalDesc := vm.jsApplyDefinePropertySpec(current, currentExists, spec)
+		vm.jsSetDescriptor(objID, member, finalDesc)
+		return true
+	}
+	args := []Value{pObj.Target, NewString(member), attributes}
+	result := vm.jsCall(trap, pObj.Handler, args)
+	return vm.asBool(result)
+}
+
+func (vm *VM) jsProxyGetOwnPropertyDescriptor(proxy Value, member string) (jsPropertyDescriptor, bool) {
+	pObj, ok := vm.jsProxyItems[proxy.Num]
+	if !ok || pObj.Revoked {
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
+		return jsPropertyDescriptor{}, false
+	}
+	trap, _ := vm.jsMemberGet(pObj.Handler, "getOwnPropertyDescriptor")
+	if trap.Type == VTJSUndefined || trap.Type == VTNull {
+		return vm.jsGetDescriptor(pObj.Target.Num, member)
+	}
+	args := []Value{pObj.Target, NewString(member)}
+	result := vm.jsCall(trap, pObj.Handler, args)
+	if result.Type == VTJSUndefined {
+		return jsPropertyDescriptor{}, false
+	}
+	if result.Type != VTJSObject && result.Type != VTJSFunction {
+		vm.jsThrowTypeError("Proxy 'getOwnPropertyDescriptor' trap must return an object or undefined")
+		return jsPropertyDescriptor{}, false
+	}
+	spec := vm.jsReadDefinePropertySpec(result)
+	return spec.desc, true
+}
+
+func (vm *VM) jsProxyGetPrototypeOf(proxy Value) Value {
+	pObj, ok := vm.jsProxyItems[proxy.Num]
+	if !ok || pObj.Revoked {
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
+		return Value{Type: VTJSUndefined}
+	}
+	trap, _ := vm.jsMemberGet(pObj.Handler, "getPrototypeOf")
+	if trap.Type == VTJSUndefined || trap.Type == VTNull {
+		return vm.jsGetPrototypeValue(pObj.Target)
+	}
+	args := []Value{pObj.Target}
+	result := vm.jsCall(trap, pObj.Handler, args)
+	if result.Type != VTJSObject && result.Type != VTJSFunction && result.Type != VTNull && result.Type != VTArray && result.Type != VTJSProxy {
+		vm.jsThrowTypeError("Proxy 'getPrototypeOf' trap must return an object or null")
+		return Value{Type: VTJSUndefined}
+	}
+	return result
+}
+
+func (vm *VM) jsProxyIsExtensible(proxy Value) bool {
+	pObj, ok := vm.jsProxyItems[proxy.Num]
+	if !ok || pObj.Revoked {
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
+		return false
+	}
+	trap, _ := vm.jsMemberGet(pObj.Handler, "isExtensible")
+	if trap.Type == VTJSUndefined || trap.Type == VTNull {
+		return vm.jsObjectIsExtensible(pObj.Target)
+	}
+	args := []Value{pObj.Target}
+	result := vm.jsCall(trap, pObj.Handler, args)
+	booleanResult := vm.asBool(result)
+	if booleanResult != vm.jsObjectIsExtensible(pObj.Target) {
+		vm.jsThrowTypeError("Proxy 'isExtensible' trap result must match the target's extensibility")
+		return false
+	}
+	return booleanResult
+}
+
+func (vm *VM) jsProxyPreventExtensions(proxy Value) bool {
+	pObj, ok := vm.jsProxyItems[proxy.Num]
+	if !ok || pObj.Revoked {
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
+		return false
+	}
+	trap, _ := vm.jsMemberGet(pObj.Handler, "preventExtensions")
+	if trap.Type == VTJSUndefined || trap.Type == VTNull {
+		vm.jsSetObjectExtensible(pObj.Target.Num, false)
+		return true
+	}
+	args := []Value{pObj.Target}
+	result := vm.jsCall(trap, pObj.Handler, args)
+	booleanResult := vm.asBool(result)
+	if booleanResult && vm.jsObjectIsExtensible(pObj.Target) {
+		vm.jsSetObjectExtensible(pObj.Target.Num, false)
+	}
+	return booleanResult
+}
+
+func (vm *VM) jsProxySetPrototypeOf(proxy Value, proto Value) bool {
+	pObj, ok := vm.jsProxyItems[proxy.Num]
+	if !ok || pObj.Revoked {
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
+		return false
+	}
+	trap, _ := vm.jsMemberGet(pObj.Handler, "setPrototypeOf")
+	if trap.Type == VTJSUndefined || trap.Type == VTNull {
+		return vm.jsSetPrototype(pObj.Target, proto)
+	}
+	args := []Value{pObj.Target, proto}
+	result := vm.jsCall(trap, pObj.Handler, args)
+	return vm.asBool(result)
+}
+
+func (vm *VM) jsSetPrototype(target Value, proto Value) bool {
+	if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray {
+		return false
+	}
+	if proto.Type != VTJSObject && proto.Type != VTJSFunction && proto.Type != VTArray && proto.Type != VTNull && proto.Type != VTJSProxy {
+		return false
+	}
+	curr := proto
+	for curr.Type == VTJSObject || curr.Type == VTJSFunction || curr.Type == VTArray {
+		if curr.Num == target.Num {
+			return false
+		}
+		curr = vm.jsGetPrototypeValue(curr)
+	}
+	obj, ok := vm.jsObjectItems[target.Num]
+	if !ok {
+		obj = make(map[string]Value, 8)
+		vm.jsObjectItems[target.Num] = obj
+	}
+	obj["__js_proto"] = proto
+	vm.jsInvalidateObjectIC(target.Num)
+	return true
 }
 
 func (vm *VM) jsHas(target Value, key string) bool {
@@ -5592,28 +5747,19 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 					vm.jsThrowTypeError("Object.setPrototypeOf requires an object and a prototype")
 					return Value{Type: VTJSUndefined}, true
 				}
-				obj := args[0]
-				proto := args[1]
-				if obj.Type != VTJSObject && obj.Type != VTJSFunction {
-					vm.jsThrowTypeError("Object.setPrototypeOf target must be an object")
+				if args[0].Type == VTJSUndefined || args[0].Type == VTNull {
+					vm.jsThrowTypeError("Object.setPrototypeOf called on null or undefined")
 					return Value{Type: VTJSUndefined}, true
 				}
-				if proto.Type != VTJSObject && proto.Type != VTNull {
-					vm.jsThrowTypeError("Object.setPrototypeOf prototype must be an object or null")
-					return Value{Type: VTJSUndefined}, true
+				if args[0].Type != VTJSObject && args[0].Type != VTJSFunction && args[0].Type != VTJSProxy && args[0].Type != VTArray {
+					return args[0], true
 				}
-				currentProto := NewNull()
-				if objMap, ok := vm.jsObjectItems[obj.Num]; ok {
-					if existing, exists := objMap["__js_proto"]; exists {
-						currentProto = existing
-					}
+				// Use ReflectSetPrototypeOf logic
+				success := vm.dispatchJSIntrinsicCall(Value{}, "ReflectSetPrototypeOf", args)
+				if !vm.asBool(success) {
+					vm.jsThrowTypeError("Object.setPrototypeOf failed")
 				}
-				if !vm.jsObjectIsExtensible(obj) && !vm.jsStrictEquals(currentProto, proto) {
-					vm.jsThrowTypeError("Cannot set prototype of a non-extensible object")
-					return Value{Type: VTJSUndefined}, true
-				}
-				vm.jsSetProto(obj, proto)
-				return obj, true
+				return args[0], true
 			case strings.EqualFold(member, "create"):
 				objID := vm.allocJSID()
 				obj := make(map[string]Value, 8)
@@ -5630,15 +5776,21 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 				}
 				return created, true
 			case strings.EqualFold(member, "getPrototypeOf"):
-				if len(args) == 0 || args[0].Type != VTJSObject {
-					return NewNull(), true
+				if len(args) == 0 || args[0].Type == VTJSUndefined || args[0].Type == VTNull {
+					vm.jsThrowTypeError("Object.getPrototypeOf called on null or undefined")
+					return Value{Type: VTJSUndefined}, true
 				}
-				if obj, ok := vm.jsObjectItems[args[0].Num]; ok {
-					if proto, exists := obj["__js_proto"]; exists {
+				if args[0].Type != VTJSObject && args[0].Type != VTJSFunction && args[0].Type != VTJSProxy && args[0].Type != VTArray {
+					// ES6+: primitive values return their prototype
+					if proto := vm.jsGetIntrinsicPrototype(vm.jsPrimitiveTypeName(args[0])); proto.Type == VTJSObject {
 						return proto, true
 					}
+					return NewNull(), true
 				}
-				return NewNull(), true
+				if args[0].Type == VTJSProxy {
+					return vm.jsProxyGetPrototypeOf(args[0]), true
+				}
+				return vm.jsGetPrototypeValue(args[0]), true
 			case strings.EqualFold(member, "fromEntries"):
 				if len(args) == 0 || args[0].Type == VTJSUndefined || args[0].Type == VTNull {
 					vm.jsThrowTypeError("Object.fromEntries requires an iterable")
@@ -5898,21 +6050,18 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 				}
 				return ValueFromVBArray(NewVBArrayFromValues(0, values)), true
 			case strings.EqualFold(member, "defineProperty"):
-				if len(args) < 3 || (args[0].Type != VTJSObject && args[0].Type != VTJSFunction) {
-					return jsArgOrUndefined(args, 0), true
+				if len(args) < 1 || (args[0].Type != VTJSObject && args[0].Type != VTJSFunction && args[0].Type != VTJSProxy && args[0].Type != VTArray) {
+					vm.jsThrowTypeError("Object.defineProperty called on non-object")
+					return Value{Type: VTJSUndefined}, true
 				}
-				objID := args[0].Num
-				name := vm.valueToString(args[1])
-				current, currentExists := vm.jsGetDescriptor(objID, name)
-				if !currentExists && !vm.jsObjectIsExtensible(args[0]) {
+				if len(args) < 3 {
 					return args[0], true
 				}
-				spec := vm.jsReadDefinePropertySpec(args[2])
-				if !vm.jsValidateDefinePropertyTransition(current, currentExists, spec) {
-					return args[0], true
+				// Use ReflectDefineProperty logic
+				success := vm.dispatchJSIntrinsicCall(Value{}, "ReflectDefineProperty", args)
+				if !vm.asBool(success) {
+					vm.jsThrowTypeError("Object.defineProperty failed")
 				}
-				finalDesc := vm.jsApplyDefinePropertySpec(current, currentExists, spec)
-				vm.jsSetDescriptor(objID, name, finalDesc)
 				return args[0], true
 			case strings.EqualFold(member, "defineProperties"):
 				if len(args) < 2 || (args[0].Type != VTJSObject && args[0].Type != VTJSFunction) || args[1].Type != VTJSObject {
@@ -5927,11 +6076,14 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 				}
 				return args[0], true
 			case strings.EqualFold(member, "getOwnPropertyDescriptor"):
-				if len(args) < 2 || args[0].Type == VTJSUndefined || args[0].Type == VTNull {
+				if len(args) < 1 || args[0].Type == VTJSUndefined || args[0].Type == VTNull {
 					vm.jsThrowTypeError("Object.getOwnPropertyDescriptor called on null or undefined")
 					return Value{Type: VTJSUndefined}, true
 				}
-				if args[0].Type != VTJSObject && args[0].Type != VTJSFunction {
+				if args[0].Type != VTJSObject && args[0].Type != VTJSFunction && args[0].Type != VTJSProxy && args[0].Type != VTArray {
+					return Value{Type: VTJSUndefined}, true
+				}
+				if len(args) < 2 {
 					return Value{Type: VTJSUndefined}, true
 				}
 				name := vm.jsPropertyKeyFromValue(args[1])
@@ -5967,15 +6119,21 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 				if len(args) == 0 {
 					return Value{Type: VTJSUndefined}, true
 				}
-				if args[0].Type == VTJSObject || args[0].Type == VTJSFunction {
-					vm.jsSetObjectExtensible(args[0].Num, false)
+				if args[0].Type == VTJSObject || args[0].Type == VTJSFunction || args[0].Type == VTJSProxy || args[0].Type == VTArray {
+					// Use ReflectPreventExtensions logic via dispatchJSIntrinsicCall
+					success := vm.dispatchJSIntrinsicCall(Value{}, "ReflectPreventExtensions", args)
+					_ = success
 				}
 				return args[0], true
 			case strings.EqualFold(member, "isExtensible"):
 				if len(args) == 0 {
 					return NewBool(false), true
 				}
-				return NewBool(vm.jsObjectIsExtensible(args[0])), true
+				if args[0].Type != VTJSObject && args[0].Type != VTJSFunction && args[0].Type != VTJSProxy && args[0].Type != VTArray {
+					return NewBool(false), true
+				}
+				// Use ReflectIsExtensible logic via dispatchJSIntrinsicCall
+				return vm.dispatchJSIntrinsicCall(Value{}, "ReflectIsExtensible", args), true
 			case strings.EqualFold(member, "seal"):
 				if len(args) == 0 {
 					return Value{Type: VTJSUndefined}, true
@@ -7215,34 +7373,30 @@ func jsDescriptorIsData(desc jsPropertyDescriptor) bool {
 
 func (vm *VM) jsReadDefinePropertySpec(descVal Value) jsDefinePropertySpec {
 	spec := jsDefinePropertySpec{desc: jsPropertyDescriptor{Enumerable: false, Configurable: false, Writable: false}}
-	if descVal.Type != VTJSObject {
+	if descVal.Type != VTJSObject && descVal.Type != VTJSFunction && descVal.Type != VTJSProxy && descVal.Type != VTArray {
 		return spec
 	}
-	dObj, ok := vm.jsObjectItems[descVal.Num]
-	if !ok {
-		return spec
-	}
-	if v, has := dObj["value"]; has {
+	if v, deferred := vm.jsMemberGet(descVal, "value"); !deferred && v.Type != VTJSUndefined {
 		spec.desc.Value = v
 		spec.desc.HasValue = true
 	}
-	if v, has := dObj["get"]; has {
+	if v, deferred := vm.jsMemberGet(descVal, "get"); !deferred && v.Type != VTJSUndefined {
 		spec.desc.Getter = v
 		spec.desc.HasGetter = true
 	}
-	if v, has := dObj["set"]; has {
+	if v, deferred := vm.jsMemberGet(descVal, "set"); !deferred && v.Type != VTJSUndefined {
 		spec.desc.Setter = v
 		spec.desc.HasSetter = true
 	}
-	if v, has := dObj["enumerable"]; has {
+	if v, deferred := vm.jsMemberGet(descVal, "enumerable"); !deferred && v.Type != VTJSUndefined {
 		spec.hasEnumerable = true
 		spec.desc.Enumerable = vm.jsToDescriptorBoolean(v, false)
 	}
-	if v, has := dObj["configurable"]; has {
+	if v, deferred := vm.jsMemberGet(descVal, "configurable"); !deferred && v.Type != VTJSUndefined {
 		spec.hasConfigurable = true
 		spec.desc.Configurable = vm.jsToDescriptorBoolean(v, false)
 	}
-	if v, has := dObj["writable"]; has {
+	if v, deferred := vm.jsMemberGet(descVal, "writable"); !deferred && v.Type != VTJSUndefined {
 		spec.hasWritable = true
 		spec.desc.Writable = vm.jsToDescriptorBoolean(v, false)
 	}
@@ -7546,7 +7700,7 @@ func (vm *VM) jsSuperCall(args []Value) Value {
 func (vm *VM) jsProxyApply(proxy Value, thisVal Value, args []Value) Value {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
-		vm.jsThrowTypeError("Cannot perform 'apply' on a proxy that has been revoked")
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
 		return Value{Type: VTJSUndefined}
 	}
 
@@ -7568,7 +7722,7 @@ func (vm *VM) jsProxyApply(proxy Value, thisVal Value, args []Value) Value {
 func (vm *VM) jsProxyConstruct(proxy Value, args []Value, newTarget Value) Value {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
-		vm.jsThrowTypeError("Cannot perform 'construct' on a proxy that has been revoked")
+		vm.jsThrowJSError(jscript.ProxyTrapResultRevoked)
 		return Value{Type: VTJSUndefined}
 	}
 
@@ -7594,10 +7748,227 @@ func (vm *VM) jsProxyConstruct(proxy Value, args []Value, newTarget Value) Value
 		return false
 	}
 	if !isObject(result) {
-		vm.jsThrowTypeError("Proxy 'construct' trap must return an object")
+		vm.jsThrowJSError(jscript.ProxyTrapReturnedInvalidValue)
 		return Value{Type: VTJSUndefined}
 	}
 	return result
+}
+
+func (vm *VM) jsPrimitiveTypeName(v Value) string {
+	switch v.Type {
+	case VTBool:
+		return "Boolean"
+	case VTInteger, VTDouble:
+		return "Number"
+	case VTString:
+		return "String"
+	case VTSymbol:
+		return "Symbol"
+	case VTJSBigInt:
+		return "BigInt"
+	default:
+		return "Object"
+	}
+}
+
+func (vm *VM) dispatchJSIntrinsicCall(thisVal Value, ctorName string, args []Value) Value {
+	// Internal helper to reuse native JScript function logic without creating fake callee objects.
+	// This mimics the switch block in jsCall.
+	switch ctorName {
+	case "ReflectGet":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.get requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+		val, _ := vm.jsMemberGet(target, key)
+		return val
+	case "ReflectSet":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.set requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+		val := jsArgOrUndefined(args, 2)
+		savedStrict := vm.jsStrictMode
+		vm.jsStrictMode = false
+		vm.jsMemberSet(target, key, val)
+		vm.jsStrictMode = savedStrict
+		return NewBool(true)
+	case "ReflectHas":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.has requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+		return NewBool(vm.jsHas(target, key))
+	case "ReflectDefineProperty":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.defineProperty requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		name := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+		attributes := jsArgOrUndefined(args, 2)
+		if target.Type == VTJSProxy {
+			return NewBool(vm.jsProxyDefineProperty(target, name, attributes))
+		}
+		objID := target.Num
+		current, currentExists := vm.jsGetDescriptor(objID, name)
+		if !currentExists && !vm.jsObjectIsExtensible(target) {
+			return NewBool(false)
+		}
+		spec := vm.jsReadDefinePropertySpec(attributes)
+		if !vm.jsValidateDefinePropertyTransition(current, currentExists, spec) {
+			return NewBool(false)
+		}
+		finalDesc := vm.jsApplyDefinePropertySpec(current, currentExists, spec)
+		vm.jsSetDescriptor(objID, name, finalDesc)
+		return NewBool(true)
+	case "ReflectGetOwnPropertyDescriptor":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.getOwnPropertyDescriptor requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		name := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+		var desc jsPropertyDescriptor
+		var ok bool
+		if target.Type == VTJSProxy {
+			desc, ok = vm.jsProxyGetOwnPropertyDescriptor(target, name)
+		} else {
+			desc, ok = vm.jsGetDescriptor(target.Num, name)
+		}
+		if !ok {
+			return Value{Type: VTJSUndefined}
+		}
+		return vm.jsBuildDescriptorObject(desc)
+	case "ReflectGetPrototypeOf":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.getPrototypeOf requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		if target.Type == VTJSProxy {
+			return vm.jsProxyGetPrototypeOf(target)
+		}
+		return vm.jsGetPrototypeValue(target)
+	case "ReflectIsExtensible":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.isExtensible requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		if target.Type == VTJSProxy {
+			return NewBool(vm.jsProxyIsExtensible(target))
+		}
+		return NewBool(vm.jsObjectIsExtensible(target))
+	case "ReflectPreventExtensions":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.preventExtensions requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		if target.Type == VTJSProxy {
+			return NewBool(vm.jsProxyPreventExtensions(target))
+		}
+		vm.jsSetObjectExtensible(target.Num, false)
+		return NewBool(true)
+	case "ReflectDeleteProperty":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.deleteProperty requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+		success := false
+		if target.Type == VTJSProxy {
+			success = vm.jsProxyDelete(target, key)
+		} else {
+			success = vm.jsMemberDelete(target, key)
+		}
+		return NewBool(success)
+	case "ReflectOwnKeys":
+		if len(args) < 1 {
+			vm.jsThrowTypeError("Reflect.ownKeys requires at least 1 argument")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		var keys []string
+		if target.Type == VTJSProxy {
+			keys = vm.jsProxyOwnKeys(target)
+		} else {
+			keys = vm.jsObjectOwnKeys(target)
+		}
+		values := make([]Value, len(keys))
+		for i := 0; i < len(keys); i++ {
+			values[i] = NewString(keys[i])
+		}
+		return ValueFromVBArray(NewVBArrayFromValues(0, values))
+	case "ReflectSetPrototypeOf":
+		if len(args) < 2 {
+			vm.jsThrowTypeError("Reflect.setPrototypeOf requires at least 2 arguments")
+			return Value{Type: VTJSUndefined}
+		}
+		target := args[0]
+		if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+			vm.jsThrowJSError(jscript.ReflectArgumentNotObject)
+			return Value{Type: VTJSUndefined}
+		}
+		proto := args[1]
+		if proto.Type != VTJSObject && proto.Type != VTJSFunction && proto.Type != VTArray && proto.Type != VTNull && proto.Type != VTJSProxy {
+			vm.jsThrowTypeError("Reflect.setPrototypeOf prototype must be an object or null")
+			return Value{Type: VTJSUndefined}
+		}
+		if target.Type == VTJSProxy {
+			return NewBool(vm.jsProxySetPrototypeOf(target, proto))
+		}
+		return NewBool(vm.jsSetPrototype(target, proto))
+	}
+	return Value{Type: VTJSUndefined}
 }
 
 func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
@@ -7635,9 +8006,10 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 				if err := child.Run(); err != nil {
 					vm.syncExecuteGlobalState(child)
 					if vmErr, ok := err.(*VMError); ok {
-						panic(vmErr)
+						vm.jsThrowJSError(jscript.JSSyntaxErrorCode(vmErr.Code))
+						return Value{Type: VTJSUndefined}
 					}
-					vm.raise(vbscript.InternalError, err.Error())
+					vm.jsThrowTypeError(err.Error())
 					return Value{Type: VTJSUndefined}
 				}
 				result := Value{Type: VTJSUndefined}
@@ -7658,6 +8030,19 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 		case "ProxyRevocable":
 			if len(args) < 2 {
 				vm.jsThrowTypeError("Proxy.revocable requires 2 arguments: target and handler")
+				return Value{Type: VTJSUndefined}
+			}
+			target := args[0]
+			handler := args[1]
+			isObject := func(v Value) bool {
+				switch v.Type {
+				case VTJSObject, VTJSFunction, VTJSPromise, VTJSGenerator, VTJSProxy, VTNativeObject, VTArray, VTObject:
+					return true
+				}
+				return false
+			}
+			if !isObject(target) || !isObject(handler) {
+				vm.jsThrowJSError(jscript.ProxyTargetOrHandlerNotObject)
 				return Value{Type: VTJSUndefined}
 			}
 			proxyVal := vm.jsCreateProxy(args)
@@ -7690,37 +8075,8 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 				p.Revoked = true
 			}
 			return Value{Type: VTJSUndefined}
-		case "ReflectGet":
-			if len(args) < 1 {
-				vm.jsThrowTypeError("Reflect.get requires at least 1 argument")
-				return Value{Type: VTJSUndefined}
-			}
-			target := args[0]
-			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
-				vm.jsThrowTypeError("Reflect.get called on non-object")
-				return Value{Type: VTJSUndefined}
-			}
-			key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
-			val, _ := vm.jsMemberGet(target, key)
-			return val
-		case "ReflectSet":
-			if len(args) < 1 {
-				vm.jsThrowTypeError("Reflect.set requires at least 1 argument")
-				return Value{Type: VTJSUndefined}
-			}
-			target := args[0]
-			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
-				vm.jsThrowTypeError("Reflect.set called on non-object")
-				return Value{Type: VTJSUndefined}
-			}
-			key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
-			val := jsArgOrUndefined(args, 2)
-
-			savedStrict := vm.jsStrictMode
-			vm.jsStrictMode = false
-			vm.jsMemberSet(target, key, val)
-			vm.jsStrictMode = savedStrict
-			return NewBool(true)
+		case "ReflectGet", "ReflectSet", "ReflectHas", "ReflectDeleteProperty", "ReflectOwnKeys", "ReflectDefineProperty", "ReflectGetOwnPropertyDescriptor", "ReflectGetPrototypeOf", "ReflectIsExtensible", "ReflectPreventExtensions", "ReflectSetPrototypeOf":
+			return vm.dispatchJSIntrinsicCall(thisVal, ctorName, args)
 		case "ReflectApply":
 			if len(args) < 1 {
 				vm.jsThrowTypeError("Reflect.apply requires at least 1 argument")
@@ -7754,57 +8110,6 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 				}
 			}
 			return vm.jsConstruct(target, applyArgs, newTarget, false)
-		case "ReflectHas":
-			if len(args) < 1 {
-				vm.jsThrowTypeError("Reflect.has requires at least 1 argument")
-				return Value{Type: VTJSUndefined}
-			}
-			target := args[0]
-			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
-				vm.jsThrowTypeError("Reflect.has called on non-object")
-				return Value{Type: VTJSUndefined}
-			}
-			key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
-			return NewBool(vm.jsHas(target, key))
-		case "ReflectDeleteProperty":
-			if len(args) < 1 {
-				vm.jsThrowTypeError("Reflect.deleteProperty requires at least 1 argument")
-				return Value{Type: VTJSUndefined}
-			}
-			target := args[0]
-			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
-				vm.jsThrowTypeError("Reflect.deleteProperty called on non-object")
-				return Value{Type: VTJSUndefined}
-			}
-			key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
-			success := false
-			if target.Type == VTJSProxy {
-				success = vm.jsProxyDelete(target, key)
-			} else {
-				success = vm.jsMemberDelete(target, key)
-			}
-			return NewBool(success)
-		case "ReflectOwnKeys":
-			if len(args) < 1 {
-				vm.jsThrowTypeError("Reflect.ownKeys requires at least 1 argument")
-				return Value{Type: VTJSUndefined}
-			}
-			target := args[0]
-			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
-				vm.jsThrowTypeError("Reflect.ownKeys called on non-object")
-				return Value{Type: VTJSUndefined}
-			}
-			var keys []string
-			if target.Type == VTJSProxy {
-				keys = vm.jsProxyOwnKeys(target)
-			} else {
-				keys = vm.jsObjectOwnKeys(target)
-			}
-			values := make([]Value, len(keys))
-			for i := 0; i < len(keys); i++ {
-				values[i] = NewString(keys[i])
-			}
-			return ValueFromVBArray(NewVBArrayFromValues(0, values))
 		case "ArrayValues":
 			return vm.jsCreateArrayIterator(thisVal, 0)
 		case "ArrayKeys":
@@ -8001,6 +8306,19 @@ func (vm *VM) jsThrowTypeError(msg string) {
 	target := vm.jsTryStack[len(vm.jsTryStack)-1]
 	vm.jsTryStack = vm.jsTryStack[:len(vm.jsTryStack)-1]
 	vm.jsErrStack = append(vm.jsErrStack, vm.jsCreateErrorObject("TypeError", msg))
+	vm.ip = target
+}
+
+// jsThrowJSError throws a specific JScript error code.
+func (vm *VM) jsThrowJSError(code jscript.JSSyntaxErrorCode) {
+	msg := code.String()
+	if len(vm.jsTryStack) == 0 {
+		vm.raise(vbscript.VBSyntaxErrorCode(code), msg)
+		return
+	}
+	target := vm.jsTryStack[len(vm.jsTryStack)-1]
+	vm.jsTryStack = vm.jsTryStack[:len(vm.jsTryStack)-1]
+	vm.jsErrStack = append(vm.jsErrStack, vm.jsCreateErrorObject("TypeError", msg)) // Most ES6+ errors are TypeErrors
 	vm.ip = target
 }
 
@@ -8483,7 +8801,7 @@ func (vm *VM) jsCreateProxy(args []Value) Value {
 		return false
 	}
 	if !isObject(target) || !isObject(handler) {
-		vm.jsThrowTypeError("Proxy target and handler must be objects")
+		vm.jsThrowJSError(jscript.ProxyTargetOrHandlerNotObject)
 		return Value{Type: VTJSUndefined}
 	}
 	proxyID := vm.allocJSID()

@@ -97,6 +97,11 @@ const (
 	InvalidRangeInCharacterSet              JSSyntaxErrorCode = 5021
 	ExceptionThrownAndNotCaught             JSSyntaxErrorCode = 5022
 	FunctionDoesNotHaveValidPrototypeObject JSSyntaxErrorCode = 5023
+	ProxyTargetOrHandlerNotObject           JSSyntaxErrorCode = 5024
+	ReflectArgumentNotObject                JSSyntaxErrorCode = 5025
+	ProxyTrapReturnedInvalidValue           JSSyntaxErrorCode = 5026
+	ProxyTrapResultRevoked                  JSSyntaxErrorCode = 5027
+	ProxyTrapResultNonConfigurableMismatch  JSSyntaxErrorCode = 5028
 )
 
 var JSErrorMessages = map[JSSyntaxErrorCode]string{
@@ -178,6 +183,11 @@ var JSErrorMessages = map[JSSyntaxErrorCode]string{
 	InvalidRangeInCharacterSet:              "Invalid range in character set",
 	ExceptionThrownAndNotCaught:             "Exception thrown and not caught",
 	FunctionDoesNotHaveValidPrototypeObject: "Function does not have a valid prototype object",
+	ProxyTargetOrHandlerNotObject:           "Proxy target or handler must be an object",
+	ReflectArgumentNotObject:                "Reflect argument must be an object",
+	ProxyTrapReturnedInvalidValue:           "Proxy trap returned an invalid value",
+	ProxyTrapResultRevoked:                  "Cannot perform operation on a revoked proxy",
+	ProxyTrapResultNonConfigurableMismatch:  "Proxy trap invariant violation: non-configurable property mismatch",
 }
 
 func (e JSSyntaxErrorCode) String() string {

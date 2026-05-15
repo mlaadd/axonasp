@@ -1296,6 +1296,8 @@ func (vm *VM) cloneForExecuteLocal(startIP int) *VM {
 			paramToIndex: paramToIndex,
 		}
 	}
+	child.jsTryStack = make([]int, 0, 8)
+	child.jsErrStack = make([]Value, 0, 4)
 	// stmtSP carries over from parent; child's first OpLine will reset it.
 
 	return &child

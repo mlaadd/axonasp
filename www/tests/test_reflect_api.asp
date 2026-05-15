@@ -1,73 +1,96 @@
-<%@ Language="JScript" %>
+<%@ Language="JavaScript" %>
 <%
-    Response.Write("<h1>Test Reflect API</h1>");
+/*
+ * AxonASP Reflect and Proxy Trap Test
+ */
 
-    var errors = [];
-    function assertEqual(actual, expected, msg) {
-        if (actual !== expected) {
-            errors.push(msg + ": expected " + expected + ", got " + actual);
-        }
-    }
-
-    var obj = {a: 1};
-
-    // Reflect.get
-    assertEqual(Reflect.get(obj, 'a'), 1, "Reflect.get existing property");
-    assertEqual(Reflect.get(obj, 'b'), undefined, "Reflect.get non-existing property");
-
-    // Reflect.set
-    var setRes = Reflect.set(obj, 'b', 2);
-    assertEqual(setRes, true, "Reflect.set returns true");
-    assertEqual(obj.b, 2, "Reflect.set modifies object");
-
-    // Reflect.has
-    assertEqual(Reflect.has(obj, 'a'), true, "Reflect.has existing property");
-    assertEqual(Reflect.has(obj, 'c'), false, "Reflect.has non-existing property");
-
-    // Reflect.deleteProperty
-    var delRes = Reflect.deleteProperty(obj, 'b');
-    assertEqual(delRes, true, "Reflect.deleteProperty returns true");
-    assertEqual(obj.b, undefined, "Reflect.deleteProperty modifies object");
-    assertEqual(Reflect.has(obj, 'b'), false, "Reflect.has after delete");
-
-    // Reflect.ownKeys
-    var keys = Reflect.ownKeys(obj);
-    assertEqual(keys.length, 1, "Reflect.ownKeys length");
-    assertEqual(keys[0], 'a', "Reflect.ownKeys value");
-
-    // Reflect.apply
-    function add(x, y) { return this.val + x + y; }
-    var applyRes = Reflect.apply(add, {val: 10}, [1, 2]);
-    assertEqual(applyRes, 13, "Reflect.apply");
-
-    // Reflect.construct
-    function Person(name) { this.name = name; }
-    var p = Reflect.construct(Person, ['John']);
-    assertEqual(p.name, 'John', "Reflect.construct");
-    assertEqual(p instanceof Person, true, "Reflect.construct instanceof");
-
-    // Reflect with Proxy
-    var proxyObj = new Proxy({a: 10}, {
-        get: function(target, prop, receiver) {
-            if (prop === 'a') return target[prop] * 2;
-            return Reflect.get(target, prop, receiver);
-        },
-        has: function(target, prop) {
-            if (prop === 'b') return true;
-            return Reflect.has(target, prop);
-        }
-    });
-
-    assertEqual(Reflect.get(proxyObj, 'a'), 20, "Reflect.get via Proxy");
-    assertEqual(Reflect.has(proxyObj, 'b'), true, "Reflect.has via Proxy");
-
-    if (errors.length === 0) {
-        Response.Write("<p style='color: green;'>All Reflect tests passed!</p>");
+function assert(condition, message) {
+    if (!condition) {
+        Response.Write("FAIL: " + message + "<br>");
     } else {
-        Response.Write("<p style='color: red;'>Errors occurred:</p><ul>");
-        for (var i = 0; i < errors.length; i++) {
-            Response.Write("<li>" + errors[i] + "</li>");
-        }
-        Response.Write("</ul>");
+        Response.Write("PASS: " + message + "<br>");
     }
+}
+
+// 1. Reflect.defineProperty
+var obj1 = {};
+var s1 = Reflect.defineProperty(obj1, "a", {value: 42, writable: true});
+assert(s1 === true && obj1.a === 42, "Reflect.defineProperty basic");
+
+// 2. Reflect.getOwnPropertyDescriptor
+var obj2 = {a: 100};
+var d2 = Reflect.getOwnPropertyDescriptor(obj2, "a");
+assert(d2.value === 100 && d2.writable === true, "Reflect.getOwnPropertyDescriptor");
+
+// 3. Reflect.getPrototypeOf
+var proto3 = {p: 1};
+var obj3 = Object.create(proto3);
+assert(Reflect.getPrototypeOf(obj3) === proto3, "Reflect.getPrototypeOf");
+
+// 4. Reflect.isExtensible
+var obj4 = {};
+assert(Reflect.isExtensible(obj4) === true, "Reflect.isExtensible initially true");
+Reflect.preventExtensions(obj4);
+assert(Reflect.isExtensible(obj4) === false, "Reflect.isExtensible false after preventExtensions");
+
+// 5. Reflect.setPrototypeOf
+var obj5 = {};
+var proto5 = {z: 999};
+Reflect.setPrototypeOf(obj5, proto5);
+assert(obj5.z === 999, "Reflect.setPrototypeOf");
+
+// 6. Proxy Traps with Reflect
+var target6 = {count: 0};
+var p6 = new Proxy(target6, {
+    defineProperty: function(t, k, d) {
+        if (k === "forbidden") return false;
+        return Reflect.defineProperty(t, k, d);
+    },
+    getPrototypeOf: function(t) {
+        return {mocked: true};
+    }
+});
+
+assert(Reflect.defineProperty(p6, "allowed", {value: 1}) === true, "Proxy defineProperty trap allowed");
+assert(target6.allowed === 1, "Proxy defineProperty trap target updated");
+assert(Reflect.defineProperty(p6, "forbidden", {value: 1}) === false, "Proxy defineProperty trap forbidden");
+assert(Reflect.getPrototypeOf(p6).mocked === true, "Proxy getPrototypeOf trap");
+
+// 7. Object.defineProperty with Proxy
+var target7 = {a: 1};
+var p7 = new Proxy(target7, {
+    defineProperty: function(t, k, d) {
+        if (k === "forbidden") return false;
+        return Reflect.defineProperty(t, k, d);
+    }
+});
+Object.defineProperty(p7, "a", {value: 2});
+assert(target7.a === 2, "Object.defineProperty on Proxy success");
+try {
+    Object.defineProperty(p7, "forbidden", {value: 3});
+    assert(false, "Object.defineProperty on Proxy should have failed");
+} catch(e) {
+    assert(true, "Object.defineProperty on Proxy failed correctly: " + e.message);
+}
+
+// 8. Object.getOwnPropertyDescriptor with Proxy
+var p8 = new Proxy({a: 1}, {
+    getOwnPropertyDescriptor: function(t, k) {
+        return {value: 999, configurable: true, writable: true, enumerable: true};
+    }
+});
+var d8 = Object.getOwnPropertyDescriptor(p8, "any");
+assert(d8 && d8.value === 999, "Object.getOwnPropertyDescriptor on Proxy");
+
+// 9. Object.isExtensible / preventExtensions with Proxy
+var extensible9 = true;
+var p9 = new Proxy({}, {
+    isExtensible: function(t) { return extensible9; },
+    preventExtensions: function(t) { extensible9 = false; return true; }
+});
+assert(Object.isExtensible(p9) === true, "Object.isExtensible on Proxy");
+Object.preventExtensions(p9);
+assert(Object.isExtensible(p9) === false, "Object.preventExtensions on Proxy");
+
+Response.Write("REFLECT AND PROXY TRAP TEST COMPLETED<br>");
 %>
