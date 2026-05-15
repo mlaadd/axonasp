@@ -36,6 +36,7 @@ type ASPHostEnvironment interface {
 	Application() *asp.Application
 	SetSessionEnabled(enabled bool)
 	SessionEnabled() bool
+	EngineMode() EngineMode
 
 	// ExecuteASPFile compiles and executes another ASP file sharing the current host context.
 	// The caller is responsible for providing an absolute file system path.
@@ -54,6 +55,7 @@ type MockHost struct {
 	session          *asp.Session
 	application      *asp.Application
 	sessionEnabled   bool
+	engineMode       EngineMode
 	executeCacheHits int
 	executeCompiles  int
 }
@@ -88,6 +90,12 @@ func (m *MockHost) SetSessionEnabled(enabled bool) { m.sessionEnabled = enabled 
 
 // SessionEnabled reports whether session state is enabled for the current page.
 func (m *MockHost) SessionEnabled() bool { return m.sessionEnabled }
+
+// EngineMode returns the current language mode of the host.
+func (m *MockHost) EngineMode() EngineMode { return m.engineMode }
+
+// SetEngineMode updates the language mode for the host.
+func (m *MockHost) SetEngineMode(mode EngineMode) { m.engineMode = mode }
 
 // ExecuteCacheHits reports how many child ASP executions reused cached compilation.
 func (m *MockHost) ExecuteCacheHits() int { return m.executeCacheHits }

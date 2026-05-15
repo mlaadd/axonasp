@@ -402,6 +402,14 @@ func NewJSModuleCompiler(code string) *Compiler {
 	return c
 }
 
+// NewJavaScriptCompiler creates a new Compiler instance for pure JScript.
+func NewJavaScriptCompiler(code string) *Compiler {
+	c := createCompiler(code, vbscript.ModeVBScript)
+	c.isJSModule = true
+	c.sourceCode = code
+	return c
+}
+
 // NewASPCompiler creates a new Compiler instance for ASP files (starting in HTML mode).
 func NewASPCompiler(code string) *Compiler {
 	return createCompiler(code, vbscript.ModeASP)
@@ -1438,6 +1446,30 @@ func (c *Compiler) Constants() []Value {
 
 func (c *Compiler) GlobalsCount() int {
 	return c.Globals.Count()
+}
+
+// IsJSModule reports whether the current compilation targets a pure JavaScript module.
+func (c *Compiler) IsJSModule() bool {
+	if c == nil {
+		return false
+	}
+	return c.isJSModule
+}
+
+// IsASP reports whether the current compilation targets standard ASP (HTML + delimiters).
+func (c *Compiler) IsASP() bool {
+	if c == nil {
+		return false
+	}
+	return c.lexerMode == vbscript.ModeASP
+}
+
+// IsEval reports whether the current compilation targets a dynamic expression.
+func (c *Compiler) IsEval() bool {
+	if c == nil {
+		return false
+	}
+	return c.isEval
 }
 
 // ActiveVBSConstants returns the ordered predefined constant set active in this compilation.

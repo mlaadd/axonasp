@@ -42,7 +42,7 @@ import (
 const (
 	scriptCacheDependencyMapLimit = 1000
 	scriptCacheMagicSize          = 6
-	scriptCacheBinaryVersion      = uint16(7)
+	scriptCacheBinaryVersion      = uint16(8)
 	scriptCacheDebounceWindow     = 1000 * time.Millisecond
 )
 
@@ -98,6 +98,7 @@ type CachedProgram struct {
 	UserDeclaredGlobals []string
 	UserConstGlobals    []string
 	GlobalZeroArgFuncs  []string
+	EngineMode          EngineMode
 	ProgramHash         uint64
 	GlobalNamesLower    []string
 
@@ -207,6 +208,9 @@ func (p *cachedProgramBinaryPayload) Serialize(writer io.Writer) error {
 		return err
 	}
 	if err := writeStringSlice(buffered, p.Program.GlobalNamesLower); err != nil {
+		return err
+	}
+	if err := binary.Write(buffered, binary.LittleEndian, uint8(p.Program.EngineMode)); err != nil {
 		return err
 	}
 
@@ -364,6 +368,13 @@ func (p *cachedProgramBinaryPayload) Deserialize(reader io.Reader) error {
 				}
 				p.Program.GlobalNamesLower = lower
 			}
+			if version >= 8 {
+				var engineMode uint8
+				if err := binary.Read(reader, binary.LittleEndian, &engineMode); err != nil {
+					return err
+				}
+				p.Program.EngineMode = EngineMode(engineMode)
+			}
 		}
 	}
 
@@ -403,6 +414,12 @@ type ScriptCache struct {
 	watchStop           chan struct{}
 	watcherActive       bool
 	watcherErrorCount   uint32
+
+	// Engine configuration for mode-based compilation.
+	engineMode   EngineMode
+	executeAsASP []string
+	executeAsVBS []string
+	executeAsJS  []string
 }
 
 type scriptCompileGate struct {
@@ -435,6 +452,57 @@ func NewScriptCache(mode BytecodeCacheMode, cacheDir string, maxSizeMB int) *Scr
 		watchDebounceWindow: scriptCacheDebounceWindow,
 		maxBytes:            int64(maxSizeMB) * 1024 * 1024,
 	}
+}
+
+// SetEngineConfig updates the engine mode and allowed file extensions for the cache.
+func (c *ScriptCache) SetEngineConfig(mode EngineMode, aspExt, vbsExt, jsExt []string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.engineMode = mode
+	c.executeAsASP = aspExt
+	c.executeAsVBS = vbsExt
+	c.executeAsJS = jsExt
+}
+
+func (c *ScriptCache) resolveEngineMode(filePath string) EngineMode {
+	if c == nil {
+		return EngineModeDefault
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	// Check if it matches VBScript extensions
+	for _, e := range c.executeAsVBS {
+		if e == ext {
+			return EngineModeVBScript
+		}
+	}
+
+	// Check if it matches JavaScript extensions
+	for _, e := range c.executeAsJS {
+		if e == ext {
+			return EngineModeJavaScript
+		}
+	}
+
+	// Always check ASP extensions or as default
+	for _, e := range c.executeAsASP {
+		if e == ext {
+			return EngineModeDefault
+		}
+	}
+
+	// Legacy behavior: if it's .js, it's JScript
+	if ext == ".js" {
+		return EngineModeJavaScript
+	}
+
+	return EngineModeDefault
 }
 
 // SetWatchedExtensions configures extra file extensions treated as ASP scripts by the invalidator.
@@ -807,11 +875,16 @@ func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode)
 	content = stripUTF8BOM(content)
 
 	var compiler *Compiler
-	if strings.HasSuffix(strings.ToLower(cacheKey), ".js") {
-		compiler = NewJSModuleCompiler(string(content))
-	} else {
+	resolvedMode := c.resolveEngineMode(normalized)
+	switch resolvedMode {
+	case EngineModeJavaScript:
+		compiler = NewJavaScriptCompiler(string(content))
+	case EngineModeVBScript:
+		compiler = NewCompiler(string(content))
+	default:
 		compiler = NewASPCompiler(string(content))
 	}
+
 	compiler.SetSourceName(cacheKey)
 	if err := compiler.Compile(); err != nil {
 		compileErr = err
@@ -844,11 +917,16 @@ func (c *ScriptCache) compileOnly(filePath string) (CachedProgram, error) {
 	content = stripUTF8BOM(content)
 
 	var compiler *Compiler
-	if strings.HasSuffix(strings.ToLower(filePath), ".js") {
-		compiler = NewJSModuleCompiler(string(content))
-	} else {
+	resolvedMode := c.resolveEngineMode(filePath)
+	switch resolvedMode {
+	case EngineModeJavaScript:
+		compiler = NewJavaScriptCompiler(string(content))
+	case EngineModeVBScript:
+		compiler = NewCompiler(string(content))
+	default:
 		compiler = NewASPCompiler(string(content))
 	}
+
 	compiler.SetSourceName(filePath)
 	if err := compiler.Compile(); err != nil {
 		return CachedProgram{}, err
@@ -956,6 +1034,7 @@ func NewVMFromCachedProgram(program CachedProgram) *VM {
 	vm.optionCompare = program.OptionCompare
 	vm.optionExplicit = program.OptionExplicit
 	vm.sourceName = program.SourceName
+	vm.engineMode = program.EngineMode
 	applyProgramGlobalMetadata(vm, program)
 	vm.captureBaseProgramState()
 	return vm

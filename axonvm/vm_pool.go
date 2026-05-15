@@ -250,6 +250,7 @@ func (vm *VM) captureBaseProgramState() {
 	vm.baseOptionExplicit = vm.optionExplicit
 	vm.baseGlobalNames = vm.globalNames
 	vm.baseGlobalNamesHash = hashStringSliceFNV1a(vm.baseGlobalNames)
+	vm.baseEngineMode = vm.engineMode
 
 	if vm.baseGlobalZeroArgFuncs == nil {
 		vm.baseGlobalZeroArgFuncs = make(map[string]bool, len(vm.globalZeroArgFuncs))
@@ -301,6 +302,7 @@ func (vm *VM) resetForReuse() {
 	vm.resetDynamicMaps()
 	vm.optionCompare = vm.baseOptionCompare
 	vm.optionExplicit = vm.baseOptionExplicit
+	vm.engineMode = vm.baseEngineMode
 
 	// Direct assignment from immutable base state. Subsequent ExecuteGlobal
 	// will allocate a new backing array because baseGlobalNames has cap == len.

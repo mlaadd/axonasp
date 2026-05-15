@@ -45,23 +45,26 @@ import (
 
 // CLI configuration values.
 var (
-	Version                     = "0.0.0.0"
-	EnableCLI                   = true
-	EnableCLIRunFromCommandLine = false
-	DebugASP                    = false
-	DefaultTimezone             = "UTC"
-	MemoryLimitMB               = 128
-	VMPoolSize                  = 50
-	BytecodeCachingMode         = "enabled"
-	CacheMaxSizeMB              = 128
-	CLIForceFreshCompile        = true
-	ScriptTimeout               = 60
-	ResponseBufferLimitBytes    = 4 * 1024 * 1024
-	ExecuteAsASPExtensions      = []string{".asp"}
-	CLIServerRoot               = "./www"
-	serverLocation              = time.UTC
-	mouseEnabled                = false
-	scriptCache                 *axonvm.ScriptCache
+	Version                       = "0.0.0.0"
+	EnableCLI                     = true
+	EnableCLIRunFromCommandLine   = false
+	DebugASP                      = false
+	DefaultTimezone               = "UTC"
+	MemoryLimitMB                 = 128
+	VMPoolSize                    = 50
+	BytecodeCachingMode           = "enabled"
+	CacheMaxSizeMB                = 128
+	CLIForceFreshCompile          = true
+	ScriptTimeout                 = 60
+	ResponseBufferLimitBytes      = 4 * 1024 * 1024
+	ExecuteAsASPExtensions        = []string{".asp"}
+	ExecuteAsVBScriptExtensions   = []string{".vbs"}
+	ExecuteAsJavaScriptExtensions = []string{".js"}
+	CLIEngineMode                 = axonvm.EngineModeDefault
+	CLIServerRoot                 = "./www"
+	serverLocation                = time.UTC
+	mouseEnabled                  = false
+	scriptCache                   *axonvm.ScriptCache
 
 	// Process-wide shared Application and Session instances for the CLI
 	sharedCLIApplication = asp.NewApplication()
@@ -94,6 +97,12 @@ const tuiHelpText = `
   - Batch processing files using G3Zip, G3FC or G3PDF.
   - Running background jobs or scheduled tasks via Task 
     Scheduler/Cron.
+
+  You can also set the mode for the engine using the 
+  -m or --mode <mode> flags:
+
+  > axonasp-cli.exe -m (default/vbscript/javascript)
+
 
  ABOUT:
   G3pix ❖ AxonASP
@@ -134,6 +143,23 @@ func loadCLIConfig() {
 	if executeAsASP := v.GetStringSlice("global.execute_as_asp"); len(executeAsASP) > 0 {
 		ExecuteAsASPExtensions = normalizeExtensions(executeAsASP)
 	}
+	if executeAsVBS := v.GetStringSlice("global.execute_as_vbscript"); len(executeAsVBS) > 0 {
+		ExecuteAsVBScriptExtensions = normalizeExtensions(executeAsVBS)
+	}
+	if executeAsJS := v.GetStringSlice("global.execute_as_javascript"); len(executeAsJS) > 0 {
+		ExecuteAsJavaScriptExtensions = normalizeExtensions(executeAsJS)
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(v.GetString("cli.engine_mode")))
+	switch mode {
+	case "vbscript":
+		CLIEngineMode = axonvm.EngineModeVBScript
+	case "javascript":
+		CLIEngineMode = axonvm.EngineModeJavaScript
+	default:
+		CLIEngineMode = axonvm.EngineModeDefault
+	}
+
 	if webRoot := strings.TrimSpace(v.GetString("server.web_root")); webRoot != "" {
 		CLIServerRoot = webRoot
 	}
@@ -202,10 +228,17 @@ func normalizeExtensions(values []string) []string {
 	return cleaned
 }
 
-// isASPExecutionExtension reports whether a file should be executed as ASP based on configured extensions.
+// isASPExecutionExtension reports whether a file should be executed based on the current engine mode.
 func isASPExecutionExtension(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
-	return slices.Contains(ExecuteAsASPExtensions, ext)
+	switch CLIEngineMode {
+	case axonvm.EngineModeVBScript:
+		return slices.Contains(ExecuteAsVBScriptExtensions, ext)
+	case axonvm.EngineModeJavaScript:
+		return slices.Contains(ExecuteAsJavaScriptExtensions, ext)
+	default:
+		return slices.Contains(ExecuteAsASPExtensions, ext)
+	}
 }
 
 // main starts the interactive CLI and handles commands.
@@ -223,6 +256,7 @@ func main() {
 		filepath.Join("temp", "cache"),
 		cacheMaxSizeMB,
 	)
+	scriptCache.SetEngineConfig(CLIEngineMode, ExecuteAsASPExtensions, ExecuteAsVBScriptExtensions, ExecuteAsJavaScriptExtensions)
 	scriptCache.SetWatchedExtensions(ExecuteAsASPExtensions)
 	if !CLIForceFreshCompile {
 		if err := scriptCache.StartInvalidator([]string{workingDir}); err != nil {
@@ -250,26 +284,40 @@ func main() {
 
 	// Handle command-line arguments for help and direct file execution before starting REPL.
 	if len(os.Args) > 1 {
-		arg := os.Args[1]
-		if arg == "-h" || arg == "--help" {
-			printHelp()
-			return
-		}
-
-		if arg == "-r" || arg == "--run" {
-			if !EnableCLIRunFromCommandLine {
-				fmt.Printf("Error %d: %s\n", axonvm.ErrCLIRunCommandNotEnabled, axonvm.ErrCLIRunCommandNotEnabled.String())
-				os.Exit(int(axonvm.ErrCLIRunCommandNotEnabled))
-			}
-			if len(os.Args) < 3 {
-				fmt.Printf("Error %d: %s\n", axonvm.ErrCLIMissingFilePath, axonvm.ErrCLIMissingFilePath.String())
+		for i := 1; i < len(os.Args); i++ {
+			arg := os.Args[i]
+			if arg == "-h" || arg == "--help" {
 				printHelp()
-				os.Exit(int(axonvm.ErrCLIMissingFilePath))
+				return
 			}
-			runDirectFile(os.Args[2])
-			return
-		}
+			if (arg == "-m" || arg == "--mode") && i+1 < len(os.Args) {
+				mode := strings.ToLower(os.Args[i+1])
+				switch mode {
+				case "vbscript":
+					CLIEngineMode = axonvm.EngineModeVBScript
+				case "javascript":
+					CLIEngineMode = axonvm.EngineModeJavaScript
+				case "default":
+					CLIEngineMode = axonvm.EngineModeDefault
+				}
+				i++ // skip mode value
+				continue
+			}
 
+			if arg == "-r" || arg == "--run" {
+				if !EnableCLIRunFromCommandLine {
+					fmt.Printf("Error %d: %s\n", axonvm.ErrCLIRunCommandNotEnabled, axonvm.ErrCLIRunCommandNotEnabled.String())
+					os.Exit(int(axonvm.ErrCLIRunCommandNotEnabled))
+				}
+				if i+1 >= len(os.Args) {
+					fmt.Printf("Error %d: %s\n", axonvm.ErrCLIMissingFilePath, axonvm.ErrCLIMissingFilePath.String())
+					printHelp()
+					os.Exit(int(axonvm.ErrCLIMissingFilePath))
+				}
+				runDirectFile(os.Args[i+1])
+				return
+			}
+		}
 	}
 
 	// Check if CLI is enabled in configuration before starting.
@@ -713,7 +761,16 @@ type cliExecutionResult struct {
 func executeCLICode(code string, virtualPath string, tuiMode bool) cliExecutionResult {
 	result := cliExecutionResult{}
 
-	compiler := axonvm.NewASPCompiler(code)
+	var compiler *axonvm.Compiler
+	switch CLIEngineMode {
+	case axonvm.EngineModeJavaScript:
+		compiler = axonvm.NewJavaScriptCompiler(code)
+	case axonvm.EngineModeVBScript:
+		compiler = axonvm.NewCompiler(code)
+	default:
+		compiler = axonvm.NewASPCompiler(code)
+	}
+
 	if strings.TrimSpace(virtualPath) != "" {
 		compiler.SetSourceName(virtualPath)
 	}
@@ -753,6 +810,7 @@ func executeCLIFile(filePath string, virtualPath string, tuiMode bool) cliExecut
 	if scriptCache == nil {
 		scriptCache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join("temp", "cache"), 1)
 	}
+	scriptCache.SetEngineConfig(CLIEngineMode, ExecuteAsASPExtensions, ExecuteAsVBScriptExtensions, ExecuteAsJavaScriptExtensions)
 
 	// Determine execution mode based on context (TUI or CLI interactive)
 	executionMode := axonvm.ExecutionModeCLI
@@ -796,6 +854,7 @@ func executeCLIFile(filePath string, virtualPath string, tuiMode bool) cliExecut
 // newCLIHost creates a fresh ASP host with CLI-friendly Server and Request context.
 func newCLIHost(out *bytes.Buffer, requestPath string, tuiMode bool) *axonvm.MockHost {
 	host := axonvm.NewMockHost()
+	host.SetEngineMode(CLIEngineMode)
 	host.SetOutput(out)
 	host.Response().SetMaxBufferBytes(ResponseBufferLimitBytes)
 
@@ -840,12 +899,15 @@ func wireCLIObjectAliases(vm *axonvm.VM, compiler *axonvm.Compiler) {
 func printHelp() {
 	fmt.Println("\033[1mG3pix ❖ AxonASP CLI Usage:\n\033[0m")
 	fmt.Println(`  axonasp-cli 
-    Starts the interactive REPL.
-  axonasp-cli -r,--run <file>
-    Runs the specified ASP file directly and returns only its output
-  axonasp-cli -h, --help
-    Shows this help message.
-	
+    axonasp-cli
+      Starts the interactive REPL.
+    axonasp-cli -r,--run <file>
+      Runs the specified ASP file directly and returns only its output
+    axonasp-cli -m,--mode <mode>
+      Sets the engine mode (default, vbscript, javascript).
+    axonasp-cli -h, --help
+      Shows this help message.
+
  ABOUT:
   G3pix ❖ AxonASP
   is a high-performance, cross-platform Classic ASP engine,

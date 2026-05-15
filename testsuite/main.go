@@ -46,16 +46,19 @@ var Version = "0.0.0.0"
 
 // Testsuite configuration values.
 var (
-	DefaultTimezone          = "UTC"
-	MemoryLimitMB            = 128
-	VMPoolSize               = 50
-	BytecodeCachingMode      = "enabled"
-	CacheMaxSizeMB           = 128
-	ScriptTimeout            = 60
-	ResponseBufferLimitBytes = 4 * 1024 * 1024
-	ExecuteAsASPExtensions   = []string{".asp"}
-	CLIServerRoot            = "./www"
-	scriptCache              *axonvm.ScriptCache
+	DefaultTimezone               = "UTC"
+	MemoryLimitMB                 = 128
+	VMPoolSize                    = 50
+	BytecodeCachingMode           = "enabled"
+	CacheMaxSizeMB                = 128
+	ScriptTimeout                 = 60
+	ResponseBufferLimitBytes      = 4 * 1024 * 1024
+	ExecuteAsASPExtensions        = []string{".asp"}
+	ExecuteAsVBScriptExtensions   = []string{".vbs"}
+	ExecuteAsJavaScriptExtensions = []string{".js"}
+	SuiteEngineMode               = axonvm.EngineModeDefault
+	CLIServerRoot                 = "./www"
+	scriptCache                   *axonvm.ScriptCache
 
 	sharedApplication = asp.NewApplication()
 	sharedSession     = asp.NewSession()
@@ -184,6 +187,23 @@ func loadConfig() {
 	if executeAsASP := v.GetStringSlice("global.execute_as_asp"); len(executeAsASP) > 0 {
 		ExecuteAsASPExtensions = normalizeExtensions(executeAsASP)
 	}
+	if executeAsVBS := v.GetStringSlice("global.execute_as_vbscript"); len(executeAsVBS) > 0 {
+		ExecuteAsVBScriptExtensions = normalizeExtensions(executeAsVBS)
+	}
+	if executeAsJS := v.GetStringSlice("global.execute_as_javascript"); len(executeAsJS) > 0 {
+		ExecuteAsJavaScriptExtensions = normalizeExtensions(executeAsJS)
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(v.GetString("testsuite.engine_mode")))
+	switch mode {
+	case "vbscript":
+		SuiteEngineMode = axonvm.EngineModeVBScript
+	case "javascript":
+		SuiteEngineMode = axonvm.EngineModeJavaScript
+	default:
+		SuiteEngineMode = axonvm.EngineModeDefault
+	}
+
 	if webRoot := strings.TrimSpace(v.GetString("server.web_root")); webRoot != "" {
 		CLIServerRoot = webRoot
 	}
@@ -316,11 +336,22 @@ func findTestFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-// isASPExecutionExtension reports whether a file should be executed as ASP based on configured extensions.
+// isASPExecutionExtension reports whether a file should be executed based on the current engine mode.
 func isASPExecutionExtension(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
-	for i := range ExecuteAsASPExtensions {
-		if ExecuteAsASPExtensions[i] == ext {
+	switch SuiteEngineMode {
+	case axonvm.EngineModeVBScript:
+		return containsFold(ExecuteAsVBScriptExtensions, ext)
+	case axonvm.EngineModeJavaScript:
+		return containsFold(ExecuteAsJavaScriptExtensions, ext)
+	default:
+		return containsFold(ExecuteAsASPExtensions, ext)
+	}
+}
+
+func containsFold(slice []string, val string) bool {
+	for _, s := range slice {
+		if strings.EqualFold(s, val) {
 			return true
 		}
 	}

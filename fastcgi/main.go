@@ -54,27 +54,30 @@ import (
 
 // FastCGI configuration values.
 var (
-	Version                  = "0.0.0.0"
-	ListenNetwork            = "tcp"
-	ListenAddr               = "127.0.0.1:9000"
-	RootDir                  = "./www"
-	DefaultPages             = []string{"default.asp", "default.htm", "index.asp", "index.html", "default.html"}
-	ExecuteAsASPExtension    = []string{".asp"}
-	DefaultErrorPagesDir     = "./www/error-pages"
-	ScriptTimeout            = 60
-	ResponseBufferLimitBytes = 4 * 1024 * 1024
-	DebugASP                 = false
-	CleanupSessions          = true
-	CleanupCache             = true
-	DefaultTimezone          = "UTC"
-	MemoryLimitMB            = 128
-	VMPoolSize               = 50
-	BytecodeCachingMode      = "enabled"
-	CacheMaxSizeMB           = 128
-	SessionAutoFlushSeconds  = 15
-	G3AxonLiveActive         = false
-	serverLocation           = time.UTC
-	scriptCache              *axonvm.ScriptCache
+	Version                       = "0.0.0.0"
+	ListenNetwork                 = "tcp"
+	ListenAddr                    = "127.0.0.1:9000"
+	RootDir                       = "./www"
+	DefaultPages                  = []string{"default.asp", "default.htm", "index.asp", "index.html", "default.html"}
+	ExecuteAsASPExtension         = []string{".asp"}
+	ExecuteAsVBScriptExtensions   = []string{".vbs"}
+	ExecuteAsJavaScriptExtensions = []string{".js"}
+	ServerEngineMode              = axonvm.EngineModeDefault
+	DefaultErrorPagesDir          = "./www/error-pages"
+	ScriptTimeout                 = 60
+	ResponseBufferLimitBytes      = 4 * 1024 * 1024
+	DebugASP                      = false
+	CleanupSessions               = true
+	CleanupCache                  = true
+	DefaultTimezone               = "UTC"
+	MemoryLimitMB                 = 128
+	VMPoolSize                    = 50
+	BytecodeCachingMode           = "enabled"
+	CacheMaxSizeMB                = 128
+	SessionAutoFlushSeconds       = 15
+	G3AxonLiveActive              = false
+	serverLocation                = time.UTC
+	scriptCache                   *axonvm.ScriptCache
 )
 
 // init loads environment variables and applies TOML-based configuration through Viper.
@@ -109,6 +112,23 @@ func loadFastCGIConfig() {
 	if executeAsASP := v.GetStringSlice("global.execute_as_asp"); len(executeAsASP) > 0 {
 		ExecuteAsASPExtension = normalizeExtensions(executeAsASP)
 	}
+	if executeAsVBS := v.GetStringSlice("global.execute_as_vbscript"); len(executeAsVBS) > 0 {
+		ExecuteAsVBScriptExtensions = normalizeExtensions(executeAsVBS)
+	}
+	if executeAsJS := v.GetStringSlice("global.execute_as_javascript"); len(executeAsJS) > 0 {
+		ExecuteAsJavaScriptExtensions = normalizeExtensions(executeAsJS)
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(v.GetString("fastcgi.engine_mode")))
+	switch mode {
+	case "vbscript":
+		ServerEngineMode = axonvm.EngineModeVBScript
+	case "javascript":
+		ServerEngineMode = axonvm.EngineModeJavaScript
+	default:
+		ServerEngineMode = axonvm.EngineModeDefault
+	}
+
 	if errorPagesDir := strings.TrimSpace(v.GetString("server.default_error_pages_directory")); errorPagesDir != "" {
 		DefaultErrorPagesDir = errorPagesDir
 	}
@@ -371,6 +391,7 @@ func main() {
 		filepath.Join("temp", "cache"),
 		CacheMaxSizeMB,
 	)
+	scriptCache.SetEngineConfig(ServerEngineMode, ExecuteAsASPExtension, ExecuteAsVBScriptExtensions, ExecuteAsJavaScriptExtensions)
 	scriptCache.SetWatchedExtensions(ExecuteAsASPExtension)
 	if err := scriptCache.StartInvalidator([]string{cacheRoot}); err != nil {
 		log.Printf("Warning: Failed to start bytecode invalidator: %v\n", err)
@@ -575,10 +596,17 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	executeASP(w, r, fullPath)
 }
 
-// isASPExecutionExtension reports whether a file should be executed as ASP based on configured extensions.
+// isASPExecutionExtension reports whether a file should be executed based on the current engine mode.
 func isASPExecutionExtension(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
-	return slices.Contains(ExecuteAsASPExtension, ext)
+	switch ServerEngineMode {
+	case axonvm.EngineModeVBScript:
+		return slices.Contains(ExecuteAsVBScriptExtensions, ext)
+	case axonvm.EngineModeJavaScript:
+		return slices.Contains(ExecuteAsJavaScriptExtensions, ext)
+	default:
+		return slices.Contains(ExecuteAsASPExtension, ext)
+	}
 }
 
 // singleHeaderResponseWriter prevents duplicate WriteHeader calls and can apply a default status code.

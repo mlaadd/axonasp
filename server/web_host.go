@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,6 +64,7 @@ type WebHost struct {
 	session        *asp.Session
 	application    *asp.Application
 	sessionEnabled bool
+	engineMode     axonvm.EngineMode
 }
 
 // NewWebHost creates a new WebHost instance from a real HTTP request/response.
@@ -76,6 +78,7 @@ func NewWebHost(w http.ResponseWriter, r *http.Request) *WebHost {
 		session:        session,
 		application:    sharedApplication,
 		sessionEnabled: true,
+		engineMode:     ServerEngineMode,
 	}
 	host.response.SetRequest(r)
 	host.response.SetMaxBufferBytes(ResponseBufferLimitBytes)
@@ -172,6 +175,9 @@ func (h *WebHost) SetSessionEnabled(enabled bool) { h.sessionEnabled = enabled }
 
 // SessionEnabled reports whether session state is enabled for the current ASP page.
 func (h *WebHost) SessionEnabled() bool { return h.sessionEnabled }
+
+// EngineMode returns the current language mode for the host.
+func (h *WebHost) EngineMode() axonvm.EngineMode { return h.engineMode }
 
 // PersistSession commits or removes session data after request execution.
 func (h *WebHost) PersistSession() {
@@ -302,7 +308,32 @@ func (h *WebHost) ExecuteASPFile(absPath string) error {
 		if len(content) >= 3 && content[0] == 0xEF && content[1] == 0xBB && content[2] == 0xBF {
 			content = content[3:]
 		}
-		compiler := axonvm.NewASPCompiler(string(content))
+
+		var compiler *axonvm.Compiler
+		ext := strings.ToLower(filepath.Ext(absPath))
+		isVBS := false
+		for _, e := range ExecuteAsVBScriptExtensions {
+			if e == ext {
+				isVBS = true
+				break
+			}
+		}
+		isJS := false
+		for _, e := range ExecuteAsJavaScriptExtensions {
+			if e == ext {
+				isJS = true
+				break
+			}
+		}
+
+		if isJS {
+			compiler = axonvm.NewJavaScriptCompiler(string(content))
+		} else if isVBS {
+			compiler = axonvm.NewCompiler(string(content))
+		} else {
+			compiler = axonvm.NewASPCompiler(string(content))
+		}
+
 		compiler.SetSourceName(absPath)
 		if err := compiler.Compile(); err != nil {
 			return err

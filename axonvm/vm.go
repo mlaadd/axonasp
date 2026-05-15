@@ -49,6 +49,15 @@ const (
 	ExecutionModeEval                        // Dynamic eval() execution - bypasses cache
 )
 
+// EngineMode indicates the language mode for the current execution.
+type EngineMode uint8
+
+const (
+	EngineModeDefault    EngineMode = iota // Standard ASP with delimiters (<% %>)
+	EngineModeVBScript                     // Pure VBScript (no delimiters)
+	EngineModeJavaScript                   // Pure JavaScript (no delimiters)
+)
+
 const (
 	nativeObjectResponse int64 = iota
 	nativeObjectRequest
@@ -448,6 +457,8 @@ type VM struct {
 	// executionMode tracks whether this VM is running in an interactive context (CLI/TUI/eval)
 	// where caching should be bypassed to prevent stalls. Server mode uses cache normally.
 	executionMode ExecutionMode
+	// engineMode indicates the language mode for the current execution (ASP, VBScript, JavaScript).
+	engineMode EngineMode
 
 	// Runtime Options
 	optionCompare        int             // 0: Binary, 1: Text
@@ -470,6 +481,7 @@ type VM struct {
 	baseGlobalNames      []string
 	baseGlobalNamesLower []string
 	baseGlobalNamesHash  uint64
+	baseEngineMode       EngineMode
 
 	baseGlobalZeroArgFuncs  map[string]bool
 	baseRuntimeClassVersion uint64
@@ -523,6 +535,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		combineBuffer:                  make([]Value, 0, 16),
 		stringWorkBuffer:               make([]byte, 0, 256),
 		withStack:                      make([]Value, 0, 8),
+		engineMode:                     EngineModeDefault,
 		nextDynamicNativeID:            20000,
 		nextDynamicClassID:             60000,
 		responseCookieItems:            make(map[int64]string),
@@ -1417,6 +1430,22 @@ func (vm *VM) SetHost(h ASPHostEnvironment) {
 // SetOutput sets the output writer for the VM.
 func (vm *VM) SetOutput(w io.Writer) {
 	vm.output = w
+}
+
+// EngineMode returns the current language mode of the VM.
+func (vm *VM) EngineMode() EngineMode {
+	if vm == nil {
+		return EngineModeDefault
+	}
+	return vm.engineMode
+}
+
+// SetEngineMode updates the language mode for the current execution.
+func (vm *VM) SetEngineMode(mode EngineMode) {
+	if vm == nil {
+		return
+	}
+	vm.engineMode = mode
 }
 
 // SetExecutionMode sets the execution context for this VM instance.

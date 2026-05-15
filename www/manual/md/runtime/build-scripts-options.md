@@ -34,7 +34,7 @@ Linux and macOS Bash:
   - Type: String
   - Required: No
   - Default: `windows`
-  - Allowed values: `windows`, `linux`, `darwin`, `all`
+  - Allowed values: `windows`, `linux`, `darwin`, `wasm`, `all`
 - `-Architecture`:
   - Type: String
   - Required: No
@@ -59,7 +59,7 @@ Linux and macOS Bash:
   - Type: String
   - Required: No
   - Default: `linux`
-  - Allowed values: `windows`, `linux`, `darwin`, `all`
+  - Allowed values: `windows`, `linux`, `darwin`, `wasm`, `all`
 - `--arch` or `-a`:
   - Type: String
   - Required: No

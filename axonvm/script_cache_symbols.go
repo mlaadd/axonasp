@@ -133,6 +133,14 @@ func buildCachedProgramFromCompiler(compiler *Compiler) CachedProgram {
 		IncludeDependencies: compiler.IncludeDependencies(),
 	}
 
+	if compiler.IsJSModule() {
+		program.EngineMode = EngineModeJavaScript
+	} else if compiler.IsASP() {
+		program.EngineMode = EngineModeDefault
+	} else {
+		program.EngineMode = EngineModeVBScript
+	}
+
 	// Pre-compute lowercased global names for zero-allocation VM resets.
 	allLower := make([]string, 0, len(allGlobals))
 	for _, name := range allGlobals {

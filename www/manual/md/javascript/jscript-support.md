@@ -1,7 +1,7 @@
 # Use JavaScript (JScript) in AxonASP Pages
 
 ## Overview
-AxonASP provides a high-performance JavaScript (JScript) execution engine that allows you to write server-side logic using full ECMAScript 5 (ES5) standards and also most of ECMAScript 6 (ES6) and onward features. This page covers how to enable JavaScript (JScript), use ASP intrinsic objects, and leverage modern JavaScript features within your ASP applications.
+AxonASP provides a high-performance JavaScript (JScript) execution engine that allows you to write server-side logic using full ECMAScript 5 (ES5) standards for JScript compatibility and also ECMAScript 6 (ES6) and onward features for new code. This page covers how to enable JavaScript (JScript), use ASP intrinsic objects, and leverage modern JavaScript features within your ASP applications.
 
 ### Why use JavaScript (JScript) in ASP?
 - **Familiar Syntax**: Many developers are more familiar with JavaScript than VBScript, making it easier to write complex logic. This allows the user to write full HTML pages, and services using javascript only, with the full support of the AxonASP framework, and in a way that is easier and more memory efficient than using systems like NodeJS.

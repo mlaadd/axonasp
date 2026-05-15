@@ -397,6 +397,22 @@ execute_as_asp = [".asp"]
 execute_as_asp = [".asp", ".aspx", ".cer", ".asa"]
 ```
 
+### execute_as_vbscript
+
+**Type:** Array of Strings  
+**Default:** `[".vbs"]`  
+**Environment Variable:** `EXECUTE_AS_VBSCRIPT`
+
+File extensions treated as pure VBScript code when `engine_mode` is set to `vbscript`. In this mode, ASP delimiters (`<% %>`) are not parsed, and the entire file is treated as source code.
+
+### execute_as_javascript
+
+**Type:** Array of Strings  
+**Default:** `[".js"]`  
+**Environment Variable:** `EXECUTE_AS_JAVASCRIPT`
+
+File extensions treated as pure JavaScript code when `engine_mode` is set to `javascript`. In this mode, ASP delimiters (`<% %>`) are not parsed, and the entire file is treated as source code.
+
 ### viper_watch_config
 
 **Type:** Boolean  
@@ -473,6 +489,18 @@ When `true`, CLI execution always recompiles scripts and bypasses the bytecode c
 **Guidelines:**
 - `true` - Recommended for TUI and development workflows to ensure the latest script version is always executed
 - `false` - Suitable for scheduled or automated `-r` runs where caching improves performance and scripts do not change frequently
+
+### engine_mode
+
+**Type:** String (Enum)  
+**Default:** `"default"`  
+**Environment Variable:** `CLI_ENGINE_MODE`  
+**Valid Values:** `"default"`, `"vbscript"`, `"javascript"`
+
+Sets the language mode for the CLI:
+- `"default"` - Execute standard ASP (HTML + `<% %>` delimiters)
+- `"vbscript"` - Execute pure VBScript (bypassing ASP delimiters for `.vbs` extensions)
+- `"javascript"` - Execute pure JavaScript (bypassing ASP delimiters for `.js` extensions)
 
 **Example:**
 ```toml
@@ -657,6 +685,18 @@ HTML template used for directory listing UI. Can be customized to match site des
 directory_listing_template = "./www/axonasp-pages/directory-listing.html"
 ```
 
+### engine_mode
+
+**Type:** String (Enum)  
+**Default:** `"default"`  
+**Environment Variable:** `SERVER_ENGINE_MODE`  
+**Valid Values:** `"default"`, `"vbscript"`, `"javascript"`
+
+Sets the language mode for the HTTP server:
+- `"default"` - Execute standard ASP (HTML + `<% %>` delimiters)
+- `"vbscript"` - Execute pure VBScript (bypassing ASP delimiters for `.vbs` extensions)
+- `"javascript"` - Execute pure JavaScript (bypassing ASP delimiters for `.js` extensions)
+
 ---
 
 ## FastCGI Server Settings `[fastcgi]`
@@ -697,6 +737,18 @@ server_port = 9000
 ```toml
 server_port = "unix:/tmp/axonasp.sock"
 ```
+
+### engine_mode
+
+**Type:** String (Enum)  
+**Default:** `"default"`  
+**Environment Variable:** `FASTCGI_ENGINE_MODE`  
+**Valid Values:** `"default"`, `"vbscript"`, `"javascript"`
+
+Sets the language mode for the FastCGI server:
+- `"default"` - Execute standard ASP (HTML + `<% %>` delimiters)
+- `"vbscript"` - Execute pure VBScript (bypassing ASP delimiters for `.vbs` extensions)
+- `"javascript"` - Execute pure JavaScript (bypassing ASP delimiters for `.js` extensions)
 
 ---
 

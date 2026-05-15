@@ -54,35 +54,38 @@ import (
 
 // Configuration variables.
 var (
-	Version                    = "0.0.0.0"
-	Port                       = "8801"
-	RootDir                    = "./www"
-	EnableWebConfig            = true
-	EnableDirectoryListing     = false
-	DirectoryListingTemplate   = "./www/axonasp-pages/directory-listing.html"
-	DefaultPages               = []string{"index.asp", "default.asp", "index.html", "default.html", "default.asp"}
-	ExecuteAsASPExtensions     = []string{".asp"}
-	BlockedExtensions          = []string{}
-	BlockedFiles               = []string{}
-	BlockedDirs                = []string{}
-	DefaultErrorPagesDirectory = "./www/error-pages"
-	ScriptTimeout              = 60 // in seconds
-	ResponseBufferLimitBytes   = 4 * 1024 * 1024
-	DebugASP                   = false
-	CleanupSessions            = true
-	CleanupCache               = true
-	DefaultTimezone            = "UTC"
-	MemoryLimitMB              = 128
-	VMPoolSize                 = 50
-	BytecodeCachingMode        = "enabled"
-	CacheMaxSizeMB             = 128
-	SessionAutoFlushSeconds    = 15
-	G3AxonLiveActive           = false
-	serverLocation             = time.UTC
-	blockedDirPrefixes         = []string{}
-	scriptCache                *axonvm.ScriptCache
-	activeWebConfig            *WebConfigProcessor
-	directoryListingRenderer   *DirectoryListingRenderer
+	Version                       = "0.0.0.0"
+	Port                          = "8801"
+	RootDir                       = "./www"
+	EnableWebConfig               = true
+	EnableDirectoryListing        = false
+	DirectoryListingTemplate      = "./www/axonasp-pages/directory-listing.html"
+	DefaultPages                  = []string{"index.asp", "default.asp", "index.html", "default.html", "default.asp"}
+	ExecuteAsASPExtensions        = []string{".asp"}
+	ExecuteAsVBScriptExtensions   = []string{".vbs"}
+	ExecuteAsJavaScriptExtensions = []string{".js"}
+	ServerEngineMode              = axonvm.EngineModeDefault
+	BlockedExtensions             = []string{}
+	BlockedFiles                  = []string{}
+	BlockedDirs                   = []string{}
+	DefaultErrorPagesDirectory    = "./www/error-pages"
+	ScriptTimeout                 = 60 // in seconds
+	ResponseBufferLimitBytes      = 4 * 1024 * 1024
+	DebugASP                      = false
+	CleanupSessions               = true
+	CleanupCache                  = true
+	DefaultTimezone               = "UTC"
+	MemoryLimitMB                 = 128
+	VMPoolSize                    = 50
+	BytecodeCachingMode           = "enabled"
+	CacheMaxSizeMB                = 128
+	SessionAutoFlushSeconds       = 15
+	G3AxonLiveActive              = false
+	serverLocation                = time.UTC
+	blockedDirPrefixes            = []string{}
+	scriptCache                   *axonvm.ScriptCache
+	activeWebConfig               *WebConfigProcessor
+	directoryListingRenderer      *DirectoryListingRenderer
 )
 
 // init loads environment variables and applies TOML-based configuration through Viper.
@@ -134,6 +137,23 @@ func loadServerConfig() {
 	if executeAsASP := v.GetStringSlice("global.execute_as_asp"); len(executeAsASP) > 0 {
 		ExecuteAsASPExtensions = normalizeExtensions(executeAsASP)
 	}
+	if executeAsVBS := v.GetStringSlice("global.execute_as_vbscript"); len(executeAsVBS) > 0 {
+		ExecuteAsVBScriptExtensions = normalizeExtensions(executeAsVBS)
+	}
+	if executeAsJS := v.GetStringSlice("global.execute_as_javascript"); len(executeAsJS) > 0 {
+		ExecuteAsJavaScriptExtensions = normalizeExtensions(executeAsJS)
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(v.GetString("server.engine_mode")))
+	switch mode {
+	case "vbscript":
+		ServerEngineMode = axonvm.EngineModeVBScript
+	case "javascript":
+		ServerEngineMode = axonvm.EngineModeJavaScript
+	default:
+		ServerEngineMode = axonvm.EngineModeDefault
+	}
+
 	if blocked := v.GetStringSlice("server.blocked_extensions"); len(blocked) > 0 {
 		BlockedExtensions = normalizeExtensions(blocked)
 	}
@@ -333,6 +353,7 @@ func main() {
 		filepath.Join("temp", "cache"),
 		CacheMaxSizeMB,
 	)
+	scriptCache.SetEngineConfig(ServerEngineMode, ExecuteAsASPExtensions, ExecuteAsVBScriptExtensions, ExecuteAsJavaScriptExtensions)
 	scriptCache.SetWatchedExtensions(ExecuteAsASPExtensions)
 	if err := scriptCache.StartInvalidator([]string{cacheRoot}); err != nil {
 		log.Printf("Warning: Failed to start bytecode invalidator: %v\n", err)
@@ -526,10 +547,17 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	executeASP(w, r, fullPath)
 }
 
-// isASPExecutionExtension reports whether a file should be executed as ASP based on configured extensions.
+// isASPExecutionExtension reports whether a file should be executed based on the current engine mode.
 func isASPExecutionExtension(filePath string) bool {
 	ext := strings.ToLower(filepath.Ext(filePath))
-	return slices.Contains(ExecuteAsASPExtensions, ext)
+	switch ServerEngineMode {
+	case axonvm.EngineModeVBScript:
+		return slices.Contains(ExecuteAsVBScriptExtensions, ext)
+	case axonvm.EngineModeJavaScript:
+		return slices.Contains(ExecuteAsJavaScriptExtensions, ext)
+	default:
+		return slices.Contains(ExecuteAsASPExtensions, ext)
+	}
 }
 
 // isBlockedExtension reports whether a file extension is blocked for direct requests.

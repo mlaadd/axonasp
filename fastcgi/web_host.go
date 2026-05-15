@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,6 +64,7 @@ type FastCGIHost struct {
 	session        *asp.Session
 	application    *asp.Application
 	sessionEnabled bool
+	engineMode     axonvm.EngineMode
 }
 
 // NewFastCGIHost creates a host object bound to one FastCGI request.
@@ -79,6 +81,7 @@ func NewFastCGIHost(w http.ResponseWriter, r *http.Request) *FastCGIHost {
 		session:        session,
 		application:    sharedFastCGIApplication,
 		sessionEnabled: true,
+		engineMode:     ServerEngineMode,
 	}
 	host.response.SetRequest(r)
 	host.response.SetMaxBufferBytes(ResponseBufferLimitBytes)
@@ -178,6 +181,9 @@ func (h *FastCGIHost) SetSessionEnabled(enabled bool) { h.sessionEnabled = enabl
 // SessionEnabled reports whether session state is enabled for the current FastCGI page.
 func (h *FastCGIHost) SessionEnabled() bool { return h.sessionEnabled }
 
+// EngineMode returns the current language mode for the host.
+func (h *FastCGIHost) EngineMode() axonvm.EngineMode { return h.engineMode }
+
 // Write forwards raw bytes into the ASP Response buffer.
 func (h *FastCGIHost) Write(p []byte) (int, error) {
 	h.response.Write(string(p))
@@ -217,7 +223,32 @@ func (h *FastCGIHost) ExecuteASPFile(absPath string) error {
 		if len(content) >= 3 && content[0] == 0xEF && content[1] == 0xBB && content[2] == 0xBF {
 			content = content[3:]
 		}
-		compiler := axonvm.NewASPCompiler(string(content))
+
+		var compiler *axonvm.Compiler
+		ext := strings.ToLower(filepath.Ext(absPath))
+		isVBS := false
+		for _, e := range ExecuteAsVBScriptExtensions {
+			if e == ext {
+				isVBS = true
+				break
+			}
+		}
+		isJS := false
+		for _, e := range ExecuteAsJavaScriptExtensions {
+			if e == ext {
+				isJS = true
+				break
+			}
+		}
+
+		if isJS {
+			compiler = axonvm.NewJavaScriptCompiler(string(content))
+		} else if isVBS {
+			compiler = axonvm.NewCompiler(string(content))
+		} else {
+			compiler = axonvm.NewASPCompiler(string(content))
+		}
+
 		compiler.SetSourceName(absPath)
 		if err := compiler.Compile(); err != nil {
 			return err
