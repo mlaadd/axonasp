@@ -827,6 +827,7 @@ func (vm *VM) resetDynamicMaps() {
 	clear(vm.jsErrStack)
 	vm.jsErrStack = vm.jsErrStack[:0]
 	vm.jsActiveEnvID = 0
+	vm.jsRootEnvID = 0
 	vm.jsThisValue = Value{Type: VTJSUndefined}
 	vm.jsStringWorkBytes = 0
 }

@@ -32,6 +32,7 @@ import (
 	"math/rand"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -282,7 +283,8 @@ func (vm *VM) jsImportModule(specifier string) (*jsEnvFrame, bool) {
 	}
 
 	vm.syncExecuteGlobalState(child)
-	if finalEnv, ok := vm.jsModuleInstances[modulePath]; ok && finalEnv != nil {
+	if finalEnv, ok := vm.jsEnvItems[moduleEnvID]; ok && finalEnv != nil {
+		vm.jsModuleInstances[modulePath] = finalEnv
 		return finalEnv, true
 	}
 	return moduleEnv, true
@@ -1715,10 +1717,32 @@ func (vm *VM) jsCreateMathObject() Value {
 // jsCreateReflectObject allocates the global Reflect namespace object.
 func (vm *VM) jsCreateReflectObject() Value {
 	objID := vm.allocJSID()
-	obj := make(map[string]Value, 1)
+	obj := make(map[string]Value, 8)
 	obj["__js_type"] = NewString("Reflect")
 	vm.jsObjectItems[objID] = obj
-	vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 8)
+	props := make(map[string]jsPropertyDescriptor, 8)
+
+	createReflectMethod := func(name string, ctor string, length int) {
+		methodID := vm.allocJSID()
+		methodObj := make(map[string]Value, 4)
+		methodObj["__js_type"] = NewString("Function")
+		methodObj["__js_ctor"] = NewString(ctor)
+		methodObj["name"] = NewString(name)
+		methodObj["length"] = NewInteger(int64(length))
+		vm.jsObjectItems[methodID] = methodObj
+		vm.jsPropertyItems[methodID] = make(map[string]jsPropertyDescriptor, 4)
+		obj[name] = Value{Type: VTJSFunction, Num: methodID}
+	}
+
+	createReflectMethod("get", "ReflectGet", 2)
+	createReflectMethod("set", "ReflectSet", 3)
+	createReflectMethod("apply", "ReflectApply", 3)
+	createReflectMethod("construct", "ReflectConstruct", 2)
+	createReflectMethod("has", "ReflectHas", 2)
+	createReflectMethod("deleteProperty", "ReflectDeleteProperty", 2)
+	createReflectMethod("ownKeys", "ReflectOwnKeys", 1)
+
+	vm.jsPropertyItems[objID] = props
 	return Value{Type: VTJSObject, Num: objID}
 }
 
@@ -2388,6 +2412,10 @@ func (vm *VM) jsIsCallable(v Value) bool {
 	switch v.Type {
 	case VTJSFunction, VTBuiltin, VTUserSub:
 		return true
+	case VTJSObject:
+		return vm.jsObjectStringProperty(v, "__js_ctor") != ""
+	case VTNativeObject:
+		return true // Most native objects in our VM are callable (methods/properties)
 	case VTJSProxy:
 		if proxy, ok := vm.jsProxyItems[v.Num]; ok && !proxy.Revoked {
 			return vm.jsIsCallable(proxy.Target)
@@ -3862,6 +3890,14 @@ func (vm *VM) jsObjectOwnKeys(obj Value) []string {
 func (vm *VM) jsMemberGet(target Value, member string) (Value, bool) {
 	if target.Type == VTJSUninitialized {
 		vm.jsThrowReferenceError("Must call super constructor in derived class before accessing 'this'")
+		return Value{Type: VTJSUndefined}, false
+	}
+	if target.Type == VTJSUndefined {
+		vm.jsThrowTypeError(fmt.Sprintf("Cannot read property '%s' of undefined", member))
+		return Value{Type: VTJSUndefined}, false
+	}
+	if target.Type == VTNull {
+		vm.jsThrowTypeError(fmt.Sprintf("Cannot read property '%s' of null", member))
 		return Value{Type: VTJSUndefined}, false
 	}
 	switch target.Type {
@@ -7565,12 +7601,12 @@ func (vm *VM) jsProxyConstruct(proxy Value, args []Value, newTarget Value) Value
 }
 
 func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
+	if !vm.jsIsCallable(callee) {
+		vm.jsThrowTypeError(vm.valueToString(callee) + " is not a function")
+		return Value{Type: VTJSUndefined}
+	}
 	switch callee.Type {
 	case VTJSProxy:
-		if !vm.jsIsCallable(callee) {
-			vm.jsThrowTypeError("Proxy target is not a function")
-			return Value{Type: VTJSUndefined}
-		}
 		return vm.jsProxyApply(callee, thisVal, args)
 	case VTJSFunction:
 		if closure, ok := vm.jsFunctionItems[callee.Num]; ok && closure != nil {
@@ -7654,6 +7690,121 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 				p.Revoked = true
 			}
 			return Value{Type: VTJSUndefined}
+		case "ReflectGet":
+			if len(args) < 1 {
+				vm.jsThrowTypeError("Reflect.get requires at least 1 argument")
+				return Value{Type: VTJSUndefined}
+			}
+			target := args[0]
+			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+				vm.jsThrowTypeError("Reflect.get called on non-object")
+				return Value{Type: VTJSUndefined}
+			}
+			key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+			val, _ := vm.jsMemberGet(target, key)
+			return val
+		case "ReflectSet":
+			if len(args) < 1 {
+				vm.jsThrowTypeError("Reflect.set requires at least 1 argument")
+				return Value{Type: VTJSUndefined}
+			}
+			target := args[0]
+			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+				vm.jsThrowTypeError("Reflect.set called on non-object")
+				return Value{Type: VTJSUndefined}
+			}
+			key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+			val := jsArgOrUndefined(args, 2)
+
+			savedStrict := vm.jsStrictMode
+			vm.jsStrictMode = false
+			vm.jsMemberSet(target, key, val)
+			vm.jsStrictMode = savedStrict
+			return NewBool(true)
+		case "ReflectApply":
+			if len(args) < 1 {
+				vm.jsThrowTypeError("Reflect.apply requires at least 1 argument")
+				return Value{Type: VTJSUndefined}
+			}
+			target := args[0]
+			if !vm.jsIsCallable(target) {
+				vm.jsThrowTypeError("Reflect.apply target is not callable")
+				return Value{Type: VTJSUndefined}
+			}
+			thisArg := jsArgOrUndefined(args, 1)
+			applyArgs := vm.jsExtractApplyArgs(jsArgOrUndefined(args, 2))
+			return vm.jsCall(target, thisArg, applyArgs)
+		case "ReflectConstruct":
+			if len(args) < 1 {
+				vm.jsThrowTypeError("Reflect.construct requires at least 1 argument")
+				return Value{Type: VTJSUndefined}
+			}
+			target := args[0]
+			if !vm.jsIsConstructor(target) {
+				vm.jsThrowTypeError("Reflect.construct target is not a constructor")
+				return Value{Type: VTJSUndefined}
+			}
+			applyArgs := vm.jsExtractApplyArgs(jsArgOrUndefined(args, 1))
+			newTarget := target
+			if len(args) > 2 {
+				newTarget = args[2]
+				if !vm.jsIsConstructor(newTarget) {
+					vm.jsThrowTypeError("Reflect.construct newTarget is not a constructor")
+					return Value{Type: VTJSUndefined}
+				}
+			}
+			return vm.jsConstruct(target, applyArgs, newTarget, false)
+		case "ReflectHas":
+			if len(args) < 1 {
+				vm.jsThrowTypeError("Reflect.has requires at least 1 argument")
+				return Value{Type: VTJSUndefined}
+			}
+			target := args[0]
+			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+				vm.jsThrowTypeError("Reflect.has called on non-object")
+				return Value{Type: VTJSUndefined}
+			}
+			key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+			return NewBool(vm.jsHas(target, key))
+		case "ReflectDeleteProperty":
+			if len(args) < 1 {
+				vm.jsThrowTypeError("Reflect.deleteProperty requires at least 1 argument")
+				return Value{Type: VTJSUndefined}
+			}
+			target := args[0]
+			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+				vm.jsThrowTypeError("Reflect.deleteProperty called on non-object")
+				return Value{Type: VTJSUndefined}
+			}
+			key := vm.jsPropertyKeyFromValue(jsArgOrUndefined(args, 1))
+			success := false
+			if target.Type == VTJSProxy {
+				success = vm.jsProxyDelete(target, key)
+			} else {
+				success = vm.jsMemberDelete(target, key)
+			}
+			return NewBool(success)
+		case "ReflectOwnKeys":
+			if len(args) < 1 {
+				vm.jsThrowTypeError("Reflect.ownKeys requires at least 1 argument")
+				return Value{Type: VTJSUndefined}
+			}
+			target := args[0]
+			if target.Type != VTJSObject && target.Type != VTJSFunction && target.Type != VTArray && target.Type != VTJSProxy {
+				vm.jsThrowTypeError("Reflect.ownKeys called on non-object")
+				return Value{Type: VTJSUndefined}
+			}
+			var keys []string
+			if target.Type == VTJSProxy {
+				keys = vm.jsProxyOwnKeys(target)
+			} else {
+				keys = vm.jsObjectOwnKeys(target)
+			}
+			values := make([]Value, len(keys))
+			for i := 0; i < len(keys); i++ {
+				values[i] = NewString(keys[i])
+			}
+			return ValueFromVBArray(NewVBArrayFromValues(0, values))
 		case "ArrayValues":
 			return vm.jsCreateArrayIterator(thisVal, 0)
 		case "ArrayKeys":
@@ -8732,6 +8883,8 @@ func (vm *VM) jsIndexSet(arr Value, index Value, value Value) {
 	}
 }
 
+var jsRegExpUnicodeEscapeRegex = regexp.MustCompile(`\\u\{([0-9a-fA-F]+)\}`)
+
 func (vm *VM) jsCompileRegExp(pattern string, flags string) (*regexp2.Regexp, error) {
 	var options regexp2.RegexOptions
 
@@ -8744,6 +8897,11 @@ func (vm *VM) jsCompileRegExp(pattern string, flags string) (*regexp2.Regexp, er
 	}
 	if strings.Contains(flagsLower, "s") {
 		options |= regexp2.Singleline
+	}
+	if strings.Contains(flagsLower, "u") {
+		options |= regexp2.Unicode
+		// Translate JS \u{...} to regexp2 \x{...}
+		pattern = jsRegExpUnicodeEscapeRegex.ReplaceAllString(pattern, `\x{$1}`)
 	}
 
 	return regexp2.Compile(pattern, options)

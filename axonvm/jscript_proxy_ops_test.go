@@ -84,7 +84,6 @@ func TestJScriptProxyOperations(t *testing.T) {
 		})()`, "1,revoked"},
 	}
 
-
 	for _, tt := range tests {
 		out, err := runJScript2(t, jscriptSrc(`Response.Write(`+tt.code+`);`))
 		if err != nil {

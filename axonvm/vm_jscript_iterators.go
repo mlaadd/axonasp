@@ -176,6 +176,15 @@ func (vm *VM) jsPopulatePrototypes(bindings map[string]Value) {
 		}
 	}
 
+	// Set.prototype
+	if setCtor, ok := bindings["Set"]; ok {
+		if proto, deferred := vm.jsMemberGet(setCtor, "prototype"); !deferred && proto.Type == VTJSObject {
+			for _, name := range []string{"add", "has", "delete", "clear"} {
+				vm.jsSetDescriptor(proto.Num, name, jsDefaultPropertyDescriptor(vm.jsCreateNativeFunction(name, "Set")))
+			}
+		}
+	}
+
 	// WeakMap.prototype
 	if weakMapCtor, ok := bindings["WeakMap"]; ok {
 		if proto, deferred := vm.jsMemberGet(weakMapCtor, "prototype"); !deferred && proto.Type == VTJSObject {

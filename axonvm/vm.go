@@ -1408,6 +1408,8 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.jsSymbolGlobalRegistry = child.jsSymbolGlobalRegistry
 	vm.jsNextSymbolID = child.jsNextSymbolID
 	vm.jsProxyItems = child.jsProxyItems
+	vm.jsModuleInstances = child.jsModuleInstances
+	vm.jsModuleLoading = child.jsModuleLoading
 	vm.jsRootEnvID = child.jsRootEnvID
 }
 
@@ -6468,6 +6470,22 @@ func (vm *VM) aspErrorPropertyValue(errObj *asp.ASPError, property string) Value
 // valueToString converts VM values to string and resolves dynamic native values when needed.
 func (vm *VM) valueToString(v Value) string {
 	v = resolveCallable(vm, v)
+	if v.Type == VTJSObject || v.Type == VTJSFunction {
+		if vm.jsObjectStringProperty(v, "__js_type") == "Error" {
+			name := vm.jsObjectStringProperty(v, "name")
+			msg := vm.jsObjectStringProperty(v, "message")
+			if name == "" {
+				name = vm.jsObjectStringProperty(v, "__js_ctor")
+			}
+			if name == "" {
+				name = "Error"
+			}
+			if msg == "" {
+				return name
+			}
+			return name + ": " + msg
+		}
+	}
 	if v.Type == VTNativeObject {
 		if cookieName, exists := vm.responseCookieItems[v.Num]; exists {
 			return vm.host.Response().GetCookieValue(cookieName)
