@@ -367,6 +367,58 @@ func (self *_RegExp_parser) scanEscape(inClass bool) {
 		}
 		self.read()
 		return
+	case 'p', 'P':
+		// Unicode property escapes: \p{Property} and \P{Property}
+		// Only valid in unicode mode
+		if !self.unicode {
+			self.error(true, "Unicode property escapes require unicode flag")
+			return
+		}
+		negate := self.chr == 'P'
+		self.read()
+		if self.chr != '{' {
+			self.error(true, "Invalid Unicode property escape")
+			return
+		}
+		self.read() // skip '{'
+
+		// Extract property name
+		propStart := self.chrOffset
+		for self.chr != '}' && self.chr != -1 {
+			self.read()
+		}
+		if self.chr != '}' {
+			self.error(true, "Unterminated Unicode property escape")
+			return
+		}
+		propEnd := self.chrOffset
+		propertyName := self.str[propStart:propEnd]
+
+		// Expand the property
+		expander := NewUnicodePropertyExpander()
+		expanded, err := expander.ExpandProperty(propertyName, negate)
+		if err != nil {
+			self.error(true, "Unknown Unicode property: %s", propertyName)
+			return
+		}
+
+		if inClass {
+			// Token-style expansions (e.g. \p{L}) can be inserted directly.
+			if strings.HasPrefix(expanded, "[") && strings.HasSuffix(expanded, "]") {
+				if strings.HasPrefix(expanded, "[^") {
+					self.writeString(expanded)
+				} else {
+					self.writeString(expanded[1 : len(expanded)-1])
+				}
+			} else {
+				self.writeString(expanded)
+			}
+		} else {
+			// Outside class, write the full character class
+			self.writeString(expanded)
+		}
+		self.read()
+		return
 	default:
 		// $ is an identifier character, so we have to have
 		// a special case for it here

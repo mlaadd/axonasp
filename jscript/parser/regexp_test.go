@@ -168,6 +168,26 @@ func TestTransformRegExp(t *testing.T) {
 	})
 }
 
+func TestTransformRegExpUnicodePropertyEscapes(t *testing.T) {
+	tt(t, func() {
+		pattern, err := TransformRegExp(`\p{Letter}+`, false, true)
+		is(err, nil)
+		is(pattern, `\p{L}+`)
+	})
+
+	tt(t, func() {
+		pattern, err := TransformRegExp(`[\p{Letter}\p{Number}]+`, false, true)
+		is(err, nil)
+		is(pattern, `[\p{L}\p{N}]+`)
+	})
+
+	tt(t, func() {
+		pattern, err := TransformRegExp(`\P{Letter}+`, false, true)
+		is(err, nil)
+		is(pattern, `\P{L}+`)
+	})
+}
+
 func BenchmarkTransformRegExp(b *testing.B) {
 	f := func(reStr string, b *testing.B) {
 		b.ResetTimer()

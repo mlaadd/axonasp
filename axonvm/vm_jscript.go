@@ -5012,11 +5012,23 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			}
 			return NewInteger(int64(runes[idx])), true
 		case strings.EqualFold(member, "codePointAt"):
-			idx := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
-			if idx < 0 {
+			position := vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt
+			if math.IsNaN(position) {
+				position = 0
+			}
+			if math.IsInf(position, 0) {
+				return Value{Type: VTJSUndefined}, true
+			}
+			position = math.Trunc(position)
+			if position < 0 {
 				return Value{Type: VTJSUndefined}, true
 			}
 			units := utf16.Encode(runes)
+			maxInt := float64(int(^uint(0) >> 1))
+			if position > maxInt {
+				return Value{Type: VTJSUndefined}, true
+			}
+			idx := int(position)
 			if idx >= len(units) {
 				return Value{Type: VTJSUndefined}, true
 			}
@@ -6108,6 +6120,38 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 					}
 					return ValueFromVBArray(NewVBArrayFromValues(0, vals)), true
 				}
+			}
+		case "String":
+			switch {
+			case strings.EqualFold(member, "fromCodePoint"):
+				// String.fromCodePoint(...codePoints)
+				// Converts one or more code points to a string
+				if len(args) == 0 {
+					return NewString(""), true
+				}
+				var runes []rune
+				for i := 0; i < len(args); i++ {
+					codePointVal := vm.jsToNumber(args[i])
+					codePoint := int64(codePointVal.Flt)
+					// Convert to integer by truncating towards zero
+					if math.IsNaN(codePointVal.Flt) {
+						codePoint = 0
+					} else if codePointVal.Flt < 0 || codePointVal.Flt > 0x10FFFF {
+						// Out of range
+						vm.jsThrowRangeError(fmt.Sprintf("Invalid code point %d", codePoint))
+						return Value{Type: VTJSUndefined}, true
+					} else if int64(codePointVal.Flt) != codePoint {
+						// Not an integer value
+						vm.jsThrowRangeError(fmt.Sprintf("Invalid code point %v", codePointVal.Flt))
+						return Value{Type: VTJSUndefined}, true
+					}
+					runes = append(runes, rune(codePoint))
+				}
+				result := string(runes)
+				if !vm.jsEnsureStringSize(len(result)) || !vm.jsChargeStringWork(len(result)) {
+					return Value{Type: VTJSUndefined}, true
+				}
+				return NewString(result), true
 			}
 		case "Object":
 			switch {
@@ -9936,6 +9980,117 @@ func (vm *VM) jsIndexSet(arr Value, index Value, value Value) {
 
 var jsRegExpUnicodeEscapeRegex = regexp.MustCompile(`\\u\{([0-9a-fA-F]+)\}`)
 
+func jsNormalizeUnicodePropertyName(name string) string {
+	name = strings.ToLower(name)
+	name = strings.ReplaceAll(name, "_", "")
+	name = strings.ReplaceAll(name, "-", "")
+	name = strings.ReplaceAll(name, " ", "")
+	return name
+}
+
+func jsCanonicalUnicodeProperty(name string) (string, bool) {
+	switch jsNormalizeUnicodePropertyName(name) {
+	case "l", "letter", "alphabetic":
+		return "L", true
+	case "lu", "uppercase":
+		return "Lu", true
+	case "ll", "lowercase":
+		return "Ll", true
+	case "m", "mark":
+		return "M", true
+	case "n", "number", "numeric":
+		return "N", true
+	case "p", "punctuation":
+		return "P", true
+	case "s", "symbol":
+		return "S", true
+	case "z", "separator", "space":
+		return "Z", true
+	case "zs":
+		return "Zs", true
+	case "c", "other":
+		return "C", true
+	default:
+		return "", false
+	}
+}
+
+func jsTranslateUnicodePropertyEscapes(pattern string) string {
+	var builder strings.Builder
+	changed := false
+
+	for i := 0; i < len(pattern); {
+		if pattern[i] != '\\' || i+3 >= len(pattern) {
+			if changed {
+				builder.WriteByte(pattern[i])
+			}
+			i++
+			continue
+		}
+
+		kind := pattern[i+1]
+		if (kind != 'p' && kind != 'P') || pattern[i+2] != '{' {
+			if changed {
+				builder.WriteByte(pattern[i])
+			}
+			i++
+			continue
+		}
+
+		backslashCount := 0
+		for j := i - 1; j >= 0 && pattern[j] == '\\'; j-- {
+			backslashCount++
+		}
+		if backslashCount%2 == 1 {
+			if changed {
+				builder.WriteByte(pattern[i])
+			}
+			i++
+			continue
+		}
+
+		closeRel := strings.IndexByte(pattern[i+3:], '}')
+		if closeRel < 0 {
+			if changed {
+				builder.WriteByte(pattern[i])
+			}
+			i++
+			continue
+		}
+
+		close := i + 3 + closeRel
+		propertyName := pattern[i+3 : close]
+		canonical, ok := jsCanonicalUnicodeProperty(propertyName)
+		if !ok {
+			if changed {
+				builder.WriteByte(pattern[i])
+			}
+			i++
+			continue
+		}
+
+		if !changed {
+			builder.Grow(len(pattern) + 16)
+			builder.WriteString(pattern[:i])
+			changed = true
+		}
+
+		if kind == 'P' {
+			builder.WriteString(`\P{`)
+		} else {
+			builder.WriteString(`\p{`)
+		}
+		builder.WriteString(canonical)
+		builder.WriteByte('}')
+		i = close + 1
+	}
+
+	if !changed {
+		return pattern
+	}
+	return builder.String()
+}
+
 func (vm *VM) jsCompileRegExp(pattern string, flags string) (*regexp2.Regexp, error) {
 	var options regexp2.RegexOptions
 
@@ -9953,6 +10108,8 @@ func (vm *VM) jsCompileRegExp(pattern string, flags string) (*regexp2.Regexp, er
 		options |= regexp2.Unicode
 		// Translate JS \u{...} to regexp2 \x{...}
 		pattern = jsRegExpUnicodeEscapeRegex.ReplaceAllString(pattern, `\x{$1}`)
+		// Normalize JS Unicode property aliases to regex category shorthands.
+		pattern = jsTranslateUnicodePropertyEscapes(pattern)
 	}
 
 	return regexp2.Compile(pattern, options)

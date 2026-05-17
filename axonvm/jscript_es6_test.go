@@ -626,6 +626,107 @@ func TestJScriptStringCodePointAt(t *testing.T) {
 	}
 }
 
+func TestJScriptStringCodePointAtCoercion(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var s = "A😀B";
+		Response.Write(s.codePointAt() + "|");
+		Response.Write(s.codePointAt(1.9) + "|");
+		Response.Write(s.codePointAt(NaN) + "|");
+		Response.Write((s.codePointAt(Infinity) === undefined) ? "undef" : "bad");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "65|128512|65|undef" {
+		t.Errorf("expected '65|128512|65|undef', got %q", out)
+	}
+}
+
+func TestJScriptStringFromCodePoint(t *testing.T) {
+	// Test single code point (ASCII)
+	out, err := runJScript2(t, jscriptSrc(`
+		Response.Write(String.fromCodePoint(65));
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "A" {
+		t.Errorf("expected 'A', got %q", out)
+	}
+
+	// Test multiple code points
+	out, err = runJScript2(t, jscriptSrc(`
+		Response.Write(String.fromCodePoint(65, 66, 67));
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "ABC" {
+		t.Errorf("expected 'ABC', got %q", out)
+	}
+
+	// Test emoji (surrogate pair: 0x1F600)
+	out, err = runJScript2(t, jscriptSrc(`
+		Response.Write(String.fromCodePoint(0x1F600));
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "😀" {
+		t.Errorf("expected '😀', got %q", out)
+	}
+
+	// Test mixed ASCII and emoji
+	out, err = runJScript2(t, jscriptSrc(`
+		Response.Write(String.fromCodePoint(65, 0x1F600, 66));
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "A😀B" {
+		t.Errorf("expected 'A😀B', got %q", out)
+	}
+
+	// Test round-trip: fromCodePoint then codePointAt
+	out, err = runJScript2(t, jscriptSrc(`
+		var s = String.fromCodePoint(0x1F600);
+		Response.Write(s.codePointAt(0) === 0x1F600 ? "ok" : "bad");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "ok" {
+		t.Errorf("expected 'ok', got %q", out)
+	}
+
+	// Test empty call
+	out, err = runJScript2(t, jscriptSrc(`
+		Response.Write(String.fromCodePoint() === "" ? "ok" : "bad");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "ok" {
+		t.Errorf("expected 'ok', got %q", out)
+	}
+
+	// Test error: out of range (negative)
+	_, err = runJScript2(t, jscriptSrc(`
+		String.fromCodePoint(-1);
+	`))
+	if err == nil {
+		t.Error("expected error for negative code point")
+	}
+
+	// Test error: out of range (> 0x10FFFF)
+	_, err = runJScript2(t, jscriptSrc(`
+		String.fromCodePoint(0x110000);
+	`))
+	if err == nil {
+		t.Error("expected error for code point > 0x10FFFF")
+	}
+}
+
 func TestJScriptStringNormalize(t *testing.T) {
 	out, err := runJScript2(t, jscriptSrc(`
 		var decomposed = "e\u0301";
@@ -645,6 +746,122 @@ func TestJScriptStringNormalize(t *testing.T) {
 	}
 	if out != "yes|yes|range" {
 		t.Errorf("expected 'yes|yes|range', got %q", out)
+	}
+}
+
+func TestJScriptUnicodePropertyEscapes(t *testing.T) {
+	// Test \p{Letter} - matches letters
+	out, err := runJScript2(t, jscriptSrc(`
+		var re = /\p{Letter}+/u;
+		Response.Write("Pattern test: ");
+		Response.Write(re.test("Hello") ? "yes" : "no");
+		Response.Write("|");
+		Response.Write(re.test("123") ? "yes" : "no");
+	`))
+	if err != nil {
+		t.Fatalf("Error creating regex: %v", err)
+	}
+	if out != "Pattern test: yes|no" {
+		t.Errorf("expected 'Pattern test: yes|no', got %q", out)
+	}
+
+	// Test \p{Number} - matches digits
+	out, err = runJScript2(t, jscriptSrc(`
+		var re = /\p{Number}+/u;
+		Response.Write(re.test("123") ? "yes" : "no");
+		Response.Write("|");
+		Response.Write(re.test("abc") ? "yes" : "no");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "yes|no" {
+		t.Errorf("expected 'yes|no', got %q", out)
+	}
+
+	// Test \P{Letter} (negated) - matches non-letters
+	out, err = runJScript2(t, jscriptSrc(`
+		var re = /\P{Letter}+/u;
+		Response.Write(re.test("123") ? "yes" : "no");
+		Response.Write("|");
+		Response.Write(re.test("abc") ? "yes" : "no");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "yes|no" {
+		t.Errorf("expected 'yes|no', got %q", out)
+	}
+
+	// Test \p{Punctuation}
+	out, err = runJScript2(t, jscriptSrc(`
+		var re = /\p{Punctuation}+/u;
+		Response.Write(re.test("!!!") ? "yes" : "no");
+		Response.Write("|");
+		Response.Write(re.test("abc") ? "yes" : "no");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "yes|no" {
+		t.Errorf("expected 'yes|no', got %q", out)
+	}
+
+	// Test combined properties in pattern
+	out, err = runJScript2(t, jscriptSrc(`
+		var re = /[\p{Letter}\p{Number}]+/u;
+		Response.Write(re.test("abc123") ? "yes" : "no");
+		Response.Write("|");
+		Response.Write(re.test("!!!") ? "yes" : "no");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "yes|no" {
+		t.Errorf("expected 'yes|no', got %q", out)
+	}
+
+	// Escaped backslash should not be treated as a Unicode property escape.
+	out, err = runJScript2(t, jscriptSrc(`
+		var re = /\\p{Letter}/u;
+		Response.Write(re.test("\\p{Letter}") ? "yes" : "no");
+		Response.Write("|");
+		Response.Write(re.test("A") ? "yes" : "no");
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "yes|no" {
+		t.Errorf("expected 'yes|no', got %q", out)
+	}
+}
+
+func TestJScriptUnicodeIdentifiers(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var Ω = 3;
+		var café = 4;
+		var 变量 = 5;
+		Response.Write(Ω + café + 变量);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "12" {
+		t.Errorf("expected '12', got %q", out)
+	}
+}
+
+func TestJScriptUnicodeEscapedIdentifiers(t *testing.T) {
+	out, err := runJScript2(t, jscriptSrc(`
+		var \u03C0 = 3;
+		var \u{41} = 7;
+		Response.Write(π + A);
+	`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "10" {
+		t.Errorf("expected '10', got %q", out)
 	}
 }
 
