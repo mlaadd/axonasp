@@ -25,24 +25,6 @@ This document serves as a high-precision checklist for implementing remaining EC
 
 ---
 
-## 🛠️ PHASE 4: UNICODE & FULL PLANE SUPPORT (MEDIUM TO HIGH COMPLEXITY)
-
-**Goal:** Bring JScript into full compliance with the Unicode Standard, moving beyond the Basic Multilingual Plane (BMP).
-If necessary use the unistring inside ./jscript/unistring.go, but check if it is suitable for the task before using it. The unistring implementation is designed to handle Unicode strings efficiently, but it may not be necessary for all operations. For basic string manipulation and regular expression support, you may be able to work directly with Go's built-in string type, which is UTF-8 encoded and preferable. Also check the current UTF-8/UTF-16 implementation that we already use for VBScript to see if it is not better to implement it in the JavaScript engine.
-### Tasks:
-
-* SUBPHASE 4.1: Regular Expressions & Strings
-* [ ] **`u` Flag in RegExp:** Update the regular expression engine compilation step. Support the `u` flag, enabling Unicode code point escapes (`\u{1F600}`) and Unicode property escapes. Remember we use regex2, so check its documentation for how to implement this feature, maybe it is already supported.
-* [ ] **String Code Points:** Implement `String.prototype.codePointAt()` and `String.fromCodePoint()`. Be extremely careful with Go's `rune` vs JS string length (UTF-16 surrogate pairs) to avoid out-of-bounds panics.
-
-
-* SUBPHASE 4.2: Lexical Unicode Identifiers
-* [ ] **AST & Lexer Updates:** Modify the Lexer **ONLY if necessary** in `./jscript/` to allow valid Unicode characters in variable/identifier names as defined by the ES6 spec. Ensure constants map correctly without encoding corruption in the single-pass compiler context.
-
-
-
----
-
 ## 🛠️ PHASE 5: PROXY/REFLECT INVARIANTS (HIGH COMPLEXITY)
 
 **Goal:** Enforce the strict "Invariants of the Essential Internal Methods" for Proxies to prevent malicious or broken traps from corrupting the VM state.
@@ -57,28 +39,6 @@ If necessary use the unistring inside ./jscript/unistring.go, but check if it is
 * SUBPHASE 5.2: Prototype & Extensibility Safety
 * [ ] **Prototype Traps:** Ensure the `getPrototypeOf` trap cannot return a different prototype if the target object is non-extensible.
 * [ ] **Error Handling:** If an invariant is broken, throw a precise `TypeError` using the `jscripterrorcodes.go` system. Test extensively with edge cases.
-
-
-
----
-
-## 🛠️ PHASE 6: INTERNATIONALIZATION - THE `Intl` OBJECT (EXTREME COMPLEXITY)
-
-**Goal:** Implement the complex `Intl` API for ES6 localization support, balancing spec compliance with our "Zero-Allocation" and memory constraint axioms.
-
-### Tasks:
-
-* SUBPHASE 6.1: Core Infrastructure
-* [ ] **Locale Resolution:** Implement the default locale detection and fallback mechanisms required by the spec.
-* [ ] **Global `Intl` Namespace:** Register the `Intl` object and stub out its constructors globally.
-
-
-* SUBPHASE 6.2: Formatters
-* [ ] **`Intl.DateTimeFormat`:** Wrap Go's `time` package logic to mirror JS locale strings. Map JS format options (e.g., `year: 'numeric', month: 'short'`) to Go format strings efficiently.
-* [ ] **`Intl.NumberFormat`:** Implement localized number formatting. Be wary of memory allocations when dealing with dynamic string building.
-* [ ] **`Intl.Collator`:** Implement localized string comparison. Rely on Go standard libraries where possible, but ensure strict adherence to ES-spec sorting rules.
-
-
 
 ---
 

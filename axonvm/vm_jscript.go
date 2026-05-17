@@ -8681,8 +8681,20 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			return vm.jsPromiseFinally(thisVal, args)
 		case "IntlDateTimeFormatFormat":
 			return vm.jsIntlDateTimeFormatFormat(callee, thisVal, args)
+		case "IntlDateTimeFormatFormatToParts":
+			return vm.jsIntlDateTimeFormatFormatToParts(callee, thisVal, args)
 		case "IntlNumberFormatFormat":
 			return vm.jsIntlNumberFormatFormat(callee, thisVal, args)
+		case "IntlNumberFormatFormatToParts":
+			return vm.jsIntlNumberFormatFormatToParts(callee, thisVal, args)
+		case "IntlCollatorCompare":
+			return vm.jsIntlCollatorCompare(callee, thisVal, args)
+		case "IntlPluralRulesSelect":
+			return vm.jsIntlPluralRulesSelect(callee, thisVal, args)
+		case "IntlRelativeTimeFormatFormat":
+			return vm.jsIntlRelativeTimeFormatFormat(callee, thisVal, args)
+		case "IntlRelativeTimeFormatFormatToParts":
+			return vm.jsIntlRelativeTimeFormatFormatToParts(callee, thisVal, args)
 		case "ObjectPrototype":
 			return vm.jsCallObjectPrototypeMethod(thisVal, vm.jsObjectStringProperty(callee, "name"), args)
 		case "Set":
@@ -9657,6 +9669,12 @@ func (vm *VM) jsConstruct(constructor Value, args []Value, newTarget Value, isSu
 			return vm.jsIntlCreateDateTimeFormat(args)
 		case "IntlNumberFormat":
 			return vm.jsIntlCreateNumberFormat(args)
+		case "IntlCollator":
+			return vm.jsIntlCreateCollator(args)
+		case "IntlPluralRules":
+			return vm.jsIntlCreatePluralRules(args)
+		case "IntlRelativeTimeFormat":
+			return vm.jsIntlCreateRelativeTimeFormat(args)
 		case "RegExp":
 			pattern := ""
 			flags := ""

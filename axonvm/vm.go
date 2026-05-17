@@ -396,6 +396,9 @@ type VM struct {
 	jsModuleLoading                map[string]struct{}    // Tracks modules currently executing for circular import handling
 	jsIntlDateTimeFormatItems      map[int64]*jsIntlDateTimeFormatObject
 	jsIntlNumberFormatItems        map[int64]*jsIntlNumberFormatObject
+	jsIntlCollatorItems            map[int64]*jsIntlCollatorObject
+	jsIntlPluralRulesItems         map[int64]*jsIntlPluralRulesObject
+	jsIntlRelativeTimeFormatItems map[int64]*jsIntlRelativeTimeFormatObject
 	jsPromiseItems                 map[int64]*jsPromiseObject
 	jsGeneratorItems               map[int64]*jsGeneratorObject
 	jsProxyItems                   map[int64]*jsProxyObject
@@ -639,6 +642,9 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		jsModuleLoading:                make(map[string]struct{}),
 		jsIntlDateTimeFormatItems:      make(map[int64]*jsIntlDateTimeFormatObject),
 		jsIntlNumberFormatItems:        make(map[int64]*jsIntlNumberFormatObject),
+		jsIntlCollatorItems:            make(map[int64]*jsIntlCollatorObject),
+		jsIntlPluralRulesItems:         make(map[int64]*jsIntlPluralRulesObject),
+		jsIntlRelativeTimeFormatItems: make(map[int64]*jsIntlRelativeTimeFormatObject),
 		jsPromiseItems:                 make(map[int64]*jsPromiseObject),
 		jsGeneratorItems:               make(map[int64]*jsGeneratorObject),
 		jsProxyItems:                   make(map[int64]*jsProxyObject),
