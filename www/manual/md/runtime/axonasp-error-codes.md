@@ -453,6 +453,21 @@ The following codes are defined by the AxonASP JScript engine in `jscript/jscrip
 | 5021 | Invalid range in character set |
 | 5022 | Exception thrown and not caught |
 | 5023 | Function does not have a valid prototype object |
+| 5024 | Proxy target or handler must be an object |
+| 5025 | Reflect argument must be an object |
+| 5026 | Proxy trap returned an invalid value |
+| 5027 | Cannot perform operation on a revoked proxy |
+| 5028 | Proxy trap invariant violation: non-configurable property mismatch |
+| 5029 | Proxy 'get' trap invariant violation: different value for non-configurable non-writable property |
+| 5030 | Proxy 'has' trap invariant violation: cannot report non-configurable or non-extensible property as absent |
+| 5031 | Proxy 'set' trap invariant violation: cannot set non-configurable non-writable property |
+| 5032 | Proxy 'defineProperty' trap invariant violation |
+| 5033 | Proxy 'getOwnPropertyDescriptor' trap invariant violation |
+| 5034 | Proxy 'deleteProperty' trap invariant violation: cannot delete non-configurable property |
+| 5035 | Proxy 'ownKeys' trap invariant violation |
+| 5036 | Proxy 'getPrototypeOf' trap invariant violation: different prototype for non-extensible target |
+| 5037 | Proxy 'setPrototypeOf' trap invariant violation: cannot change prototype of non-extensible target |
+| 5038 | Proxy 'preventExtensions' trap invariant violation: trap returned true but target is still extensible |
 
 ### JScript Remarks
 

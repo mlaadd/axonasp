@@ -4054,6 +4054,10 @@ func (vm *VM) jsPropertyKeyToValue(key string) Value {
 	return NewString(key)
 }
 
+// jsProxyGet handles the [[Get]] internal method for a Proxy, enforcing all
+// ECMAScript invariants: a non-configurable non-writable data property must
+// return exactly its stored value; a non-configurable accessor with no getter
+// must return undefined.
 func (vm *VM) jsProxyGet(proxy Value, member string, receiver Value) (Value, bool) {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4065,16 +4069,38 @@ func (vm *VM) jsProxyGet(proxy Value, member string, receiver Value) (Value, boo
 	trap, _ := vm.jsMemberGet(pObj.Handler, "get")
 
 	if trap.Type == VTJSUndefined || trap.Type == VTNull {
-		// 2. Forward to target
+		// 2. No trap — forward to target directly
 		return vm.jsMemberGet(pObj.Target, member)
 	}
 
 	// 3. Invoke the trap: trap(target, property, receiver)
 	args := []Value{pObj.Target, vm.jsPropertyKeyToValue(member), receiver}
 	result := vm.jsCall(trap, pObj.Handler, args)
+
+	// 4. Invariant check (§10.5.8 step 7)
+	if pObj.Target.Type == VTJSObject || pObj.Target.Type == VTJSFunction {
+		if targetDesc, hasDesc := vm.jsGetDescriptor(pObj.Target.Num, member); hasDesc && !targetDesc.Configurable {
+			if jsDescriptorIsData(targetDesc) && !targetDesc.Writable {
+				// Must return the exact same value
+				if !vm.jsStrictEquals(result, targetDesc.Value) {
+					vm.jsThrowJSError(jscript.ProxyGetTrapInvariantViolation)
+					return Value{Type: VTJSUndefined}, false
+				}
+			} else if (targetDesc.HasGetter || targetDesc.HasSetter) && !targetDesc.HasGetter {
+				// Accessor with no getter — result must be undefined
+				if result.Type != VTJSUndefined {
+					vm.jsThrowJSError(jscript.ProxyGetTrapInvariantViolation)
+					return Value{Type: VTJSUndefined}, false
+				}
+			}
+		}
+	}
 	return result, false
 }
 
+// jsProxySet handles the [[Set]] internal method for a Proxy, enforcing the
+// invariant that a non-configurable, non-writable data property cannot have
+// its value changed via a trap that returns true.
 func (vm *VM) jsProxySet(proxy Value, member string, val Value, receiver Value) {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4086,7 +4112,7 @@ func (vm *VM) jsProxySet(proxy Value, member string, val Value, receiver Value) 
 	trap, _ := vm.jsMemberGet(pObj.Handler, "set")
 
 	if trap.Type == VTJSUndefined || trap.Type == VTNull {
-		// 2. Forward to target
+		// 2. No trap — forward to target directly
 		vm.jsMemberSet(pObj.Target, member, val)
 		return
 	}
@@ -4095,12 +4121,35 @@ func (vm *VM) jsProxySet(proxy Value, member string, val Value, receiver Value) 
 	args := []Value{pObj.Target, vm.jsPropertyKeyToValue(member), val, receiver}
 	result := vm.jsCall(trap, pObj.Handler, args)
 
-	// 4. Check return value in strict mode
-	if vm.jsStrictMode && !vm.jsTruthy(result) {
-		vm.jsThrowTypeError(fmt.Sprintf("'set' on proxy: trap returned falsy for property '%s'", member))
+	// 4. Falsy result check in strict mode
+	if !vm.jsTruthy(result) {
+		if vm.jsStrictMode {
+			vm.jsThrowTypeError(fmt.Sprintf("'set' on proxy: trap returned falsy for property '%s'", member))
+		}
+		return
+	}
+
+	// 5. Invariant check (§10.5.9 step 8): trap returned true
+	// A non-configurable, non-writable data property cannot be set to a different value.
+	if pObj.Target.Type == VTJSObject || pObj.Target.Type == VTJSFunction {
+		if targetDesc, hasDesc := vm.jsGetDescriptor(pObj.Target.Num, member); hasDesc && !targetDesc.Configurable {
+			if jsDescriptorIsData(targetDesc) && !targetDesc.Writable {
+				if !vm.jsStrictEquals(val, targetDesc.Value) {
+					vm.jsThrowJSError(jscript.ProxySetTrapInvariantViolation)
+					return
+				}
+			} else if targetDesc.HasSetter && !targetDesc.HasSetter {
+				// Non-configurable accessor with no setter
+				vm.jsThrowJSError(jscript.ProxySetTrapInvariantViolation)
+				return
+			}
+		}
 	}
 }
 
+// jsProxyHas handles the [[HasProperty]] internal method for a Proxy, enforcing
+// the invariant that a non-configurable own property (or any own property of a
+// non-extensible target) cannot be reported as absent.
 func (vm *VM) jsProxyHas(proxy Value, member string) bool {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4115,9 +4164,30 @@ func (vm *VM) jsProxyHas(proxy Value, member string) bool {
 
 	args := []Value{pObj.Target, vm.jsPropertyKeyToValue(member)}
 	result := vm.jsCall(trap, pObj.Handler, args)
-	return vm.jsTruthy(result)
+	trapResult := vm.jsTruthy(result)
+
+	// Invariant check (§10.5.7 step 8): trap returned false
+	if !trapResult {
+		if pObj.Target.Type == VTJSObject || pObj.Target.Type == VTJSFunction {
+			if targetDesc, hasDesc := vm.jsGetDescriptor(pObj.Target.Num, member); hasDesc {
+				// Non-configurable own property cannot be reported as absent
+				if !targetDesc.Configurable {
+					vm.jsThrowJSError(jscript.ProxyHasTrapInvariantViolation)
+					return false
+				}
+				// Non-extensible target with existing own property cannot be reported as absent
+				if !vm.jsObjectIsExtensible(pObj.Target) {
+					vm.jsThrowJSError(jscript.ProxyHasTrapInvariantViolation)
+					return false
+				}
+			}
+		}
+	}
+	return trapResult
 }
 
+// jsProxyDelete handles the [[Delete]] internal method for a Proxy, enforcing
+// the invariant that a non-configurable property cannot be reported as deleted.
 func (vm *VM) jsProxyDelete(proxy Value, member string) bool {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4133,12 +4203,35 @@ func (vm *VM) jsProxyDelete(proxy Value, member string) bool {
 	args := []Value{pObj.Target, vm.jsPropertyKeyToValue(member)}
 	result := vm.jsCall(trap, pObj.Handler, args)
 	success := vm.jsTruthy(result)
-	if vm.jsStrictMode && !success {
-		vm.jsThrowTypeError(fmt.Sprintf("'deleteProperty' on proxy: trap returned falsy for property '%s'", member))
+
+	if !success {
+		if vm.jsStrictMode {
+			vm.jsThrowTypeError(fmt.Sprintf("'deleteProperty' on proxy: trap returned falsy for property '%s'", member))
+		}
+		return false
 	}
-	return success
+
+	// Invariant check (§10.5.10 step 8): trap returned true
+	// A non-configurable property cannot be deleted.
+	if pObj.Target.Type == VTJSObject || pObj.Target.Type == VTJSFunction {
+		if targetDesc, hasDesc := vm.jsGetDescriptor(pObj.Target.Num, member); hasDesc && !targetDesc.Configurable {
+			vm.jsThrowJSError(jscript.ProxyDeletePropertyTrapInvariantViolation)
+			return false
+		}
+		// Non-extensible target: cannot delete an existing own property
+		if !vm.jsObjectIsExtensible(pObj.Target) {
+			if _, hasDesc := vm.jsGetDescriptor(pObj.Target.Num, member); hasDesc {
+				vm.jsThrowJSError(jscript.ProxyDeletePropertyTrapInvariantViolation)
+				return false
+			}
+		}
+	}
+	return true
 }
 
+// jsProxyOwnKeys handles the [[OwnPropertyKeys]] internal method for a Proxy,
+// enforcing that the result includes every non-configurable own property key and,
+// for non-extensible targets, exactly matches the target's own key set.
 func (vm *VM) jsProxyOwnKeys(proxy Value) []string {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4153,7 +4246,6 @@ func (vm *VM) jsProxyOwnKeys(proxy Value) []string {
 
 	args := []Value{pObj.Target}
 	result := vm.jsCall(trap, pObj.Handler, args)
-	// fmt.Printf("DEBUG: ownKeys trap result type: %d, length: %d\n", result.Type, 0)
 
 	var keys []string
 	if result.Type == VTArray && result.Arr != nil {
@@ -4164,7 +4256,6 @@ func (vm *VM) jsProxyOwnKeys(proxy Value) []string {
 	} else if result.Type == VTJSObject || result.Type == VTJSFunction {
 		lengthVal, _ := vm.jsMemberGet(result, "length")
 		length := int(vm.jsToNumber(lengthVal).Flt)
-		// fmt.Printf("DEBUG: ownKeys trap object length: %d\n", length)
 		keys = make([]string, length)
 		for i := 0; i < length; i++ {
 			val := vm.jsIndexGet(result, NewInteger(int64(i)))
@@ -4174,9 +4265,54 @@ func (vm *VM) jsProxyOwnKeys(proxy Value) []string {
 		vm.jsThrowTypeError("Proxy 'ownKeys' trap must return an array")
 		return nil
 	}
+
+	// Invariant checks (§10.5.11 steps 14-26).
+	if pObj.Target.Type == VTJSObject || pObj.Target.Type == VTJSFunction {
+		// Build a set from the trap result for O(1) lookups.
+		resultSet := make(map[string]struct{}, len(keys))
+		for _, k := range keys {
+			resultSet[k] = struct{}{}
+		}
+
+		targetKeys := vm.jsObjectOwnKeys(pObj.Target)
+
+		// All non-configurable own property keys must be present in the result.
+		for _, tk := range targetKeys {
+			if desc, hasDesc := vm.jsGetDescriptor(pObj.Target.Num, tk); hasDesc && !desc.Configurable {
+				if _, inResult := resultSet[tk]; !inResult {
+					vm.jsThrowJSError(jscript.ProxyOwnKeysTrapInvariantViolation)
+					return nil
+				}
+			}
+		}
+
+		// If target is non-extensible, the result must not introduce new keys.
+		if !vm.jsObjectIsExtensible(pObj.Target) {
+			targetSet := make(map[string]struct{}, len(targetKeys))
+			for _, tk := range targetKeys {
+				targetSet[tk] = struct{}{}
+			}
+			for _, k := range keys {
+				if _, inTarget := targetSet[k]; !inTarget {
+					vm.jsThrowJSError(jscript.ProxyOwnKeysTrapInvariantViolation)
+					return nil
+				}
+			}
+			// All target keys must also appear in the result.
+			for _, tk := range targetKeys {
+				if _, inResult := resultSet[tk]; !inResult {
+					vm.jsThrowJSError(jscript.ProxyOwnKeysTrapInvariantViolation)
+					return nil
+				}
+			}
+		}
+	}
 	return keys
 }
 
+// jsProxyDefineProperty handles the [[DefineOwnProperty]] internal method for a
+// Proxy. When the trap returns true the result is validated against the target's
+// extensibility and existing non-configurable descriptors.
 func (vm *VM) jsProxyDefineProperty(proxy Value, member string, attributes Value) bool {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4200,9 +4336,43 @@ func (vm *VM) jsProxyDefineProperty(proxy Value, member string, attributes Value
 	}
 	args := []Value{pObj.Target, NewString(member), attributes}
 	result := vm.jsCall(trap, pObj.Handler, args)
-	return vm.asBool(result)
+	trapResult := vm.asBool(result)
+
+	if !trapResult {
+		return false
+	}
+
+	// Invariant checks (§10.5.6 steps 19-27): trap returned true.
+	if pObj.Target.Type == VTJSObject || pObj.Target.Type == VTJSFunction {
+		spec := vm.jsReadDefinePropertySpec(attributes)
+		current, currentExists := vm.jsGetDescriptor(pObj.Target.Num, member)
+
+		// Cannot add a new property to a non-extensible target.
+		if !currentExists && !vm.jsObjectIsExtensible(pObj.Target) {
+			vm.jsThrowJSError(jscript.ProxyDefinePropertyTrapInvariantViolation)
+			return false
+		}
+
+		// Cannot make an existing non-configurable property configurable.
+		if currentExists && !current.Configurable {
+			if spec.hasConfigurable && spec.desc.Configurable {
+				vm.jsThrowJSError(jscript.ProxyDefinePropertyTrapInvariantViolation)
+				return false
+			}
+			// Cannot make a non-configurable non-writable property writable.
+			if jsDescriptorIsData(current) && !current.Writable && spec.hasWritable && spec.desc.Writable {
+				vm.jsThrowJSError(jscript.ProxyDefinePropertyTrapInvariantViolation)
+				return false
+			}
+		}
+	}
+	return true
 }
 
+// jsProxyGetOwnPropertyDescriptor handles [[GetOwnProperty]] for a Proxy and
+// enforces the invariants: the trap cannot hide a non-configurable own property
+// of the target, cannot report a non-configurable property as configurable, and
+// cannot omit an existing own property of a non-extensible target.
 func (vm *VM) jsProxyGetOwnPropertyDescriptor(proxy Value, member string) (jsPropertyDescriptor, bool) {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4215,17 +4385,65 @@ func (vm *VM) jsProxyGetOwnPropertyDescriptor(proxy Value, member string) (jsPro
 	}
 	args := []Value{pObj.Target, NewString(member)}
 	result := vm.jsCall(trap, pObj.Handler, args)
+
+	// Trap returned undefined — check invariant.
 	if result.Type == VTJSUndefined {
+		if pObj.Target.Type == VTJSObject || pObj.Target.Type == VTJSFunction {
+			if targetDesc, hasDesc := vm.jsGetDescriptor(pObj.Target.Num, member); hasDesc {
+				// Cannot hide a non-configurable own property.
+				if !targetDesc.Configurable {
+					vm.jsThrowJSError(jscript.ProxyGetOwnPropertyDescriptorTrapInvariantViolation)
+					return jsPropertyDescriptor{}, false
+				}
+				// Cannot omit an existing own property of a non-extensible target.
+				if !vm.jsObjectIsExtensible(pObj.Target) {
+					vm.jsThrowJSError(jscript.ProxyGetOwnPropertyDescriptorTrapInvariantViolation)
+					return jsPropertyDescriptor{}, false
+				}
+			}
+		}
 		return jsPropertyDescriptor{}, false
 	}
+
 	if result.Type != VTJSObject && result.Type != VTJSFunction {
 		vm.jsThrowTypeError("Proxy 'getOwnPropertyDescriptor' trap must return an object or undefined")
 		return jsPropertyDescriptor{}, false
 	}
+
 	spec := vm.jsReadDefinePropertySpec(result)
-	return spec.desc, true
+	trapDesc := spec.desc
+
+	// Invariant checks (§10.5.5): trap returned a descriptor object.
+	if pObj.Target.Type == VTJSObject || pObj.Target.Type == VTJSFunction {
+		targetDesc, hasTargetDesc := vm.jsGetDescriptor(pObj.Target.Num, member)
+
+		// Cannot report a configurable descriptor for a non-configurable target property.
+		if hasTargetDesc && !targetDesc.Configurable && trapDesc.Configurable {
+			vm.jsThrowJSError(jscript.ProxyGetOwnPropertyDescriptorTrapInvariantViolation)
+			return jsPropertyDescriptor{}, false
+		}
+
+		// Cannot report a non-configurable non-writable data descriptor as writable
+		// when the target has it as non-writable.
+		if hasTargetDesc && !targetDesc.Configurable && jsDescriptorIsData(targetDesc) && !targetDesc.Writable {
+			if jsDescriptorIsData(trapDesc) && trapDesc.Writable {
+				vm.jsThrowJSError(jscript.ProxyGetOwnPropertyDescriptorTrapInvariantViolation)
+				return jsPropertyDescriptor{}, false
+			}
+		}
+
+		// For a non-extensible target, cannot report a property that does not exist on target.
+		if !vm.jsObjectIsExtensible(pObj.Target) && !hasTargetDesc {
+			vm.jsThrowJSError(jscript.ProxyGetOwnPropertyDescriptorTrapInvariantViolation)
+			return jsPropertyDescriptor{}, false
+		}
+	}
+
+	return trapDesc, true
 }
 
+// jsProxyGetPrototypeOf handles [[GetPrototypeOf]] for a Proxy. When the target
+// is non-extensible the trap must return the same prototype as the target.
 func (vm *VM) jsProxyGetPrototypeOf(proxy Value) Value {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4241,6 +4459,15 @@ func (vm *VM) jsProxyGetPrototypeOf(proxy Value) Value {
 	if result.Type != VTJSObject && result.Type != VTJSFunction && result.Type != VTNull && result.Type != VTArray && result.Type != VTJSProxy {
 		vm.jsThrowTypeError("Proxy 'getPrototypeOf' trap must return an object or null")
 		return Value{Type: VTJSUndefined}
+	}
+	// Invariant check (§10.5.1 step 8): if target is non-extensible the returned
+	// prototype must be identical to the target's actual prototype.
+	if !vm.jsObjectIsExtensible(pObj.Target) {
+		targetProto := vm.jsGetPrototypeValue(pObj.Target)
+		if !vm.jsStrictEquals(result, targetProto) {
+			vm.jsThrowJSError(jscript.ProxyGetPrototypeOfTrapInvariantViolation)
+			return Value{Type: VTJSUndefined}
+		}
 	}
 	return result
 }
@@ -4265,6 +4492,9 @@ func (vm *VM) jsProxyIsExtensible(proxy Value) bool {
 	return booleanResult
 }
 
+// jsProxyPreventExtensions handles [[PreventExtensions]] for a Proxy. The spec
+// invariant states: if the trap returns true the target must be non-extensible
+// already; silently marking the target is not permitted.
 func (vm *VM) jsProxyPreventExtensions(proxy Value) bool {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4279,12 +4509,17 @@ func (vm *VM) jsProxyPreventExtensions(proxy Value) bool {
 	args := []Value{pObj.Target}
 	result := vm.jsCall(trap, pObj.Handler, args)
 	booleanResult := vm.asBool(result)
+	// Invariant check (§10.5.4 step 8): trap returned true but target is
+	// still extensible — this is a spec violation.
 	if booleanResult && vm.jsObjectIsExtensible(pObj.Target) {
-		vm.jsSetObjectExtensible(pObj.Target.Num, false)
+		vm.jsThrowJSError(jscript.ProxyPreventExtensionsTrapInvariantViolation)
+		return false
 	}
 	return booleanResult
 }
 
+// jsProxySetPrototypeOf handles [[SetPrototypeOf]] for a Proxy. When the target
+// is non-extensible the trap must not attempt to change the prototype.
 func (vm *VM) jsProxySetPrototypeOf(proxy Value, proto Value) bool {
 	pObj, ok := vm.jsProxyItems[proxy.Num]
 	if !ok || pObj.Revoked {
@@ -4297,7 +4532,18 @@ func (vm *VM) jsProxySetPrototypeOf(proxy Value, proto Value) bool {
 	}
 	args := []Value{pObj.Target, proto}
 	result := vm.jsCall(trap, pObj.Handler, args)
-	return vm.asBool(result)
+	trapResult := vm.asBool(result)
+
+	// Invariant check (§10.5.2 step 9): if the trap returned true and the target
+	// is non-extensible, the new prototype must be the same as the current one.
+	if trapResult && !vm.jsObjectIsExtensible(pObj.Target) {
+		currentProto := vm.jsGetPrototypeValue(pObj.Target)
+		if !vm.jsStrictEquals(proto, currentProto) {
+			vm.jsThrowJSError(jscript.ProxySetPrototypeOfTrapInvariantViolation)
+			return false
+		}
+	}
+	return trapResult
 }
 
 func (vm *VM) jsSetPrototype(target Value, proto Value) bool {

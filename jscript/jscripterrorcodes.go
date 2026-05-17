@@ -73,121 +73,141 @@ const (
 	SyntaxError                           JSSyntaxErrorCode = 1002
 
 	// JScript-specific 5000+ series errors
-	CannotAssignToThis                      JSSyntaxErrorCode = 5000
-	NumberExpected                          JSSyntaxErrorCode = 5001
-	FunctionExpected                        JSSyntaxErrorCode = 5002
-	CannotAssignToFunctionResult            JSSyntaxErrorCode = 5003
-	CannotIndexObject                       JSSyntaxErrorCode = 5004
-	StringExpected                          JSSyntaxErrorCode = 5005
-	DateObjectExpected                      JSSyntaxErrorCode = 5006
-	ObjectExpectedJScript                   JSSyntaxErrorCode = 5007
-	IllegalAssignment                       JSSyntaxErrorCode = 5008
-	UndefinedIdentifier                     JSSyntaxErrorCode = 5009
-	BooleanExpected                         JSSyntaxErrorCode = 5010
-	CannotExecuteCodeFromFreedScript        JSSyntaxErrorCode = 5011
-	ObjectMemberExpected                    JSSyntaxErrorCode = 5012
-	VBArrayExpected                         JSSyntaxErrorCode = 5013
-	JScriptObjectExpected                   JSSyntaxErrorCode = 5014
-	EnumeratorObjectExpected                JSSyntaxErrorCode = 5015
-	RegularExpressionObjectExpected         JSSyntaxErrorCode = 5016
-	SyntaxErrorInRegularExpression          JSSyntaxErrorCode = 5017
-	UnexpectedQuantifier                    JSSyntaxErrorCode = 5018
-	ExpectedBracketInRegularExpression      JSSyntaxErrorCode = 5019
-	ExpectedParenInRegularExpression        JSSyntaxErrorCode = 5020
-	InvalidRangeInCharacterSet              JSSyntaxErrorCode = 5021
-	ExceptionThrownAndNotCaught             JSSyntaxErrorCode = 5022
-	FunctionDoesNotHaveValidPrototypeObject JSSyntaxErrorCode = 5023
-	ProxyTargetOrHandlerNotObject           JSSyntaxErrorCode = 5024
-	ReflectArgumentNotObject                JSSyntaxErrorCode = 5025
-	ProxyTrapReturnedInvalidValue           JSSyntaxErrorCode = 5026
-	ProxyTrapResultRevoked                  JSSyntaxErrorCode = 5027
-	ProxyTrapResultNonConfigurableMismatch  JSSyntaxErrorCode = 5028
+	CannotAssignToThis                                  JSSyntaxErrorCode = 5000
+	NumberExpected                                      JSSyntaxErrorCode = 5001
+	FunctionExpected                                    JSSyntaxErrorCode = 5002
+	CannotAssignToFunctionResult                        JSSyntaxErrorCode = 5003
+	CannotIndexObject                                   JSSyntaxErrorCode = 5004
+	StringExpected                                      JSSyntaxErrorCode = 5005
+	DateObjectExpected                                  JSSyntaxErrorCode = 5006
+	ObjectExpectedJScript                               JSSyntaxErrorCode = 5007
+	IllegalAssignment                                   JSSyntaxErrorCode = 5008
+	UndefinedIdentifier                                 JSSyntaxErrorCode = 5009
+	BooleanExpected                                     JSSyntaxErrorCode = 5010
+	CannotExecuteCodeFromFreedScript                    JSSyntaxErrorCode = 5011
+	ObjectMemberExpected                                JSSyntaxErrorCode = 5012
+	VBArrayExpected                                     JSSyntaxErrorCode = 5013
+	JScriptObjectExpected                               JSSyntaxErrorCode = 5014
+	EnumeratorObjectExpected                            JSSyntaxErrorCode = 5015
+	RegularExpressionObjectExpected                     JSSyntaxErrorCode = 5016
+	SyntaxErrorInRegularExpression                      JSSyntaxErrorCode = 5017
+	UnexpectedQuantifier                                JSSyntaxErrorCode = 5018
+	ExpectedBracketInRegularExpression                  JSSyntaxErrorCode = 5019
+	ExpectedParenInRegularExpression                    JSSyntaxErrorCode = 5020
+	InvalidRangeInCharacterSet                          JSSyntaxErrorCode = 5021
+	ExceptionThrownAndNotCaught                         JSSyntaxErrorCode = 5022
+	FunctionDoesNotHaveValidPrototypeObject             JSSyntaxErrorCode = 5023
+	ProxyTargetOrHandlerNotObject                       JSSyntaxErrorCode = 5024
+	ReflectArgumentNotObject                            JSSyntaxErrorCode = 5025
+	ProxyTrapReturnedInvalidValue                       JSSyntaxErrorCode = 5026
+	ProxyTrapResultRevoked                              JSSyntaxErrorCode = 5027
+	ProxyTrapResultNonConfigurableMismatch              JSSyntaxErrorCode = 5028
+	ProxyGetTrapInvariantViolation                      JSSyntaxErrorCode = 5029
+	ProxyHasTrapInvariantViolation                      JSSyntaxErrorCode = 5030
+	ProxySetTrapInvariantViolation                      JSSyntaxErrorCode = 5031
+	ProxyDefinePropertyTrapInvariantViolation           JSSyntaxErrorCode = 5032
+	ProxyGetOwnPropertyDescriptorTrapInvariantViolation JSSyntaxErrorCode = 5033
+	ProxyDeletePropertyTrapInvariantViolation           JSSyntaxErrorCode = 5034
+	ProxyOwnKeysTrapInvariantViolation                  JSSyntaxErrorCode = 5035
+	ProxyGetPrototypeOfTrapInvariantViolation           JSSyntaxErrorCode = 5036
+	ProxySetPrototypeOfTrapInvariantViolation           JSSyntaxErrorCode = 5037
+	ProxyPreventExtensionsTrapInvariantViolation        JSSyntaxErrorCode = 5038
 )
 
 var JSErrorMessages = map[JSSyntaxErrorCode]string{
-	InvalidProcedureCallOrArgument:          "Invalid procedure call or argument",
-	Overflow:                                "Overflow",
-	OutOfMemory:                             "Out of memory",
-	SubscriptOutOfRange:                     "Subscript out of range",
-	ArrayIsFixedOrLocked:                    "This array is fixed or temporarily locked",
-	DivisionByZero:                          "Division by zero",
-	TypeMismatch:                            "Type mismatch",
-	OutOfStringSpace:                        "Out of string space",
-	CannotPerformRequestedOperation:         "Can't perform requested operation",
-	OutOfStackSpace:                         "Out of stack space",
-	SubOrFunctionNotDefined:                 "Sub or Function not defined",
-	ErrorInLoadingDLL:                       "Error in loading DLL",
-	InternalError:                           "Internal error",
-	BadFileNameOrNumber:                     "Bad file name or number",
-	FileNotFound:                            "File not found",
-	BadFileMode:                             "Bad file mode",
-	FileAlreadyOpen:                         "File already open",
-	DeviceIOError:                           "Device I/O error",
-	FileAlreadyExists:                       "File already exists",
-	DiskFull:                                "Disk full",
-	InputPastEndOfFile:                      "Input past end of file",
-	TooManyFiles:                            "Too many files",
-	DeviceUnavailable:                       "Device unavailable",
-	PermissionDenied:                        "Permission denied",
-	DiskNotReady:                            "Disk not ready",
-	CannotRenameWithDifferentDrive:          "Can't rename with different drive",
-	PathFileAccessError:                     "Path/File access error",
-	PathNotFound:                            "Path not found",
-	ObjectVariableNotSet:                    "Object variable or With block variable not set",
-	ForLoopNotInitialized:                   "For loop not initialized",
-	InvalidUseOfNull:                        "Invalid use of Null",
-	CannotCreateTemporaryFile:               "Can't create necessary temporary file",
-	ObjectRequired:                          "Object required",
-	AutomationServerCannotCreateObject:      "Automation server can't create object",
-	ClassDoesNotSupportAutomation:           "Class doesn't support Automation",
-	FileNameOrClassNameNotFound:             "File name or class name not found during Automation operation",
-	ObjectDoesntSupportPropertyOrMethod:     "Object doesn't support this property or method",
-	AutomationError:                         "Automation error",
-	ObjectDoesntSupportAction:               "Object doesn't support this action",
-	ObjectDoesntSupportNamedArguments:       "Object doesn't support named arguments",
-	ObjectDoesntSupportCurrentLocale:        "Object doesn't support current locale setting",
-	NamedArgumentNotFound:                   "Named argument not found",
-	ArgumentNotOptional:                     "Argument not optional",
-	WrongNumberOfArguments:                  "Wrong number of arguments or invalid property assignment",
-	ObjectNotACollection:                    "Object not a collection",
-	SpecifiedDLLFunctionNotFound:            "Specified DLL function not found",
-	VariableUsesUnsupportedAutomationType:   "Variable uses an Automation type not supported in JScript",
-	RemoteServerMachineDoesNotExist:         "The remote server machine does not exist or is unavailable",
-	CannotAssignToVariable:                  "Cannot assign to variable",
-	ObjectNotSafeForScripting:               "Object not safe for scripting",
-	ObjectNotSafeForInitializing:            "Object not safe for initializing",
-	ObjectNotSafeForCreating:                "Object not safe for creating",
-	ExceptionOccurred:                       "An exception occurred",
-	SyntaxError:                             "Syntax error",
-	CannotAssignToThis:                      "Cannot assign to 'this'",
-	NumberExpected:                          "Number expected",
-	FunctionExpected:                        "Function expected",
-	CannotAssignToFunctionResult:            "Cannot assign to a function result",
-	CannotIndexObject:                       "Cannot index object",
-	StringExpected:                          "String expected",
-	DateObjectExpected:                      "Date object expected",
-	ObjectExpectedJScript:                   "Object expected",
-	IllegalAssignment:                       "Illegal assignment",
-	UndefinedIdentifier:                     "Undefined identifier",
-	BooleanExpected:                         "Boolean expected",
-	CannotExecuteCodeFromFreedScript:        "Can't execute code from a freed script",
-	ObjectMemberExpected:                    "Object member expected",
-	VBArrayExpected:                         "VBArray expected",
-	JScriptObjectExpected:                   "JScript object expected",
-	EnumeratorObjectExpected:                "Enumerator object expected",
-	RegularExpressionObjectExpected:         "Regular Expression object expected",
-	SyntaxErrorInRegularExpression:          "Syntax error in regular expression",
-	UnexpectedQuantifier:                    "Unexpected quantifier",
-	ExpectedBracketInRegularExpression:      "Expected ']' in regular expression",
-	ExpectedParenInRegularExpression:        "Expected ')' in regular expression",
-	InvalidRangeInCharacterSet:              "Invalid range in character set",
-	ExceptionThrownAndNotCaught:             "Exception thrown and not caught",
-	FunctionDoesNotHaveValidPrototypeObject: "Function does not have a valid prototype object",
-	ProxyTargetOrHandlerNotObject:           "Proxy target or handler must be an object",
-	ReflectArgumentNotObject:                "Reflect argument must be an object",
-	ProxyTrapReturnedInvalidValue:           "Proxy trap returned an invalid value",
-	ProxyTrapResultRevoked:                  "Cannot perform operation on a revoked proxy",
-	ProxyTrapResultNonConfigurableMismatch:  "Proxy trap invariant violation: non-configurable property mismatch",
+	InvalidProcedureCallOrArgument:                      "Invalid procedure call or argument",
+	Overflow:                                            "Overflow",
+	OutOfMemory:                                         "Out of memory",
+	SubscriptOutOfRange:                                 "Subscript out of range",
+	ArrayIsFixedOrLocked:                                "This array is fixed or temporarily locked",
+	DivisionByZero:                                      "Division by zero",
+	TypeMismatch:                                        "Type mismatch",
+	OutOfStringSpace:                                    "Out of string space",
+	CannotPerformRequestedOperation:                     "Can't perform requested operation",
+	OutOfStackSpace:                                     "Out of stack space",
+	SubOrFunctionNotDefined:                             "Sub or Function not defined",
+	ErrorInLoadingDLL:                                   "Error in loading DLL",
+	InternalError:                                       "Internal error",
+	BadFileNameOrNumber:                                 "Bad file name or number",
+	FileNotFound:                                        "File not found",
+	BadFileMode:                                         "Bad file mode",
+	FileAlreadyOpen:                                     "File already open",
+	DeviceIOError:                                       "Device I/O error",
+	FileAlreadyExists:                                   "File already exists",
+	DiskFull:                                            "Disk full",
+	InputPastEndOfFile:                                  "Input past end of file",
+	TooManyFiles:                                        "Too many files",
+	DeviceUnavailable:                                   "Device unavailable",
+	PermissionDenied:                                    "Permission denied",
+	DiskNotReady:                                        "Disk not ready",
+	CannotRenameWithDifferentDrive:                      "Can't rename with different drive",
+	PathFileAccessError:                                 "Path/File access error",
+	PathNotFound:                                        "Path not found",
+	ObjectVariableNotSet:                                "Object variable or With block variable not set",
+	ForLoopNotInitialized:                               "For loop not initialized",
+	InvalidUseOfNull:                                    "Invalid use of Null",
+	CannotCreateTemporaryFile:                           "Can't create necessary temporary file",
+	ObjectRequired:                                      "Object required",
+	AutomationServerCannotCreateObject:                  "Automation server can't create object",
+	ClassDoesNotSupportAutomation:                       "Class doesn't support Automation",
+	FileNameOrClassNameNotFound:                         "File name or class name not found during Automation operation",
+	ObjectDoesntSupportPropertyOrMethod:                 "Object doesn't support this property or method",
+	AutomationError:                                     "Automation error",
+	ObjectDoesntSupportAction:                           "Object doesn't support this action",
+	ObjectDoesntSupportNamedArguments:                   "Object doesn't support named arguments",
+	ObjectDoesntSupportCurrentLocale:                    "Object doesn't support current locale setting",
+	NamedArgumentNotFound:                               "Named argument not found",
+	ArgumentNotOptional:                                 "Argument not optional",
+	WrongNumberOfArguments:                              "Wrong number of arguments or invalid property assignment",
+	ObjectNotACollection:                                "Object not a collection",
+	SpecifiedDLLFunctionNotFound:                        "Specified DLL function not found",
+	VariableUsesUnsupportedAutomationType:               "Variable uses an Automation type not supported in JScript",
+	RemoteServerMachineDoesNotExist:                     "The remote server machine does not exist or is unavailable",
+	CannotAssignToVariable:                              "Cannot assign to variable",
+	ObjectNotSafeForScripting:                           "Object not safe for scripting",
+	ObjectNotSafeForInitializing:                        "Object not safe for initializing",
+	ObjectNotSafeForCreating:                            "Object not safe for creating",
+	ExceptionOccurred:                                   "An exception occurred",
+	SyntaxError:                                         "Syntax error",
+	CannotAssignToThis:                                  "Cannot assign to 'this'",
+	NumberExpected:                                      "Number expected",
+	FunctionExpected:                                    "Function expected",
+	CannotAssignToFunctionResult:                        "Cannot assign to a function result",
+	CannotIndexObject:                                   "Cannot index object",
+	StringExpected:                                      "String expected",
+	DateObjectExpected:                                  "Date object expected",
+	ObjectExpectedJScript:                               "Object expected",
+	IllegalAssignment:                                   "Illegal assignment",
+	UndefinedIdentifier:                                 "Undefined identifier",
+	BooleanExpected:                                     "Boolean expected",
+	CannotExecuteCodeFromFreedScript:                    "Can't execute code from a freed script",
+	ObjectMemberExpected:                                "Object member expected",
+	VBArrayExpected:                                     "VBArray expected",
+	JScriptObjectExpected:                               "JScript object expected",
+	EnumeratorObjectExpected:                            "Enumerator object expected",
+	RegularExpressionObjectExpected:                     "Regular Expression object expected",
+	SyntaxErrorInRegularExpression:                      "Syntax error in regular expression",
+	UnexpectedQuantifier:                                "Unexpected quantifier",
+	ExpectedBracketInRegularExpression:                  "Expected ']' in regular expression",
+	ExpectedParenInRegularExpression:                    "Expected ')' in regular expression",
+	InvalidRangeInCharacterSet:                          "Invalid range in character set",
+	ExceptionThrownAndNotCaught:                         "Exception thrown and not caught",
+	FunctionDoesNotHaveValidPrototypeObject:             "Function does not have a valid prototype object",
+	ProxyTargetOrHandlerNotObject:                       "Proxy target or handler must be an object",
+	ReflectArgumentNotObject:                            "Reflect argument must be an object",
+	ProxyTrapReturnedInvalidValue:                       "Proxy trap returned an invalid value",
+	ProxyTrapResultRevoked:                              "Cannot perform operation on a revoked proxy",
+	ProxyTrapResultNonConfigurableMismatch:              "Proxy trap invariant violation: non-configurable property mismatch",
+	ProxyGetTrapInvariantViolation:                      "Proxy 'get' trap invariant violation: different value for non-configurable non-writable property",
+	ProxyHasTrapInvariantViolation:                      "Proxy 'has' trap invariant violation: cannot report non-configurable or non-extensible property as absent",
+	ProxySetTrapInvariantViolation:                      "Proxy 'set' trap invariant violation: cannot set non-configurable non-writable property",
+	ProxyDefinePropertyTrapInvariantViolation:           "Proxy 'defineProperty' trap invariant violation",
+	ProxyGetOwnPropertyDescriptorTrapInvariantViolation: "Proxy 'getOwnPropertyDescriptor' trap invariant violation",
+	ProxyDeletePropertyTrapInvariantViolation:           "Proxy 'deleteProperty' trap invariant violation: cannot delete non-configurable property",
+	ProxyOwnKeysTrapInvariantViolation:                  "Proxy 'ownKeys' trap invariant violation",
+	ProxyGetPrototypeOfTrapInvariantViolation:           "Proxy 'getPrototypeOf' trap invariant violation: different prototype for non-extensible target",
+	ProxySetPrototypeOfTrapInvariantViolation:           "Proxy 'setPrototypeOf' trap invariant violation: cannot change prototype of non-extensible target",
+	ProxyPreventExtensionsTrapInvariantViolation:        "Proxy 'preventExtensions' trap invariant violation: trap returned true but target is still extensible",
 }
 
 func (e JSSyntaxErrorCode) String() string {
