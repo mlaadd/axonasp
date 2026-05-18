@@ -21,6 +21,9 @@
 package axonvm
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 )
@@ -323,6 +326,178 @@ func TestJScriptBufferConstructorAsFunction(t *testing.T) {
 
 	output := runASPSourceForTest(t, source)
 	expected := "1"
+	if output != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, output)
+	}
+}
+
+// TestJScriptNodePathModule verifies Node.js path module helpers.
+func TestJScriptNodePathModule(t *testing.T) {
+	source := `<script runat="server" language="JScript">
+		var joined = path.join("a", "b", "c.txt");
+		Response.Write(typeof path === "object" ? "1" : "0");
+		Response.Write(path.basename(joined) === "c.txt" ? "1" : "0");
+		Response.Write(path.extname(joined) === ".txt" ? "1" : "0");
+		Response.Write(path.normalize("a/../b") === "b" ? "1" : "0");
+		Response.Write(path.resolve(".").length > 0 ? "1" : "0");
+	</script>`
+
+	output := runASPSourceForTest(t, source)
+	expected := "11111"
+	if output != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, output)
+	}
+}
+
+// TestJScriptNodeOSModule verifies Node.js os module compatibility helpers.
+func TestJScriptNodeOSModule(t *testing.T) {
+	source := `<script runat="server" language="JScript">
+		var cpus = os.cpus();
+		Response.Write(typeof os === "object" ? "1" : "0");
+		Response.Write(typeof os.arch() === "string" ? "1" : "0");
+		Response.Write(typeof os.platform() === "string" ? "1" : "0");
+		Response.Write(typeof os.freemem() === "number" ? "1" : "0");
+		Response.Write(Array.isArray(cpus) ? "1" : "0");
+		Response.Write(cpus.length >= 1 ? "1" : "0");
+	</script>`
+
+	output := runASPSourceForTest(t, source)
+	expected := "111111"
+	if output != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, output)
+	}
+}
+
+// TestJScriptURLAndURLSearchParams verifies URL globals and url module methods.
+func TestJScriptURLAndURLSearchParams(t *testing.T) {
+	source := `<script runat="server" language="JScript">
+		var u = new URL("https://example.com/a?x=1#z");
+		Response.Write(typeof URL === "function" ? "1" : "0");
+		Response.Write(typeof URLSearchParams === "function" ? "1" : "0");
+		Response.Write(u.hostname === "example.com" ? "1" : "0");
+		Response.Write(u.search === "?x=1" ? "1" : "0");
+		Response.Write(u.searchParams.get("x") === "1" ? "1" : "0");
+		u.searchParams.set("x", "2");
+		Response.Write(u.search === "?x=2" ? "1" : "0");
+		Response.Write(url.resolve("https://example.com/a/", "b") === "https://example.com/a/b" ? "1" : "0");
+	</script>`
+
+	output := runASPSourceForTest(t, source)
+	expected := "1111111"
+	if output != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, output)
+	}
+}
+
+// TestJScriptQueryStringModule verifies querystring parse/stringify behavior.
+func TestJScriptQueryStringModule(t *testing.T) {
+	source := `<script runat="server" language="JScript">
+		var obj = querystring.parse("a=1&b=2");
+		var encoded = querystring.stringify(obj);
+		Response.Write(typeof querystring === "object" ? "1" : "0");
+		Response.Write(obj.a === "1" ? "1" : "0");
+		Response.Write(obj.b === "2" ? "1" : "0");
+		Response.Write(encoded.indexOf("a=1") >= 0 ? "1" : "0");
+		Response.Write(encoded.indexOf("b=2") >= 0 ? "1" : "0");
+	</script>`
+
+	output := runASPSourceForTest(t, source)
+	expected := "11111"
+	if output != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, output)
+	}
+}
+
+// TestJScriptNodeFSModuleSync verifies fs synchronous APIs under sandboxed paths.
+func TestJScriptNodeFSModuleSync(t *testing.T) {
+	source := `<script runat="server" language="JScript">
+		var p = "/node_fs_phase4_test.txt";
+		fs.writeFileSync(p, "hello-node", "utf8");
+		var exists = fs.existsSync(p);
+		var raw = fs.readFileSync(p);
+		var txt = fs.readFileSync(p, "utf8");
+		var st = fs.statSync(p);
+		Response.Write(exists ? "1" : "0");
+		Response.Write(Buffer.isBuffer(raw) ? "1" : "0");
+		Response.Write(txt === "hello-node" ? "1" : "0");
+		Response.Write(st.isFile() ? "1" : "0");
+		Response.Write(st.isDirectory() ? "1" : "0");
+		Response.Write(st.size > 0 ? "1" : "0");
+	</script>`
+
+	output := runASPSourceForTest(t, source)
+	expected := "111101"
+	if output != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, output)
+	}
+}
+
+// TestJScriptNodeCryptoModule verifies createHash, createHmac and randomBytes.
+func TestJScriptNodeCryptoModule(t *testing.T) {
+	source := `<script runat="server" language="JScript">
+		var h = crypto.createHash("sha256").update("abc").digest("hex");
+		var hm = crypto.createHmac("sha256", "k").update("abc").digest("hex");
+		var rb = crypto.randomBytes(16);
+		Response.Write(typeof crypto === "object" ? "1" : "0");
+		Response.Write(h === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" ? "1" : "0");
+		Response.Write(hm.length === 64 ? "1" : "0");
+		Response.Write(Buffer.isBuffer(rb) ? "1" : "0");
+		Response.Write(rb.length === 16 ? "1" : "0");
+	</script>`
+
+	output := runASPSourceForTest(t, source)
+	expected := "11111"
+	if output != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, output)
+	}
+}
+
+// TestJScriptNodeHTTPModule verifies http.get and http.request client compatibility.
+func TestJScriptNodeHTTPModule(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ok":true,"method":"POST"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"method":"GET"}`))
+	}))
+	defer server.Close()
+
+	source := fmt.Sprintf(`<script runat="server" language="JScript">
+		var r1 = http.get("%s");
+		var r2 = http.request({ url: "%s", method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+		var j1 = r1.json();
+		var t2 = r2.text();
+		Response.Write(r1.statusCode === 200 ? "1" : "0");
+		Response.Write(j1.method === "GET" ? "1" : "0");
+		Response.Write(r2.statusCode === 201 ? "1" : "0");
+		Response.Write(t2.indexOf("POST") >= 0 ? "1" : "0");
+	</script>`, server.URL, server.URL)
+
+	output := runASPSourceForTest(t, source)
+	expected := "1111"
+	if output != expected {
+		t.Fatalf("Expected '%s', got '%s'", expected, output)
+	}
+}
+
+// TestJScriptNodeHTTPSModule verifies https module request dispatch.
+func TestJScriptNodeHTTPSModule(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok-https-module"))
+	}))
+	defer server.Close()
+
+	source := fmt.Sprintf(`<script runat="server" language="JScript">
+		var r = https.get("%s");
+		Response.Write(r.statusCode === 200 ? "1" : "0");
+		Response.Write(r.text() === "ok-https-module" ? "1" : "0");
+	</script>`, server.URL)
+
+	output := runASPSourceForTest(t, source)
+	expected := "11"
 	if output != expected {
 		t.Fatalf("Expected '%s', got '%s'", expected, output)
 	}

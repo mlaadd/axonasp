@@ -1848,6 +1848,18 @@ func (vm *VM) ensureJSRootEnv() {
 	if vm.enableNodeCompatibility() {
 		bindings["process"] = vm.jsCreateProcessObject()
 		bindings["Buffer"] = vm.jsCreateBufferConstructor()
+		bindings["path"] = vm.jsCreatePathObject()
+		bindings["os"] = vm.jsCreateOSObject()
+		bindings["fs"] = vm.jsCreateFSObject()
+		bindings["crypto"] = vm.jsCreateCryptoObject()
+		bindings["http"] = vm.jsCreateHTTPObject("http")
+		bindings["https"] = vm.jsCreateHTTPObject("https")
+		bindings["querystring"] = vm.jsCreateQueryStringObject()
+		urlCtor := vm.jsCreateURLConstructor()
+		urlSearchParamsCtor := vm.jsCreateURLSearchParamsConstructor()
+		bindings["URL"] = urlCtor
+		bindings["URLSearchParams"] = urlSearchParamsCtor
+		bindings["url"] = vm.jsCreateURLModuleObject(urlCtor, urlSearchParamsCtor)
 	}
 
 	// Create the root environment frame
@@ -4757,6 +4769,9 @@ func (vm *VM) jsMemberGet(target Value, member string) (Value, bool) {
 				}
 			}
 		}
+		if val, handled := vm.jsHandleNodeURLMemberGet(target, member); handled {
+			return val, false
+		}
 		if value, ok := vm.jsGetAliasedArgumentValue(target.Num, member); ok {
 			return value, false
 		}
@@ -4908,6 +4923,50 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 	if target.Type == VTJSObject {
 		class := vm.jsObjectStringProperty(target, "__js_type")
 		switch class {
+		case "fs":
+			if result, handled := vm.jsCallFSMethod(member, args); handled {
+				return result, true
+			}
+		case "crypto":
+			if result, handled := vm.jsCallCryptoMethod(member, args); handled {
+				return result, true
+			}
+		case "http":
+			if result, handled := vm.jsCallHTTPMethod("http", member, args); handled {
+				return result, true
+			}
+		case "https":
+			if result, handled := vm.jsCallHTTPMethod("https", member, args); handled {
+				return result, true
+			}
+		case "fs.Stats":
+			if result, handled := vm.jsCallFSStatsMethod(target, member); handled {
+				return result, true
+			}
+		case "crypto.Hash", "crypto.Hmac":
+			if result, handled := vm.jsCallCryptoHashMethod(target, member, args); handled {
+				return result, true
+			}
+		case "http.IncomingMessage":
+			if result, handled := vm.jsCallHTTPResponseMethod(target, member, args); handled {
+				return result, true
+			}
+		case "path":
+			if result, handled := vm.jsCallPathMethod(member, args); handled {
+				return result, true
+			}
+		case "os":
+			if result, handled := vm.jsCallOSMethod(member, args); handled {
+				return result, true
+			}
+		case "querystring":
+			if result, handled := vm.jsCallQueryStringMethod(member, args); handled {
+				return result, true
+			}
+		case "url":
+			if result, handled := vm.jsCallURLModuleMethod(member, args); handled {
+				return result, true
+			}
 		case "process":
 			// Node.js process object methods
 			if result, handled := vm.jsCallProcessMethod(member, args); handled {
@@ -4925,6 +4984,14 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 				if result, handled := vm.jsCallBufferInstanceMethod(target, member, args); handled {
 					return result, true
 				}
+			}
+		case "URL":
+			if result, handled := vm.jsCallURLInstanceMethod(target, member, args); handled {
+				return result, true
+			}
+		case "URLSearchParams":
+			if result, handled := vm.jsCallURLSearchParamsMethod(target, member, args); handled {
+				return result, true
 			}
 		case "Array Iterator":
 			if strings.EqualFold(member, "next") {
@@ -8041,6 +8108,9 @@ func (vm *VM) jsMemberSet(target Value, member string, val Value) {
 		if target.Type == VTJSObject || target.Type == VTJSFunction {
 			targetID = target.Num
 		}
+		if vm.jsHandleNodeURLMemberSet(target, member, val) {
+			return
+		}
 		if vm.jsSetAliasedArgumentValue(targetID, member, val) {
 			return
 		}
@@ -9066,6 +9136,9 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 		case "Set", "Map", "WeakMap", "WeakSet":
 			vm.jsThrowTypeError(fmt.Sprintf("Constructor %s requires 'new'", ctorName))
 			return Value{Type: VTJSUndefined}
+		case "URL", "URLSearchParams":
+			vm.jsEnsureURLConstructorWithNew(ctorName)
+			return Value{Type: VTJSUndefined}
 		case "ArrayBuffer", "DataView",
 			"Int8Array", "Uint8Array", "Uint8ClampedArray",
 			"Int16Array", "Uint16Array",
@@ -9982,6 +10055,10 @@ func (vm *VM) jsConstruct(constructor Value, args []Value, newTarget Value, isSu
 			loc := builtinCurrentLocation(vm)
 			t := time.Date(year, time.Month(month+1), day, hour, minute, second, millisecond*int(time.Millisecond), loc)
 			return NewDate(t)
+		case "URL":
+			return vm.jsConstructURL(args)
+		case "URLSearchParams":
+			return vm.jsConstructURLSearchParams(args)
 		case "IntlDateTimeFormat":
 			return vm.jsIntlCreateDateTimeFormat(args)
 		case "IntlNumberFormat":
