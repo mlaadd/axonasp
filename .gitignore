@@ -61,6 +61,12 @@ temp/
 
 #www
 www/temp/
+www/manual/search-index/
 axonvm/temp
 axonvm/www
 wasm/axonasp.wasm
+
+#G3Search
+*.seg
+*.snp
+*.compiled

@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"g3pix.com.br/axonasp/vbscript"
@@ -226,6 +227,23 @@ func TestVMServerCreateObjectG3MD(t *testing.T) {
 	}
 }
 
+// TestVMServerCreateObjectG3MDLowercase verifies lowercase ProgID resolution for G3MD.
+func TestVMServerCreateObjectG3MDLowercase(t *testing.T) {
+	vm := NewVM(nil, nil, 5)
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	obj := vm.dispatchNativeCall(nativeObjectServer, "CreateObject", []Value{NewString("g3md")})
+	if obj.Type != VTNativeObject {
+		t.Fatalf("expected VTNativeObject, got %#v", obj)
+	}
+
+	result := vm.dispatchNativeCall(obj.Num, "Process", []Value{NewString("# title")})
+	if result.Type != VTString || !strings.Contains(strings.ToLower(result.Str), "title") {
+		t.Fatalf("unexpected Process result: %#v", result)
+	}
+}
+
 // TestVMServerG3MDProcess verifies G3MD property assignment and markdown conversion.
 func TestVMServerG3MDProcess(t *testing.T) {
 	vm := NewVM(nil, nil, 5)
@@ -305,6 +323,9 @@ func TestVMServerG3StringBuilderEmptyBehavior(t *testing.T) {
 
 // TestVMServerCreateObjectG3Search verifies CreateObject and property dispatch for G3SEARCH.
 func TestVMServerCreateObjectG3Search(t *testing.T) {
+	resetG3SearchGlobalStateForTests()
+	defer resetG3SearchGlobalStateForTests()
+
 	vm := NewVM(nil, nil, 5)
 	host := NewMockHost()
 	vm.SetHost(host)
@@ -327,10 +348,10 @@ func TestVMServerCreateObjectG3Search(t *testing.T) {
 	docsPath := vm.dispatchMemberGet(obj, "DocsPath")
 	extension := vm.dispatchMemberGet(obj, "Extension")
 
-	if indexPath.Type != VTString || indexPath.Str != "temp/g3search.index" {
+	if indexPath.Type != VTString || indexPath.Str != canonicalIndexPath("temp/g3search.index") {
 		t.Fatalf("unexpected IndexPath value: %#v", indexPath)
 	}
-	if docsPath.Type != VTString || docsPath.Str != "www/manual/md" {
+	if docsPath.Type != VTString || docsPath.Str != canonicalIndexPath("www/manual/md") {
 		t.Fatalf("unexpected DocsPath value: %#v", docsPath)
 	}
 	if extension.Type != VTString || extension.Str != ".txt" {
@@ -340,6 +361,9 @@ func TestVMServerCreateObjectG3Search(t *testing.T) {
 
 // TestVMServerG3SearchBuildAndSearch verifies index build and Search return shape.
 func TestVMServerG3SearchBuildAndSearch(t *testing.T) {
+	resetG3SearchGlobalStateForTests()
+	defer resetG3SearchGlobalStateForTests()
+
 	vm := NewVM(nil, nil, 5)
 	host := NewMockHost()
 	vm.SetHost(host)
@@ -396,9 +420,249 @@ func TestVMServerG3SearchBuildAndSearch(t *testing.T) {
 		t.Fatalf("expected second tuple item as score double, got %#v", firstRow.Arr.Values[1])
 	}
 
-	// Ensure test temp directories can be removed on Windows by releasing the shared reader.
+	if globalBuiltIndexes[canonicalIndexKey(indexDir)] != true {
+		t.Fatalf("expected index path to be marked built")
+	}
+}
+
+// TestVMServerG3SearchBuildIndexRunsOncePerPath verifies strict once-per-process behavior.
+func TestVMServerG3SearchBuildIndexRunsOncePerPath(t *testing.T) {
+	resetG3SearchGlobalStateForTests()
+	defer resetG3SearchGlobalStateForTests()
+
+	vm := NewVM(nil, nil, 5)
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	obj := vm.dispatchNativeCall(nativeObjectServer, "CreateObject", []Value{NewString("G3SEARCH")})
+	if obj.Type != VTNativeObject {
+		t.Fatalf("expected VTNativeObject, got %#v", obj)
+	}
+
+	docsDir := filepath.Join(t.TempDir(), "docs")
+	indexDir := filepath.Join(t.TempDir(), "index")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs dir failed: %v", err)
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatalf("mkdir index dir failed: %v", err)
+	}
+
+	fileOne := filepath.Join(docsDir, "one.md")
+	if err := os.WriteFile(fileOne, []byte("alpha token"), 0o644); err != nil {
+		t.Fatalf("write first docs file failed: %v", err)
+	}
+
+	vm.dispatchMemberSet(obj.Num, "DocsPath", NewString(docsDir))
+	vm.dispatchMemberSet(obj.Num, "IndexPath", NewString(indexDir))
+	vm.dispatchMemberSet(obj.Num, "Extension", NewString(".md"))
+
+	_ = vm.dispatchNativeCall(obj.Num, "BuildIndex", nil)
+	if vm.lastError != nil {
+		t.Fatalf("first BuildIndex produced unexpected error: %v", vm.lastError)
+	}
+
+	fileTwo := filepath.Join(docsDir, "two.md")
+	if err := os.WriteFile(fileTwo, []byte("beta token"), 0o644); err != nil {
+		t.Fatalf("write second docs file failed: %v", err)
+	}
+
+	_ = vm.dispatchNativeCall(obj.Num, "BuildIndex", nil)
+	if vm.lastError != nil {
+		t.Fatalf("second BuildIndex produced unexpected error: %v", vm.lastError)
+	}
+
+	betaResults := vm.dispatchNativeCall(obj.Num, "Search", []Value{NewString("beta")})
+	if betaResults.Type != VTArray || betaResults.Arr == nil {
+		t.Fatalf("expected VTArray result for beta search, got %#v", betaResults)
+	}
+	if len(betaResults.Arr.Values) != 0 {
+		t.Fatalf("expected no results because second BuildIndex is no-op, got %#v", betaResults.Arr.Values)
+	}
+
+	if globalBuiltIndexes[canonicalIndexKey(indexDir)] != true {
+		t.Fatalf("expected index path to remain marked built")
+	}
+}
+
+// TestVMServerG3SearchBuildIndexConcurrentSingleRun ensures only one build runs per path.
+func TestVMServerG3SearchBuildIndexConcurrentSingleRun(t *testing.T) {
+	resetG3SearchGlobalStateForTests()
+	defer resetG3SearchGlobalStateForTests()
+
+	vm := NewVM(nil, nil, 5)
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	docsDir := filepath.Join(t.TempDir(), "docs")
+	indexDir := filepath.Join(t.TempDir(), "index")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs dir failed: %v", err)
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatalf("mkdir index dir failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(docsDir, "guide.md"), []byte("single run marker"), 0o644); err != nil {
+		t.Fatalf("write docs file failed: %v", err)
+	}
+
+	const workers = 12
+	var wg sync.WaitGroup
+	wg.Add(workers)
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			search := NewG3Search(vm)
+			search.DispatchPropertySet("DocsPath", NewString(docsDir))
+			search.DispatchPropertySet("IndexPath", NewString(indexDir))
+			search.DispatchPropertySet("Extension", NewString(".md"))
+			_ = search.buildIndex()
+		}()
+	}
+
+	wg.Wait()
+
+	indexKey := canonicalIndexKey(indexDir)
+	globalReaderMutex.RLock()
+	runs := globalBuildRuns[indexKey]
+	built := globalBuiltIndexes[indexKey]
+	globalReaderMutex.RUnlock()
+
+	if runs != 1 {
+		t.Fatalf("expected exactly one physical build run, got %d", runs)
+	}
+	if !built {
+		t.Fatalf("expected index path to be marked built")
+	}
+
+	search := NewG3Search(vm)
+	search.DispatchPropertySet("IndexPath", NewString(indexDir))
+	results := search.search("single")
+	if results.Type != VTArray || results.Arr == nil {
+		t.Fatalf("expected VTArray result, got %#v", results)
+	}
+	if len(results.Arr.Values) == 0 {
+		t.Fatalf("expected search results after build, got %#v", results)
+	}
+}
+
+// TestVMServerG3SearchBuildMarkerPreventsRebuild verifies disk marker dedupes future calls.
+func TestVMServerG3SearchBuildMarkerPreventsRebuild(t *testing.T) {
+	resetG3SearchGlobalStateForTests()
+	defer resetG3SearchGlobalStateForTests()
+
+	vm := NewVM(nil, nil, 5)
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	docsDir := filepath.Join(t.TempDir(), "docs")
+	indexDir := filepath.Join(t.TempDir(), "index")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs dir failed: %v", err)
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatalf("mkdir index dir failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(docsDir, "first.md"), []byte("first payload"), 0o644); err != nil {
+		t.Fatalf("write first docs file failed: %v", err)
+	}
+
+	search := NewG3Search(vm)
+	search.DispatchPropertySet("DocsPath", NewString(docsDir))
+	search.DispatchPropertySet("IndexPath", NewString(indexDir))
+	search.DispatchPropertySet("Extension", NewString(".md"))
+	_ = search.buildIndex()
+
+	indexKey := canonicalIndexKey(indexDir)
+	globalReaderMutex.RLock()
+	firstRuns := globalBuildRuns[indexKey]
+	globalReaderMutex.RUnlock()
+	if firstRuns != 1 {
+		t.Fatalf("expected first build run count to be 1, got %d", firstRuns)
+	}
+
+	if !hasPersistentBuildMarker(indexDir) {
+		t.Fatalf("expected persistent build marker file")
+	}
+
+	resetG3SearchGlobalStateForTests()
+
+	searchAgain := NewG3Search(vm)
+	searchAgain.DispatchPropertySet("DocsPath", NewString(docsDir))
+	searchAgain.DispatchPropertySet("IndexPath", NewString(indexDir))
+	searchAgain.DispatchPropertySet("Extension", NewString(".md"))
+	_ = searchAgain.buildIndex()
+
+	globalReaderMutex.RLock()
+	secondRuns := globalBuildRuns[indexKey]
+	built := globalBuiltIndexes[indexKey]
+	globalReaderMutex.RUnlock()
+	if secondRuns != 0 {
+		t.Fatalf("expected no new build after marker, got %d", secondRuns)
+	}
+	if !built {
+		t.Fatalf("expected path to be marked built from marker")
+	}
+}
+
+// TestVMServerG3SearchSkipsIndexPathSubtree verifies DocsPath walk skips IndexPath subtree.
+func TestVMServerG3SearchSkipsIndexPathSubtree(t *testing.T) {
+	resetG3SearchGlobalStateForTests()
+	defer resetG3SearchGlobalStateForTests()
+
+	vm := NewVM(nil, nil, 5)
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	docsDir := filepath.Join(t.TempDir(), "docs")
+	indexDir := filepath.Join(docsDir, "index")
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatalf("mkdir index dir failed: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(docsDir, "root.md"), []byte("rootterm"), 0o644); err != nil {
+		t.Fatalf("write root docs file failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(indexDir, "nested.md"), []byte("indextoken"), 0o644); err != nil {
+		t.Fatalf("write nested docs file failed: %v", err)
+	}
+
+	search := NewG3Search(vm)
+	search.DispatchPropertySet("DocsPath", NewString(docsDir))
+	search.DispatchPropertySet("IndexPath", NewString(indexDir))
+	search.DispatchPropertySet("Extension", NewString(".md"))
+	_ = search.buildIndex()
+
+	rootResults := search.search("rootterm")
+	if rootResults.Type != VTArray || rootResults.Arr == nil || len(rootResults.Arr.Values) == 0 {
+		t.Fatalf("expected root term to be indexed")
+	}
+
+	nestedResults := search.search("indextoken")
+	if nestedResults.Type != VTArray || nestedResults.Arr == nil {
+		t.Fatalf("expected VTArray for nested search, got %#v", nestedResults)
+	}
+	if len(nestedResults.Arr.Values) != 0 {
+		t.Fatalf("expected index subtree content to be skipped, got %#v", nestedResults.Arr.Values)
+	}
+}
+
+// resetG3SearchGlobalStateForTests clears shared G3SEARCH globals between test cases.
+func resetG3SearchGlobalStateForTests() {
 	globalReaderMutex.Lock()
 	_ = closeGlobalReaderLocked()
+
+	for indexPath, waitCh := range globalBuildingIndexes {
+		delete(globalBuildingIndexes, indexPath)
+		close(waitCh)
+	}
+
+	globalBuiltIndexes = make(map[string]bool)
+	globalBuildingIndexes = make(map[string]chan struct{})
+	globalBuildRuns = make(map[string]int)
 	globalReaderMutex.Unlock()
 }
 

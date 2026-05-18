@@ -1,11 +1,91 @@
 <%
-Dim page, mdPath, mdContent, htmlContent, menuContent, menuHtml
-Dim g3md, fso
+Dim page, mdPath, mdContent, htmlContent, menuContent, menuHtml, apiAction
+Dim g3md, fso, indexPathDir, indexCompiledPath, lockFile
 
 Set fso = Server.CreateObject("Scripting.FileSystemObject")
-Set g3md = Server.CreateObject("G3Md")
+
+
+' Initialize index paths
+indexPathDir = Server.MapPath("search-index")
+indexCompiledPath = indexPathDir & "\manual"
+lockFile = indexPathDir & "\.building"
+
+apiAction = LCase(Trim(Request.QueryString("api")))
+If apiAction = "search" Then
+    Response.ContentType = "application/json"
+    Response.Charset = "utf-8"
+    Response.Write SearchManualJson(Trim(Request.QueryString("q")))
+    Response.End
+End If
+
+If apiAction = "triggerindexbuild" Then
+    Response.ContentType = "application/json"
+    Response.Charset = "utf-8"
+    InitializeIndexIfNeeded()
+    Response.Write GetIndexStatusJson()
+    Response.End
+End If
+
+If apiAction = "indexstatus" Then
+    Response.ContentType = "application/json"
+    Response.Charset = "utf-8"
+    Response.Write GetIndexStatusJson()
+    Response.End
+End If
+
+Function BoolToJson(value)
+    If CBool(value) Then
+        BoolToJson = "true"
+    Else
+        BoolToJson = "false"
+    End If
+End Function
+
+Function GetIndexStatusJson()
+    Dim indexExists, isBuilding
+    indexExists = fso.FolderExists(indexCompiledPath)
+    isBuilding = fso.FileExists(lockFile)
+    GetIndexStatusJson = "{""exists"":" & BoolToJson(indexExists And Not isBuilding) & ",""building"":" & BoolToJson(isBuilding) & "}"
+End Function
+
+
+Function InitializeIndexIfNeeded()
+    ' Ensure index directory exists and initialize if needed (prevent concurrent builds)
+    Dim search
+    On Error Resume Next
+    
+    If Not fso.FolderExists(indexPathDir) Then
+        fso.CreateFolder indexPathDir
+    End If
+    
+    ' Only trigger BuildIndex if: (1) compiled index doesn't exist AND (2) no build is in progress
+    If Not fso.FolderExists(indexCompiledPath) And Not fso.FileExists(lockFile) Then
+        Set search = Server.CreateObject("G3SEARCH")
+        If Err.Number = 0 Then
+            ' Create lock file to prevent concurrent builds
+            Dim lockStream
+            Set lockStream = fso.CreateTextFile(lockFile, True)
+            lockStream.Write "building"
+            lockStream.Close
+            
+            search.IndexPath = indexCompiledPath
+            search.DocsPath = Server.MapPath("md")
+            search.Extension = ".md"
+            search.BuildIndex()
+            
+            'Err.Clear
+            ' Delete lock file after build completes
+            'On Error Resume Next
+            'fso.DeleteFile lockFile
+            'On Error Goto 0
+        End If
+    End If
+    
+    On Error Goto 0
+End Function
 
 ' 1. Get requested page
+
 page = Request.QueryString("page")
 If page = "" Then page = "md/axonasp/welcome"
 
@@ -28,6 +108,7 @@ Else
 End If
 
 ' 3. Render Markdown
+Set g3md = Server.CreateObject("G3MD")
 g3md.Unsafe = True
 htmlContent = g3md.Process(mdContent)
 If htmlContent = "" And mdContent <> "" Then
@@ -58,6 +139,114 @@ End Function
 
 Function ParseMenuToTree(content)
     ParseMenuToTree = "<ul class='treeview' id='menu-tree'></ul><script type='text/plain' id='menu-md-source'>" & Server.HTMLEncode(content) & "</script>"
+End Function
+
+
+Function SearchManualJson(term)
+    Dim search, docsPath, results, resultRow, resultPath, relPath
+    Dim i, rowCount, jsonParts
+
+    SearchManualJson = "[]"
+
+    If term = "" Then
+        Exit Function
+    End If
+
+    On Error Resume Next
+
+    ' Ensure index is initialized (with concurrency protection)
+    InitializeIndexIfNeeded()
+
+    Set search = Server.CreateObject("G3SEARCH")
+    If Err.Number <> 0 Then
+        Err.Clear
+        Exit Function
+    End If
+
+    docsPath = Server.MapPath("md")
+
+    search.IndexPath = indexCompiledPath
+    search.DocsPath = docsPath
+    search.Extension = ".md"
+
+    results = search.Search(term)
+    If Err.Number <> 0 Then
+        Err.Clear
+        Exit Function
+    End If
+
+    If Not IsArray(results) Then
+        Exit Function
+    End If
+
+    rowCount = UBound(results) - LBound(results) + 1
+    If rowCount <= 0 Then
+        Exit Function
+    End If
+
+    ReDim jsonParts(rowCount - 1)
+    rowCount = 0
+
+    For i = LBound(results) To UBound(results)
+        resultPath = ""
+        resultRow = results(i)
+
+        If IsArray(resultRow) Then
+            If UBound(resultRow) >= 0 Then
+                resultPath = CStr(resultRow(0))
+            End If
+        Else
+            resultPath = CStr(resultRow)
+        End If
+
+        relPath = NormalizeSearchDocPath(resultPath, docsPath)
+        If relPath <> "" Then
+            jsonParts(rowCount) = Chr(34) & JsonEscape(relPath) & Chr(34)
+            rowCount = rowCount + 1
+        End If
+    Next
+
+    If rowCount <= 0 Then
+        Exit Function
+    End If
+
+    ReDim Preserve jsonParts(rowCount - 1)
+    SearchManualJson = "[" & Join(jsonParts, ",") & "]"
+End Function
+
+Function NormalizeSearchDocPath(rawPath, docsPath)
+    Dim normalizedPath, normalizedDocs, relPath
+
+    normalizedPath = Replace(CStr(rawPath), "\", "/")
+    normalizedDocs = Replace(CStr(docsPath), "\", "/")
+
+    relPath = normalizedPath
+    If Len(normalizedDocs) > 0 Then
+        If LCase(Left(normalizedPath, Len(normalizedDocs))) = LCase(normalizedDocs) Then
+            relPath = Mid(normalizedPath, Len(normalizedDocs) + 1)
+            If Left(relPath, 1) = "/" Then
+                relPath = Mid(relPath, 2)
+            End If
+        End If
+    End If
+
+    If LCase(Left(relPath, 3)) = "md/" Then
+        relPath = Mid(relPath, 4)
+    End If
+
+    NormalizeSearchDocPath = relPath
+End Function
+
+Function JsonEscape(value)
+    Dim escaped
+    escaped = CStr(value)
+    escaped = Replace(escaped, "\", "\\")
+    escaped = Replace(escaped, Chr(34), "\" & Chr(34))
+    escaped = Replace(escaped, vbCrLf, "\n")
+    escaped = Replace(escaped, vbCr, "\n")
+    escaped = Replace(escaped, vbLf, "\n")
+    escaped = Replace(escaped, vbTab, "\t")
+    JsonEscape = escaped
 End Function
 
 %>
@@ -209,6 +398,94 @@ End Function
                 text-transform: uppercase;
                 font-size: 11px;
                 letter-spacing: 0.4px;
+            }
+
+            .sidebar-tabs {
+                display: flex;
+                border-bottom: 1px solid #aca899;
+                margin-bottom: 10px;
+            }
+
+            .sidebar-tab-btn {
+                flex: 1;
+                border: 1px solid #aca899;
+                border-bottom: none;
+                background: linear-gradient(180deg, #f5f3ea 0%, #e5e2d8 100%);
+                color: #1a3470;
+                font-family: Tahoma, Verdana, sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 6px 8px;
+                cursor: pointer;
+            }
+
+            .sidebar-tab-btn + .sidebar-tab-btn {
+                border-left: none;
+            }
+
+            .sidebar-tab-btn.active {
+                background: #fff;
+                color: var(--win-blue-dark);
+            }
+
+            .sidebar-tab-panel {
+                display: none;
+            }
+
+            .sidebar-tab-panel.active {
+                display: block;
+            }
+
+            .sidebar-search-input {
+                width: 100%;
+                box-sizing: border-box;
+                font-size: 11px;
+                font-family: Tahoma, Verdana, sans-serif;
+                border: 1px solid #aca899;
+                border-radius: 4px;
+                padding: 3px 6px;
+                background: #fff;
+                transition: border-color 0.15s, box-shadow 0.15s;
+            }
+
+            .search-results {
+                margin-top: 10px;
+                border-top: 1px solid #d2d0c8;
+                padding-top: 8px;
+            }
+
+            .search-result-item {
+                padding: 6px 4px;
+                border-bottom: 1px dotted #b9b6ab;
+            }
+
+            .search-result-link {
+                display: block;
+                color: #001f66;
+                text-decoration: none;
+                font-weight: bold;
+                margin-bottom: 2px;
+            }
+
+            .search-result-link:hover {
+                color: var(--win-blue-dark);
+                text-decoration: underline;
+            }
+
+            .search-result-folder {
+                color: #5f5b4e;
+                font-size: 11px;
+            }
+
+            .search-empty,
+            .search-error {
+                color: #5f5b4e;
+                font-size: 11px;
+                padding: 6px 2px;
+            }
+
+            .search-error {
+                color: #8b0000;
             }
 
             #sidebar a {
@@ -453,6 +730,71 @@ End Function
                 align-items: center;
                 color: #000;
             }
+
+            /* ── Index Loading Modal ─────────────────────────────── */
+            #index-loading-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background-color: rgba(0, 0, 0, 0.45);
+                z-index: 1000;
+                align-items: center;
+                justify-content: center;
+            }
+
+            #index-loading-overlay.show {
+                display: flex;
+            }
+
+            .index-loading-modal {
+                background-color: var(--win-bg);
+                border: 1px solid #8fa8d4;
+                border-radius: var(--radius-md);
+                box-shadow: 0 6px 24px rgba(0, 51, 153, 0.18), 0 2px 8px rgba(0, 0, 0, 0.10);
+                min-width: 400px;
+                overflow: hidden;
+            }
+
+            .index-loading-header {
+                background: linear-gradient(90deg, var(--win-blue-dark) 0%, var(--win-blue-light) 100%);
+                color: #fff;
+                padding: 8px 15px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+
+            .index-loading-body {
+                padding: 25px;
+                text-align: center;
+                color: #0f0f0f;
+                font-size: 12px;
+            }
+
+            .index-loading-spinner {
+                display: inline-block;
+                width: 32px;
+                height: 32px;
+                border: 3px solid #c0c8d8;
+                border-top-color: var(--win-blue-dark);
+                border-radius: 50%;
+                animation: spin 0.8s linear infinite;
+                margin-bottom: 15px;
+            }
+
+            .index-loading-message {
+                font-size: 13px;
+                color: #0f0f0f;
+                line-height: 1.5;
+            }
+
+            @keyframes spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
         </style>
     </head>
     <body>
@@ -473,41 +815,66 @@ End Function
 
         <div id="main-container">
             <div id="sidebar">
+                <div class="sidebar-tabs">
+                    <button
+                        type="button"
+                        class="sidebar-tab-btn active"
+                        data-tab-target="contents"
+                    >
+                        Contents
+                    </button>
+                    <button
+                        type="button"
+                        class="sidebar-tab-btn"
+                        data-tab-target="search"
+                    >
+                        Search
+                    </button>
+                </div>
+
                 <div
-                    style="
-                        margin-bottom: 10px;
-                        border-bottom: 1px solid #aca899;
-                        padding-bottom: 5px;
-                    "
+                    id="sidebar-tab-contents"
+                    class="sidebar-tab-panel active"
+                    data-tab-panel="contents"
                 >
-                    <strong>Contents</strong>
+                    <div style="margin-bottom: 10px">
+                        <input
+                            type="text"
+                            id="search-input"
+                            placeholder="Search..."
+                            class="sidebar-search-input"
+                            onfocus="this.style.borderColor='#3366cc';this.style.boxShadow='0 0 0 2px rgba(51,102,204,0.18)'"
+                            onblur="
+                                this.style.borderColor = '#aca899';
+                                this.style.boxShadow = '';
+                            "
+                        />
+                    </div>
+                    <%= menuHtml %>
                 </div>
-                <div style="margin-bottom: 10px">
-                    <input
-                        type="text"
-                        id="search-input"
-                        placeholder="Search..."
-                        style="
-                            width: 100%;
-                            box-sizing: border-box;
-                            font-size: 11px;
-                            font-family: Tahoma, Verdana, sans-serif;
-                            border: 1px solid #aca899;
-                            border-radius: 4px;
-                            padding: 3px 6px;
-                            background: #fff;
-                            transition:
-                                border-color 0.15s,
-                                box-shadow 0.15s;
-                        "
-                        onfocus="this.style.borderColor='#3366cc';this.style.boxShadow='0 0 0 2px rgba(51,102,204,0.18)'"
-                        onblur="
-                            this.style.borderColor = '#aca899';
-                            this.style.boxShadow = '';
-                        "
-                    />
+
+                <div
+                    id="sidebar-tab-search"
+                    class="sidebar-tab-panel"
+                    data-tab-panel="search"
+                >
+                    <div style="margin-bottom: 10px">
+                        <input
+                            type="text"
+                            id="fulltext-search-input"
+                            placeholder="Search documentation..."
+                            class="sidebar-search-input"
+                            onfocus="this.style.borderColor='#3366cc';this.style.boxShadow='0 0 0 2px rgba(51,102,204,0.18)'"
+                            onblur="
+                                this.style.borderColor = '#aca899';
+                                this.style.boxShadow = '';
+                            "
+                        />
+                    </div>
+                    <div id="fulltext-search-results" class="search-results">
+                        <div class="search-empty">Type to search the documentation index.</div>
+                    </div>
                 </div>
-                <%= menuHtml %>
             </div>
             <div id="content">
                 <%= htmlContent %>
@@ -519,9 +886,115 @@ End Function
             <%= ax.AxStripTags(page) %>.md
         </div>
 
+        <!-- Index Loading Modal -->
+        <div id="index-loading-overlay">
+            <div class="index-loading-modal">
+                <div class="index-loading-header">AxonASP Documentation Library</div>
+                <div class="index-loading-body">
+                    <div class="index-loading-spinner"></div>
+                    <div class="index-loading-message">
+                        The search index is currently being created.<br />
+                        Please wait. This window will close automatically.
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <script>
+            // Index Loading Modal Logic
+            (function() {
+                const overlay = document.getElementById('index-loading-overlay');
+                let pollIntervalId = null;
+
+                function checkIndexStatus() {
+                    fetch('?api=indexstatus', {
+                        method: 'GET',
+                        headers: { Accept: 'application/json' }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.exists === true && !data.building) {
+                            // Index is ready, close modal
+                            if (pollIntervalId) {
+                                clearInterval(pollIntervalId);
+                                pollIntervalId = null;
+                            }
+                            overlay.classList.remove('show');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Index status check failed:', error);
+                    });
+                }
+
+                function initializeIndexModal() {
+                    // Check initial status
+                    fetch('?api=indexstatus', {
+                        method: 'GET',
+                        headers: { Accept: 'application/json' }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.exists === true && data.building !== true) {
+                            return;
+                        }
+
+                        // Show modal immediately while build is running or about to start.
+                        overlay.classList.add('show');
+                        if (!pollIntervalId) {
+                            pollIntervalId = setInterval(checkIndexStatus, 2000);
+                        }
+
+                        if (data.building === true) {
+                            return;
+                        }
+
+                        fetch('?api=triggerindexbuild', {
+                            method: 'GET',
+                            headers: { Accept: 'application/json' }
+                        }).catch(error => {
+                            console.error('Index build trigger failed:', error);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Initial index status check failed:', error);
+                    });
+                }
+
+                // Run when DOM is ready
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', initializeIndexModal);
+                } else {
+                    initializeIndexModal();
+                }
+            })();
+
             // Tree View Logic
             document.addEventListener("DOMContentLoaded", function () {
+                const sidebarTabButtons = document.querySelectorAll(
+                    ".sidebar-tab-btn"
+                );
+                const sidebarTabPanels = document.querySelectorAll(
+                    ".sidebar-tab-panel"
+                );
+
+                sidebarTabButtons.forEach((button) => {
+                    button.addEventListener("click", function () {
+                        const target = this.dataset.tabTarget || "contents";
+
+                        sidebarTabButtons.forEach((btn) => {
+                            btn.classList.toggle("active", btn === this);
+                        });
+
+                        sidebarTabPanels.forEach((panel) => {
+                            panel.classList.toggle(
+                                "active",
+                                panel.dataset.tabPanel === target
+                            );
+                        });
+                    });
+                });
+
                 function getIndent(line) {
                     const leading = (line.match(/^[ \t]*/) || [""])[0];
                     return leading.replace(/\t/g, "    ").length;
@@ -718,6 +1191,127 @@ End Function
                             });
                         }, 50);
                     }
+                });
+
+                const fulltextSearchInput = document.getElementById(
+                    "fulltext-search-input"
+                );
+                const fulltextSearchResults = document.getElementById(
+                    "fulltext-search-results"
+                );
+
+                function toTitleCaseFromSlug(value) {
+                    const base = String(value || "")
+                        .replace(/\.md$/i, "")
+                        .replace(/[-_]+/g, " ")
+                        .trim();
+                    return base.replace(/\b\w/g, (m) => m.toUpperCase());
+                }
+
+                function renderSearchResults(paths) {
+                    if (!Array.isArray(paths) || paths.length === 0) {
+                        fulltextSearchResults.innerHTML =
+                            '<div class="search-empty">No results found.</div>';
+                        return;
+                    }
+
+                    const fragment = document.createDocumentFragment();
+                    fulltextSearchResults.innerHTML = "";
+
+                    paths.forEach((rawPath) => {
+                        const normalizedPath = String(rawPath || "")
+                            .replace(/\\/g, "/")
+                            .replace(/^\/+/, "")
+                            .replace(/^md\//i, "");
+
+                        if (!normalizedPath) {
+                            return;
+                        }
+
+                        const parts = normalizedPath.split("/").filter(Boolean);
+                        if (parts.length === 0) {
+                            return;
+                        }
+
+                        const fileName = parts[parts.length - 1];
+                        const folderName =
+                            parts.length > 1 ? parts[parts.length - 2] : "Manual";
+                        const pageTarget = "md/" + normalizedPath;
+
+                        const item = document.createElement("div");
+                        item.className = "search-result-item";
+
+                        const link = document.createElement("a");
+                        link.className = "search-result-link";
+                        link.href =
+                            "?page=" + encodeURIComponent(pageTarget);
+                        link.textContent = toTitleCaseFromSlug(fileName);
+
+                        const folder = document.createElement("div");
+                        folder.className = "search-result-folder";
+                        folder.textContent = toTitleCaseFromSlug(folderName);
+
+                        item.appendChild(link);
+                        item.appendChild(folder);
+                        fragment.appendChild(item);
+                    });
+
+                    if (!fragment.childNodes.length) {
+                        fulltextSearchResults.innerHTML =
+                            '<div class="search-empty">No results found.</div>';
+                        return;
+                    }
+
+                    fulltextSearchResults.appendChild(fragment);
+                }
+
+                let searchDebounceId = 0;
+                let activeSearchToken = 0;
+
+                fulltextSearchInput.addEventListener("input", function () {
+                    const term = this.value.trim();
+                    window.clearTimeout(searchDebounceId);
+
+                    if (term === "") {
+                        fulltextSearchResults.innerHTML =
+                            '<div class="search-empty">Type to search the documentation index.</div>';
+                        return;
+                    }
+
+                    searchDebounceId = window.setTimeout(async () => {
+                        const token = ++activeSearchToken;
+                        fulltextSearchResults.innerHTML =
+                            '<div class="search-empty">Searching...</div>';
+
+                        try {
+                            const response = await fetch(
+                                "?api=search&q=" + encodeURIComponent(term),
+                                {
+                                    method: "GET",
+                                    headers: {
+                                        Accept: "application/json",
+                                    },
+                                }
+                            );
+
+                            if (!response.ok) {
+                                throw new Error("HTTP " + response.status);
+                            }
+
+                            const payload = await response.json();
+                            if (token !== activeSearchToken) {
+                                return;
+                            }
+
+                            renderSearchResults(payload);
+                        } catch (error) {
+                            if (token !== activeSearchToken) {
+                                return;
+                            }
+                            fulltextSearchResults.innerHTML =
+                                '<div class="search-error">Search is temporarily unavailable.</div>';
+                        }
+                    }, 220);
                 });
             });
         </script>

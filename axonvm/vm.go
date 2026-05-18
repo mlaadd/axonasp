@@ -398,7 +398,7 @@ type VM struct {
 	jsIntlNumberFormatItems        map[int64]*jsIntlNumberFormatObject
 	jsIntlCollatorItems            map[int64]*jsIntlCollatorObject
 	jsIntlPluralRulesItems         map[int64]*jsIntlPluralRulesObject
-	jsIntlRelativeTimeFormatItems map[int64]*jsIntlRelativeTimeFormatObject
+	jsIntlRelativeTimeFormatItems  map[int64]*jsIntlRelativeTimeFormatObject
 	jsPromiseItems                 map[int64]*jsPromiseObject
 	jsGeneratorItems               map[int64]*jsGeneratorObject
 	jsProxyItems                   map[int64]*jsProxyObject
@@ -644,7 +644,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		jsIntlNumberFormatItems:        make(map[int64]*jsIntlNumberFormatObject),
 		jsIntlCollatorItems:            make(map[int64]*jsIntlCollatorObject),
 		jsIntlPluralRulesItems:         make(map[int64]*jsIntlPluralRulesObject),
-		jsIntlRelativeTimeFormatItems: make(map[int64]*jsIntlRelativeTimeFormatObject),
+		jsIntlRelativeTimeFormatItems:  make(map[int64]*jsIntlRelativeTimeFormatObject),
 		jsPromiseItems:                 make(map[int64]*jsPromiseObject),
 		jsGeneratorItems:               make(map[int64]*jsGeneratorObject),
 		jsProxyItems:                   make(map[int64]*jsProxyObject),
@@ -5290,145 +5290,146 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 		case strings.EqualFold(member, "CreateObject"):
 			if len(args) >= 1 {
 				progID := strings.TrimSpace(args[0].String())
-				if strings.EqualFold(progID, "G3STRINGBUILDER") {
+				progIDKey := strings.ToLower(progID)
+				if progIDKey == "g3stringbuilder" {
 					return vm.newG3StringBuilderObject()
 				}
-				if strings.EqualFold(progID, "G3SEARCH") {
+				if progIDKey == "g3search" {
 					return vm.newG3SearchObject()
 				}
-				if strings.EqualFold(progID, "G3MD") {
+				if progIDKey == "g3md" {
 					return vm.newG3MDObject()
 				}
-				if strings.EqualFold(progID, "G3TestSuite") || strings.EqualFold(progID, "G3Test") {
+				if progIDKey == "g3testsuite" || progIDKey == "g3test" {
 					return vm.newG3TestObject()
 				}
 				if defaultAlgorithm, ok := g3cryptoResolveProgID(progID); ok {
 					return vm.newG3CryptoObject(defaultAlgorithm)
 				}
-				if strings.EqualFold(progID, "G3AXON") || strings.EqualFold(progID, "G3Axon.Functions") {
+				if progIDKey == "g3axon" || progIDKey == "g3axon.functions" {
 					return vm.newAxonLibrary()
 				}
-				if strings.EqualFold(progID, "G3JSON") {
+				if progIDKey == "g3json" {
 					return vm.newG3JSONObject()
 				}
-				if strings.EqualFold(progID, "G3DB") {
+				if progIDKey == "g3db" {
 					return vm.newG3DBObject()
 				}
-				if strings.EqualFold(progID, "G3HTTP") || strings.EqualFold(progID, "G3HTTP.Functions") {
+				if progIDKey == "g3http" || progIDKey == "g3http.functions" {
 					return vm.newG3HTTPObject()
 				}
-				if strings.EqualFold(progID, "G3Mail") || strings.EqualFold(progID, "CDONTS.NewMail") || strings.EqualFold(progID, "CDO.Message") || strings.EqualFold(progID, "Persits.MailSender") {
+				if progIDKey == "g3mail" || progIDKey == "cdonts.newmail" || progIDKey == "cdo.message" || progIDKey == "persits.mailsender" {
 					return vm.newG3MailObject()
 				}
-				if strings.EqualFold(progID, "G3Image") {
+				if progIDKey == "g3image" {
 					return vm.newG3ImageObject()
 				}
-				if strings.EqualFold(progID, "G3FILES") {
+				if progIDKey == "g3files" {
 					return vm.newG3FilesObject()
 				}
-				if strings.EqualFold(progID, "G3Template") {
+				if progIDKey == "g3template" {
 					return vm.newG3TemplateObject()
 				}
-				if strings.EqualFold(progID, "G3Zip") {
+				if progIDKey == "g3zip" {
 					return vm.newG3ZipObject()
 				}
-				if strings.EqualFold(progID, "G3ZLIB") {
+				if progIDKey == "g3zlib" {
 					return vm.newG3ZLIBObject()
 				}
-				if strings.EqualFold(progID, "G3TAR") {
+				if progIDKey == "g3tar" {
 					return vm.newG3TARObject()
 				}
-				if strings.EqualFold(progID, "G3ZSTD") {
+				if progIDKey == "g3zstd" {
 					return vm.newG3ZSTDObject()
 				}
-				if strings.EqualFold(progID, "G3FC") {
+				if progIDKey == "g3fc" {
 					return vm.newG3FCObject()
 				}
-				if strings.EqualFold(progID, "G3AXONLIVE") {
+				if progIDKey == "g3axonlive" {
 					return vm.newG3AxonLiveObject()
 				}
-				if strings.EqualFold(progID, "WScript.Shell") {
+				if progIDKey == "wscript.shell" {
 					return vm.newWScriptShellObject()
 				}
-				if strings.EqualFold(progID, "ADOX.Catalog") {
+				if progIDKey == "adox.catalog" {
 					return vm.newADOXCatalogObject()
 				}
-				if strings.EqualFold(progID, "MSWC.AdRotator") {
+				if progIDKey == "mswc.adrotator" {
 					return vm.newG3AdRotatorObject()
 				}
-				if strings.EqualFold(progID, "MSWC.BrowserType") {
+				if progIDKey == "mswc.browsertype" {
 					return vm.newG3BrowserTypeObject()
 				}
-				if strings.EqualFold(progID, "MSWC.NextLink") {
+				if progIDKey == "mswc.nextlink" {
 					return vm.newG3NextLinkObject()
 				}
-				if strings.EqualFold(progID, "MSWC.ContentRotator") {
+				if progIDKey == "mswc.contentrotator" {
 					return vm.newG3ContentRotatorObject()
 				}
-				if strings.EqualFold(progID, "MSWC.Counters") {
+				if progIDKey == "mswc.counters" {
 					return vm.newG3CountersObject()
 				}
-				if strings.EqualFold(progID, "MSWC.PageCounter") {
+				if progIDKey == "mswc.pagecounter" {
 					return vm.newG3PageCounterObject()
 				}
-				if strings.EqualFold(progID, "MSWC.Tools") {
+				if progIDKey == "mswc.tools" {
 					return vm.newG3ToolsObject()
 				}
-				if strings.EqualFold(progID, "MSWC.MyInfo") {
+				if progIDKey == "mswc.myinfo" {
 					return vm.newG3MyInfoObject()
 				}
-				if strings.EqualFold(progID, "MSWC.PermissionChecker") {
+				if progIDKey == "mswc.permissionchecker" {
 					return vm.newG3PermissionCheckerObject()
 				}
-				if strings.EqualFold(progID, "MSXML2.ServerXMLHTTP") || strings.EqualFold(progID, "MSXML2.XMLHTTP") || strings.EqualFold(progID, "Microsoft.XMLHTTP") {
+				if progIDKey == "msxml2.serverxmlhttp" || progIDKey == "msxml2.xmlhttp" || progIDKey == "microsoft.xmlhttp" {
 					obj := NewMsXML2ServerXMLHTTP(vm)
 					id := vm.nextDynamicNativeID
 					vm.nextDynamicNativeID++
 					vm.msxmlServerItems[id] = obj
 					return Value{Type: VTNativeObject, Num: id}
 				}
-				if strings.EqualFold(progID, "MSXML2.DOMDocument") || strings.EqualFold(progID, "Microsoft.XMLDOM") {
+				if progIDKey == "msxml2.domdocument" || progIDKey == "microsoft.xmldom" {
 					obj := NewMsXML2DOMDocument(vm)
 					id := vm.nextDynamicNativeID
 					vm.nextDynamicNativeID++
 					vm.msxmlDOMItems[id] = obj
 					return Value{Type: VTNativeObject, Num: id}
 				}
-				if strings.EqualFold(progID, "G3PDF") {
+				if progIDKey == "g3pdf" {
 					obj := NewG3PDF(vm)
 					id := vm.nextDynamicNativeID
 					vm.nextDynamicNativeID++
 					vm.pdfItems[id] = obj
 					return Value{Type: VTNativeObject, Num: id}
 				}
-				if strings.EqualFold(progID, "G3FileUploader") || strings.EqualFold(progID, "Persits.Upload") || strings.EqualFold(progID, "SoftArtisans.FileUp") || strings.EqualFold(progID, "ASPUpload") {
+				if progIDKey == "g3fileuploader" || progIDKey == "persits.upload" || progIDKey == "softartisans.fileup" || progIDKey == "aspupload" {
 					return vm.newG3FileUploaderObject()
 				}
-				if strings.EqualFold(progID, "Scripting.FileSystemObject") {
+				if progIDKey == "scripting.filesystemobject" {
 					return vm.newFSORootObject()
 				}
-				if strings.EqualFold(progID, "Scripting.Dictionary") {
+				if progIDKey == "scripting.dictionary" {
 					return vm.newDictionaryObject()
 				}
-				if strings.EqualFold(progID, "ADODB.Stream") {
+				if progIDKey == "adodb.stream" {
 					return vm.newADODBStreamObject()
 				}
-				if strings.EqualFold(progID, "ADODB.Connection") {
+				if progIDKey == "adodb.connection" {
 					return vm.newADODBConnection()
 				}
-				if strings.EqualFold(progID, "ADODBOLE.Connection") {
+				if progIDKey == "adodbole.connection" {
 					return vm.newADODBOLEConnection()
 				}
-				if strings.EqualFold(progID, "ADODB.Recordset") {
+				if progIDKey == "adodb.recordset" {
 					return vm.newADODBRecordset()
 				}
-				if strings.EqualFold(progID, "ADODB.Command") {
+				if progIDKey == "adodb.command" {
 					return vm.newADODBCommand()
 				}
-				if strings.EqualFold(progID, "VBScript.RegExp") || strings.EqualFold(progID, "RegExp") {
+				if progIDKey == "vbscript.regexp" || progIDKey == "regexp" {
 					return vm.newRegExpObject()
 				}
-				value, err := server.CreateObject(args[0].String())
+				value, err := server.CreateObject(progID)
 				if err != nil {
 					server.SetLastError(asp.NewVBScriptASPError(vbscript.ActiveXCannotCreateObject, "Server.CreateObject", "ASP", err.Error(), "", 0, 0))
 					return Value{Type: VTEmpty}

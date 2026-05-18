@@ -196,6 +196,9 @@ blocked_extensions = [
   ".htaccess",
   ".git",
   ".gitignore",
+  ".seg",
+  ".snp",
+  ".log",
 ]
 
 # List of files that the server will block from being served directly. This is a security measure to prevent access to sensitive files that should not be exposed to clients. The server will return a 404 Not found error if a client tries to access the file. You can customize this list based on the types of files you want to protect. It's important to include any file types that may contain sensitive information or executable code that should not be accessible through the web server.

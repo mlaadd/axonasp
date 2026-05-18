@@ -27,6 +27,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -34,12 +35,15 @@ import (
 	"github.com/blugelabs/bluge"
 )
 
+const g3SearchBuiltMarkerFile = ".axonasp_g3search_built"
+
 var (
 	globalBlugeReader     *bluge.Reader
 	globalBlugeReaderPath string
 	globalReaderMutex     sync.RWMutex
-	globalReaderInitOnce  sync.Once
-	globalReaderInitErr   error
+	globalBuiltIndexes    = make(map[string]bool)
+	globalBuildingIndexes = make(map[string]chan struct{})
+	globalBuildRuns       = make(map[string]int)
 )
 
 // G3Search provides high-performance document indexing and searching using Bluge.
@@ -82,45 +86,144 @@ func openGlobalReaderLocked(indexPath string) error {
 	return nil
 }
 
-// tryInitGlobalReaderOnce performs the first lazy reader initialization once.
-func (s *G3Search) tryInitGlobalReaderOnce() error {
-	globalReaderInitOnce.Do(func() {
-		globalReaderMutex.Lock()
-		defer globalReaderMutex.Unlock()
+// canonicalIndexPath normalizes one path so equivalent directories map to one state key.
+func canonicalIndexPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
 
-		if globalBlugeReader != nil {
-			if strings.EqualFold(globalBlugeReaderPath, s.indexPath) {
-				globalReaderInitErr = nil
-				return
-			}
-			_ = closeGlobalReaderLocked()
-		}
+	normalized := filepath.Clean(trimmed)
+	absPath, err := filepath.Abs(normalized)
+	if err == nil {
+		normalized = absPath
+	}
 
-		globalReaderInitErr = openGlobalReaderLocked(s.indexPath)
-	})
-	return globalReaderInitErr
+	return normalized
+}
+
+// canonicalIndexKey returns the map key used for per-directory build state.
+func canonicalIndexKey(path string) string {
+	normalized := canonicalIndexPath(path)
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(normalized)
+	}
+	return normalized
+}
+
+// hasPersistentBuildMarker reports whether this index path was already built.
+func hasPersistentBuildMarker(indexPath string) bool {
+	markerPath := filepath.Join(indexPath, g3SearchBuiltMarkerFile)
+	info, err := os.Stat(markerPath)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+// writePersistentBuildMarker writes a durable marker after one successful build.
+func writePersistentBuildMarker(indexPath string) error {
+	markerPath := filepath.Join(indexPath, g3SearchBuiltMarkerFile)
+	return os.WriteFile(markerPath, []byte("built"), 0o644)
+}
+
+// pathWithin reports whether candidate is inside or equal to root.
+func pathWithin(root, candidate string) bool {
+	rootPath := canonicalIndexPath(root)
+	candidatePath := canonicalIndexPath(candidate)
+	if rootPath == "" || candidatePath == "" {
+		return false
+	}
+
+	if runtime.GOOS == "windows" {
+		rootPath = strings.ToLower(rootPath)
+		candidatePath = strings.ToLower(candidatePath)
+	}
+
+	if candidatePath == rootPath {
+		return true
+	}
+
+	sep := string(os.PathSeparator)
+	if !strings.HasSuffix(rootPath, sep) {
+		rootPath += sep
+	}
+
+	return strings.HasPrefix(candidatePath, rootPath)
+}
+
+// beginGlobalIndexBuild reserves exactly one build slot for one canonical index path.
+func beginGlobalIndexBuild(indexPath string) (<-chan struct{}, bool) {
+	indexKey := canonicalIndexKey(indexPath)
+	if indexKey == "" {
+		return nil, false
+	}
+
+	globalReaderMutex.Lock()
+	defer globalReaderMutex.Unlock()
+
+	if globalBuiltIndexes[indexKey] {
+		return nil, false
+	}
+
+	if hasPersistentBuildMarker(indexPath) {
+		globalBuiltIndexes[indexKey] = true
+		return nil, false
+	}
+
+	if waitCh, exists := globalBuildingIndexes[indexKey]; exists {
+		return waitCh, false
+	}
+
+	waitCh := make(chan struct{})
+	globalBuildingIndexes[indexKey] = waitCh
+	globalBuildRuns[indexKey]++
+	return waitCh, true
+}
+
+// finishGlobalIndexBuild marks one build slot as complete and wakes waiters.
+func finishGlobalIndexBuild(indexPath string, buildSucceeded bool) {
+	indexKey := canonicalIndexKey(indexPath)
+	if indexKey == "" {
+		return
+	}
+
+	globalReaderMutex.Lock()
+	if buildSucceeded {
+		globalBuiltIndexes[indexKey] = true
+	}
+
+	if waitCh, exists := globalBuildingIndexes[indexKey]; exists {
+		delete(globalBuildingIndexes, indexKey)
+		close(waitCh)
+	}
+	globalReaderMutex.Unlock()
 }
 
 // acquireGlobalReaderForSearch returns a shared reader pinned by RLock for one search call.
 func (s *G3Search) acquireGlobalReaderForSearch() (*bluge.Reader, func(), error) {
-	_ = s.tryInitGlobalReaderOnce()
+	indexPath := canonicalIndexPath(s.indexPath)
+	if indexPath == "" {
+		return nil, nil, os.ErrInvalid
+	}
+	s.indexPath = indexPath
 
 	for {
 		globalReaderMutex.RLock()
-		if globalBlugeReader != nil && strings.EqualFold(globalBlugeReaderPath, s.indexPath) {
+		if globalBlugeReader != nil && strings.EqualFold(globalBlugeReaderPath, indexPath) {
 			return globalBlugeReader, globalReaderMutex.RUnlock, nil
 		}
 		globalReaderMutex.RUnlock()
 
 		globalReaderMutex.Lock()
-		if globalBlugeReader != nil && !strings.EqualFold(globalBlugeReaderPath, s.indexPath) {
+		if globalBlugeReader != nil && !strings.EqualFold(globalBlugeReaderPath, indexPath) {
 			if err := closeGlobalReaderLocked(); err != nil {
 				globalReaderMutex.Unlock()
 				return nil, nil, err
 			}
 		}
 		if globalBlugeReader == nil {
-			if err := openGlobalReaderLocked(s.indexPath); err != nil {
+			if err := openGlobalReaderLocked(indexPath); err != nil {
 				globalReaderMutex.Unlock()
 				return nil, nil, err
 			}
@@ -142,13 +245,13 @@ func (s *G3Search) DispatchMethod(methodName string, args []Value) Value {
 		return s.search(args[0].String())
 	case strings.EqualFold(methodName, "IndexPath"):
 		if len(args) > 0 {
-			s.indexPath = args[0].String()
+			s.indexPath = canonicalIndexPath(args[0].String())
 			return Value{Type: VTEmpty}
 		}
 		return NewString(s.indexPath)
 	case strings.EqualFold(methodName, "DocsPath"):
 		if len(args) > 0 {
-			s.docsPath = args[0].String()
+			s.docsPath = canonicalIndexPath(args[0].String())
 			return Value{Type: VTEmpty}
 		}
 		return NewString(s.docsPath)
@@ -186,9 +289,9 @@ func (s *G3Search) DispatchPropertySet(propertyName string, val Value) {
 
 	switch {
 	case strings.EqualFold(propertyName, "IndexPath"):
-		s.indexPath = val.String()
+		s.indexPath = canonicalIndexPath(val.String())
 	case strings.EqualFold(propertyName, "DocsPath"):
-		s.docsPath = val.String()
+		s.docsPath = canonicalIndexPath(val.String())
 	case strings.EqualFold(propertyName, "Extension"):
 		s.extension = val.String()
 		if s.extension != "" && !strings.HasPrefix(s.extension, ".") {
@@ -199,36 +302,64 @@ func (s *G3Search) DispatchPropertySet(propertyName string, val Value) {
 
 // buildIndex iterates through DocsPath and indexes files matching Extension.
 func (s *G3Search) buildIndex() Value {
+	indexPath := canonicalIndexPath(s.indexPath)
+	docsPath := canonicalIndexPath(s.docsPath)
+	s.indexPath = indexPath
+	s.docsPath = docsPath
 
-	if s.docsPath == "" {
+	if docsPath == "" {
 		s.vm.raise(vbscript.InternalError, ErrG3SearchDocsPathMissing.String())
 		return Value{Type: VTEmpty}
 	}
-	if s.indexPath == "" {
+	if indexPath == "" {
 		s.vm.raise(vbscript.InternalError, ErrG3SearchIndexPathMissing.String())
 		return Value{Type: VTEmpty}
 	}
 
+	waitCh, shouldBuild := beginGlobalIndexBuild(indexPath)
+	if !shouldBuild {
+		if waitCh != nil {
+			<-waitCh
+		}
+		return Value{Type: VTEmpty}
+	}
+
+	buildSucceeded := false
+	defer func() {
+		finishGlobalIndexBuild(indexPath, buildSucceeded)
+	}()
+
 	globalReaderMutex.Lock()
-	defer globalReaderMutex.Unlock()
 
 	if err := closeGlobalReaderLocked(); err != nil {
+		globalReaderMutex.Unlock()
 		s.vm.raise(vbscript.InternalError, ErrG3SearchIndexOpenFailed.String()+": "+err.Error())
 		return Value{Type: VTEmpty}
 	}
 
-	config := bluge.DefaultConfig(s.indexPath)
+	config := bluge.DefaultConfig(indexPath)
 	writer, err := bluge.OpenWriter(config)
 	if err != nil {
+		globalReaderMutex.Unlock()
 		s.vm.raise(vbscript.InternalError, ErrG3SearchIndexOpenFailed.String()+": "+err.Error())
 		return Value{Type: VTEmpty}
 	}
 
-	err = filepath.Walk(s.docsPath, func(path string, info os.FileInfo, err error) error {
+	batch := bluge.NewBatch()
+
+	err = filepath.Walk(docsPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && (s.extension == "" || strings.EqualFold(filepath.Ext(path), s.extension)) {
+
+		if info.IsDir() {
+			if pathWithin(indexPath, path) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if s.extension == "" || strings.EqualFold(filepath.Ext(path), s.extension) {
 			content, err := os.ReadFile(path)
 			if err != nil {
 				return err
@@ -238,29 +369,47 @@ func (s *G3Search) buildIndex() Value {
 			doc.AddField(bluge.NewTextField("content", string(content)))
 			doc.AddField(bluge.NewStoredOnlyField("filename", []byte(path)))
 
-			err = writer.Update(doc.ID(), doc)
-			if err != nil {
-				return err
-			}
+			batch.Update(doc.ID(), doc)
 		}
 		return nil
 	})
 
 	if err != nil {
 		_ = writer.Close()
+		globalReaderMutex.Unlock()
+		s.vm.raise(vbscript.InternalError, ErrG3SearchIndexWriteFailed.String()+": "+err.Error())
+		return Value{Type: VTEmpty}
+	}
+
+	if err := writer.Batch(batch); err != nil {
+		_ = writer.Close()
+		globalReaderMutex.Unlock()
 		s.vm.raise(vbscript.InternalError, ErrG3SearchIndexWriteFailed.String()+": "+err.Error())
 		return Value{Type: VTEmpty}
 	}
 
 	if err := writer.Close(); err != nil {
+		globalReaderMutex.Unlock()
 		s.vm.raise(vbscript.InternalError, ErrG3SearchIndexWriteFailed.String()+": "+err.Error())
 		return Value{Type: VTEmpty}
 	}
 
-	if err := openGlobalReaderLocked(s.indexPath); err != nil {
+	if err := writePersistentBuildMarker(indexPath); err != nil {
+		globalReaderMutex.Unlock()
+		s.vm.raise(vbscript.InternalError, ErrG3SearchIndexWriteFailed.String()+": "+err.Error())
+		return Value{Type: VTEmpty}
+	}
+
+	// Mark the index as built once write and commit complete.
+	buildSucceeded = true
+
+	if err := openGlobalReaderLocked(indexPath); err != nil {
+		globalReaderMutex.Unlock()
 		s.vm.raise(vbscript.InternalError, ErrG3SearchIndexOpenFailed.String()+": "+err.Error())
 		return Value{Type: VTEmpty}
 	}
+
+	globalReaderMutex.Unlock()
 
 	return Value{Type: VTEmpty}
 }
