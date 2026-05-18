@@ -204,3 +204,114 @@ func TestCleanupRequestResourcesReleasesG3Image(t *testing.T) {
 		t.Fatalf("expected request cleanup to clear all g3image resource pointers")
 	}
 }
+
+// TestAcquireVMFromCachedProgramClearsExtendedDynamicMaps verifies pooled VM reuse
+// clears dynamic maps that can leak state across requests when not reset.
+func TestAcquireVMFromCachedProgramClearsExtendedDynamicMaps(t *testing.T) {
+	compiler := NewASPCompiler(`<% Response.Write "ok" %>`)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	program := cachedProgramFromCompiler(compiler)
+	vm := AcquireVMFromCachedProgram(program)
+
+	vm.g3searchItems[90000] = nil
+	vm.g3stringBuilderItems[90001] = nil
+	vm.g3zlibItems[90002] = nil
+	vm.g3tarItems[90003] = nil
+	vm.g3zstdItems[90004] = nil
+	vm.g3axonliveItems[90005] = nil
+	vm.g3axonliveProxyItems[90006] = nil
+	vm.g3dbItems[90007] = nil
+	vm.g3dbResultSetItems[90008] = nil
+	vm.g3dbFieldsItems[90009] = nil
+	vm.g3dbRowItems[90010] = nil
+	vm.g3dbStatementItems[90011] = nil
+	vm.g3dbTransactionItems[90012] = nil
+	vm.g3dbResultItems[90013] = nil
+	vm.runtimeClassItems[90014] = nil
+
+	vm.jsRegExpItems[90001] = nil
+	vm.jsArgumentsItems[90002] = nil
+	vm.jsSetItems[90003] = nil
+	vm.jsMapItems[90004] = nil
+	vm.jsWeakRefItems[90005] = nil
+	vm.jsFinalizationRegistryItems[90006] = nil
+	vm.jsArrayIterators[90007] = nil
+	vm.jsStringIterators[90008] = nil
+	vm.jsRegExpStringIterators[90009] = nil
+	vm.jsIntlCollatorItems[90010] = nil
+	vm.jsIntlPluralRulesItems[90011] = nil
+	vm.jsIntlRelativeTimeFormatItems[90012] = nil
+	vm.jsProxyItems[90013] = nil
+
+	if _, exists := vm.g3searchItems[90000]; !exists {
+		t.Fatalf("expected g3search object to be allocated")
+	}
+	if _, exists := vm.g3stringBuilderItems[90001]; !exists {
+		t.Fatalf("expected g3stringbuilder object to be allocated")
+	}
+	if _, exists := vm.g3zlibItems[90002]; !exists {
+		t.Fatalf("expected g3zlib object to be allocated")
+	}
+	if _, exists := vm.g3tarItems[90003]; !exists {
+		t.Fatalf("expected g3tar object to be allocated")
+	}
+	if _, exists := vm.g3zstdItems[90004]; !exists {
+		t.Fatalf("expected g3zstd object to be allocated")
+	}
+	if _, exists := vm.g3axonliveItems[90005]; !exists {
+		t.Fatalf("expected g3axonlive object to be allocated")
+	}
+	if _, exists := vm.g3dbItems[90007]; !exists {
+		t.Fatalf("expected g3db object to be allocated")
+	}
+	if _, exists := vm.runtimeClassItems[90014]; !exists {
+		t.Fatalf("expected runtime class object to be allocated")
+	}
+
+	vm.Release()
+
+	reused := AcquireVMFromCachedProgram(program)
+	defer reused.Release()
+
+	if len(reused.g3searchItems) != 0 ||
+		len(reused.g3stringBuilderItems) != 0 ||
+		len(reused.g3zlibItems) != 0 ||
+		len(reused.g3tarItems) != 0 ||
+		len(reused.g3zstdItems) != 0 {
+		t.Fatalf("expected core G3 maps to be cleared on pooled reuse")
+	}
+	if len(reused.g3axonliveItems) != 0 || len(reused.g3axonliveProxyItems) != 0 {
+		t.Fatalf("expected G3AxonLive maps to be cleared on pooled reuse")
+	}
+	if len(reused.g3dbItems) != 0 ||
+		len(reused.g3dbResultSetItems) != 0 ||
+		len(reused.g3dbFieldsItems) != 0 ||
+		len(reused.g3dbRowItems) != 0 ||
+		len(reused.g3dbStatementItems) != 0 ||
+		len(reused.g3dbTransactionItems) != 0 ||
+		len(reused.g3dbResultItems) != 0 {
+		t.Fatalf("expected G3DB maps to be cleared on pooled reuse")
+	}
+	if len(reused.runtimeClassItems) != 0 {
+		t.Fatalf("expected runtime class map to be cleared on pooled reuse")
+	}
+
+	if len(reused.jsRegExpItems) != 0 ||
+		len(reused.jsArgumentsItems) != 0 ||
+		len(reused.jsSetItems) != 0 ||
+		len(reused.jsMapItems) != 0 ||
+		len(reused.jsWeakRefItems) != 0 ||
+		len(reused.jsFinalizationRegistryItems) != 0 ||
+		len(reused.jsArrayIterators) != 0 ||
+		len(reused.jsStringIterators) != 0 ||
+		len(reused.jsRegExpStringIterators) != 0 ||
+		len(reused.jsIntlCollatorItems) != 0 ||
+		len(reused.jsIntlPluralRulesItems) != 0 ||
+		len(reused.jsIntlRelativeTimeFormatItems) != 0 ||
+		len(reused.jsProxyItems) != 0 {
+		t.Fatalf("expected extended JScript maps to be cleared on pooled reuse")
+	}
+}

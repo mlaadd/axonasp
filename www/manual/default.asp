@@ -1,14 +1,12 @@
 <%
 Dim page, mdPath, mdContent, htmlContent, menuContent, menuHtml, apiAction
-Dim g3md, fso, indexPathDir, indexCompiledPath, lockFile
+Dim g3md, fso, indexPathDir, indexCompiledPath
 
 Set fso = Server.CreateObject("Scripting.FileSystemObject")
-
 
 ' Initialize index paths
 indexPathDir = Server.MapPath("search-index")
 indexCompiledPath = indexPathDir & "\manual"
-lockFile = indexPathDir & "\.building"
 
 apiAction = LCase(Trim(Request.QueryString("api")))
 If apiAction = "search" Then
@@ -17,7 +15,7 @@ If apiAction = "search" Then
     Response.Write SearchManualJson(Trim(Request.QueryString("q")))
     Response.End
 End If
-
+'Future implementation
 If apiAction = "triggerindexbuild" Then
     Response.ContentType = "application/json"
     Response.Charset = "utf-8"
@@ -44,13 +42,13 @@ End Function
 Function GetIndexStatusJson()
     Dim indexExists, isBuilding
     indexExists = fso.FolderExists(indexCompiledPath)
-    isBuilding = fso.FileExists(lockFile)
-    GetIndexStatusJson = "{""exists"":" & BoolToJson(indexExists And Not isBuilding) & ",""building"":" & BoolToJson(isBuilding) & "}"
+    isBuilding = False
+    GetIndexStatusJson = "{""exists"":" & BoolToJson(indexExists) & ",""building"":" & BoolToJson(isBuilding) & "}"
 End Function
 
 
 Function InitializeIndexIfNeeded()
-    ' Ensure index directory exists and initialize if needed (prevent concurrent builds)
+    ' Ensure index directory exists and initialize if needed
     Dim search
     On Error Resume Next
     
@@ -58,27 +56,18 @@ Function InitializeIndexIfNeeded()
         fso.CreateFolder indexPathDir
     End If
     
-    ' Only trigger BuildIndex if: (1) compiled index doesn't exist AND (2) no build is in progress
-    If Not fso.FolderExists(indexCompiledPath) And Not fso.FileExists(lockFile) Then
+    ' Trigger BuildIndex only when compiled index does not exist
+    If Not fso.FolderExists(indexCompiledPath) Then
         Set search = Server.CreateObject("G3SEARCH")
         If Err.Number = 0 Then
-            ' Create lock file to prevent concurrent builds
-            Dim lockStream
-            Set lockStream = fso.CreateTextFile(lockFile, True)
-            lockStream.Write "building"
-            lockStream.Close
-            
             search.IndexPath = indexCompiledPath
             search.DocsPath = Server.MapPath("md")
             search.Extension = ".md"
             search.BuildIndex()
-            
-            'Err.Clear
-            ' Delete lock file after build completes
-            'On Error Resume Next
-            'fso.DeleteFile lockFile
-            'On Error Goto 0
+            Err.Clear
         End If
+
+        Set search = Nothing
     End If
     
     On Error Goto 0
@@ -128,13 +117,29 @@ End If
 
 Function ReadFile(path)
     Dim stream
+    ReadFile = ""
+    On Error Resume Next
+
     Set stream = Server.CreateObject("ADODB.Stream")
-    stream.Type = 2 ' Text
-    stream.Charset = "utf-8"
-    stream.Open
-    stream.LoadFromFile path
-    ReadFile = stream.ReadText
-    stream.Close
+    If Err.Number = 0 Then
+        stream.Type = 2 ' Text
+        stream.Charset = "utf-8"
+        stream.Open
+
+        If Err.Number = 0 Then
+            stream.LoadFromFile path
+            If Err.Number = 0 Then
+                ReadFile = stream.ReadText
+            End If
+        End If
+    End If
+
+    Err.Clear
+    If Not stream Is Nothing Then
+        stream.Close
+        Set stream = Nothing
+    End If
+    On Error Goto 0
 End Function
 
 Function ParseMenuToTree(content)
