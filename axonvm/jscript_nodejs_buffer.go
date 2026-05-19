@@ -65,7 +65,9 @@ func (vm *VM) jsCreateBufferInstance(data []byte) Value {
 
 	// Type marker and reference to underlying data
 	obj["__js_type"] = NewString("Buffer")
+	obj["__js_class"] = NewString("Buffer")
 	obj["__js_buffer_data"] = NewString(fmt.Sprintf("__buffer_%d", bufID)) // Reference key
+	obj["__js_buffer_utf8"] = NewString(string(data))
 
 	// Store the actual buffer data
 	if vm.jsBufferItems == nil {

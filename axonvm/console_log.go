@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -44,24 +45,82 @@ var consoleMethodFormats = map[string]consoleOutputFormat{
 	"info":  {writer: os.Stdout, symbol: "ℹ ", level: "INFO", logFile: "console.log"},
 	"error": {writer: os.Stderr, symbol: "✖ ", level: "ERROR", logFile: "error.log"},
 	"warn":  {writer: os.Stderr, symbol: "⚠ ", level: "WARN", logFile: "error.log"},
+	"trace": {writer: os.Stderr, symbol: "↳ ", level: "TRACE", logFile: "error.log"},
 }
+
+const consoleDefaultTimerLabel = "default"
 
 // consoleDispatch is the entry point for all console.method(args) calls from both
 // VBScript (via dispatchNativeCall) and JScript (via OpJSCallMember → dispatchNativeCall).
 // It formats the first argument into a printable string, writes to the correct stream,
 // and conditionally appends a clean (no-symbol) entry to the appropriate log file.
 func consoleDispatch(vm *VM, method string, args []Value) Value {
+	lower := strings.ToLower(method)
+	switch lower {
+	case "time":
+		label := consoleTimerLabel(vm, args)
+		if vm != nil {
+			if vm.consoleTimerItems == nil {
+				vm.consoleTimerItems = make(map[string]time.Time)
+			}
+			vm.consoleTimerItems[label] = time.Now()
+		}
+		return Value{Type: VTEmpty}
+	case "timeend":
+		label := consoleTimerLabel(vm, args)
+		if vm == nil || vm.consoleTimerItems == nil {
+			consoleWriteMessage(vm, consoleMethodFormats["warn"], "No such label '"+label+"' for console.timeEnd()")
+			return Value{Type: VTEmpty}
+		}
+		startedAt, exists := vm.consoleTimerItems[label]
+		if !exists {
+			consoleWriteMessage(vm, consoleMethodFormats["warn"], "No such label '"+label+"' for console.timeEnd()")
+			return Value{Type: VTEmpty}
+		}
+		delete(vm.consoleTimerItems, label)
+		elapsedMs := float64(time.Since(startedAt).Nanoseconds()) / 1e6
+		consoleWriteMessage(vm, consoleMethodFormats["log"], fmt.Sprintf("%s: %.3fms", label, elapsedMs))
+		return Value{Type: VTEmpty}
+	case "dir":
+		msg := "undefined"
+		if len(args) > 0 {
+			msg = consoleInspectArg(vm, args[0])
+		}
+		consoleWriteMessage(vm, consoleMethodFormats["log"], msg)
+		return Value{Type: VTEmpty}
+	case "trace":
+		if !consoleIsJScriptContext(vm) {
+			return Value{Type: VTEmpty}
+		}
+		message := "Trace"
+		if len(args) > 0 {
+			message = "Trace: " + consoleSerializeArg(vm, args[0])
+		}
+		stack := consoleBuildJSTrace(vm)
+		if stack != "" {
+			message += "\n" + stack
+		}
+		consoleWriteMessage(vm, consoleMethodFormats["trace"], message)
+		return Value{Type: VTEmpty}
+	}
+
 	if len(args) == 0 {
 		return Value{Type: VTEmpty}
 	}
 
-	lower := strings.ToLower(method)
 	format, supported := consoleMethodFormats[lower]
 	if !supported {
 		return Value{Type: VTEmpty}
 	}
 
 	msg := consoleSerializeArg(vm, args[0])
+	consoleWriteMessage(vm, format, msg)
+
+	return Value{Type: VTEmpty}
+}
+
+// consoleWriteMessage writes one decorated line to console output and a plain line to log files.
+func consoleWriteMessage(vm *VM, format consoleOutputFormat, msg string) {
 	timestamp := time.Now().Format("2006/01/02 15:04:05")
 	writer, lineEnding := resolveConsoleOutputTarget(vm, format)
 
@@ -70,8 +129,126 @@ func consoleDispatch(vm *VM, method string, args []Value) Value {
 
 	// Write a plain (symbol-free) entry to the configured log file.
 	writeConsoleLogToFile(format.logFile, format.level, msg, timestamp)
+}
 
-	return Value{Type: VTEmpty}
+// consoleTimerLabel returns the normalized timer label, defaulting to "default".
+func consoleTimerLabel(vm *VM, args []Value) string {
+	if len(args) == 0 {
+		return consoleDefaultTimerLabel
+	}
+	label := strings.TrimSpace(consoleSerializeArg(vm, args[0]))
+	if label == "" {
+		return consoleDefaultTimerLabel
+	}
+	return label
+}
+
+// consoleIsJScriptContext reports whether the current execution is in the JScript runtime.
+func consoleIsJScriptContext(vm *VM) bool {
+	if vm == nil {
+		return false
+	}
+	if vm.engineMode == EngineModeJavaScript {
+		return true
+	}
+	return len(vm.jsCallStack) > 0 || vm.jsActiveEnvID != 0 || vm.jsRootEnvID != 0
+}
+
+// consoleInspectArg renders one value in a multiline, inspection-focused format.
+func consoleInspectArg(vm *VM, v Value) string {
+	inspected := consoleValueToInterface(vm, v)
+	b, err := json.MarshalIndent(inspected, "", "  ")
+	if err != nil {
+		return consoleSerializeArg(vm, v)
+	}
+	return string(b)
+}
+
+// consoleBuildJSTrace formats the active JScript call stack using file/line/column metadata.
+func consoleBuildJSTrace(vm *VM) string {
+	if vm == nil {
+		return ""
+	}
+	var b strings.Builder
+
+	file := vm.sourceName
+	if strings.TrimSpace(file) == "" {
+		file = vm.baseSourceName
+	}
+	if strings.TrimSpace(file) == "" {
+		file = "<script>"
+	}
+
+	line := vm.lastLine
+	if line <= 0 {
+		line = 1
+	}
+	col := vm.lastColumn
+	if col <= 0 {
+		col = 1
+	}
+
+	frameName := "<global>"
+	if n := len(vm.jsCallStack); n > 0 {
+		frameName = consoleJSFrameName(vm, vm.jsCallStack[n-1])
+	}
+	b.WriteString("    at ")
+	b.WriteString(frameName)
+	b.WriteString(" (")
+	b.WriteString(file)
+	b.WriteString(":")
+	b.WriteString(strconv.Itoa(line))
+	b.WriteString(":")
+	b.WriteString(strconv.Itoa(col))
+	b.WriteString(")")
+
+	for i := len(vm.jsCallStack) - 1; i >= 0; i-- {
+		if i == len(vm.jsCallStack)-1 {
+			continue
+		}
+		frame := vm.jsCallStack[i]
+		frameFile := frame.callFile
+		if strings.TrimSpace(frameFile) == "" {
+			frameFile = file
+		}
+		frameLine := frame.callLine
+		if frameLine <= 0 {
+			frameLine = 1
+		}
+		frameCol := frame.callColumn
+		if frameCol <= 0 {
+			frameCol = 1
+		}
+		b.WriteString("\n    at ")
+		b.WriteString(consoleJSFrameName(vm, frame))
+		b.WriteString(" (")
+		b.WriteString(frameFile)
+		b.WriteString(":")
+		b.WriteString(strconv.Itoa(frameLine))
+		b.WriteString(":")
+		b.WriteString(strconv.Itoa(frameCol))
+		b.WriteString(")")
+	}
+
+	return b.String()
+}
+
+// consoleJSFrameName resolves one JScript call frame function name for trace output.
+func consoleJSFrameName(vm *VM, frame jsCallFrame) string {
+	if vm == nil {
+		return "<anonymous>"
+	}
+	if frame.fn.Type != VTJSFunction {
+		return "<anonymous>"
+	}
+	closure, ok := vm.jsFunctionItems[frame.fn.Num]
+	if !ok || closure == nil {
+		return "<anonymous>"
+	}
+	if strings.TrimSpace(closure.name) == "" {
+		return "<anonymous>"
+	}
+	return closure.name
 }
 
 // resolveConsoleOutputTarget selects where console output should be written.

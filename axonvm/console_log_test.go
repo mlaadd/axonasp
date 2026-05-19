@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestResolveConsoleOutputTarget_CLITUI verifies that TUI mode routes console output
@@ -64,5 +65,96 @@ func TestResolveConsoleOutputTarget_Default(t *testing.T) {
 	_, lineEnding := resolveConsoleOutputTarget(vm, consoleMethodFormats["log"])
 	if lineEnding != "\n" {
 		t.Fatalf("expected default line ending to be newline, got %q", lineEnding)
+	}
+}
+
+// TestConsoleTimeAndTimeEnd verifies timer labels are stored and consumed by console.time/timeEnd.
+func TestConsoleTimeAndTimeEnd(t *testing.T) {
+	host := NewMockHost()
+	var out bytes.Buffer
+	host.SetOutput(&out)
+	host.Request().ServerVars.Add("AXONASP_CLI_TUI", "1")
+
+	vm := NewVM(nil, nil, 0)
+	vm.SetHost(host)
+
+	consoleDispatch(vm, "time", []Value{NewString("phase")})
+	if _, exists := vm.consoleTimerItems["phase"]; !exists {
+		t.Fatalf("expected timer label to be stored")
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	consoleDispatch(vm, "timeEnd", []Value{NewString("phase")})
+
+	if _, exists := vm.consoleTimerItems["phase"]; exists {
+		t.Fatalf("expected timer label to be removed after timeEnd")
+	}
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "phase:") || !strings.Contains(rendered, "ms") {
+		t.Fatalf("expected timeEnd output with milliseconds, got %q", rendered)
+	}
+}
+
+// TestConsoleDirFormatsObject verifies console.dir prints inspection-friendly JSON output.
+func TestConsoleDirFormatsObject(t *testing.T) {
+	host := NewMockHost()
+	var out bytes.Buffer
+	host.SetOutput(&out)
+	host.Request().ServerVars.Add("AXONASP_CLI_TUI", "1")
+
+	vm := NewVM(nil, nil, 0)
+	vm.SetHost(host)
+
+	objID := vm.allocJSID()
+	vm.jsObjectItems[objID] = map[string]Value{
+		"name": NewString("AxonASP"),
+		"ok":   NewBool(true),
+	}
+
+	consoleDispatch(vm, "dir", []Value{{Type: VTJSObject, Num: objID}})
+	rendered := out.String()
+	if !strings.Contains(rendered, "\"name\": \"AxonASP\"") || !strings.Contains(rendered, "\"ok\": true") {
+		t.Fatalf("expected dir output to include object properties, got %q", rendered)
+	}
+}
+
+// TestConsoleTraceJScriptOnly verifies console.trace is emitted only for JScript runtime contexts.
+func TestConsoleTraceJScriptOnly(t *testing.T) {
+	host := NewMockHost()
+	var out bytes.Buffer
+	host.SetOutput(&out)
+	host.Request().ServerVars.Add("AXONASP_CLI_TUI", "1")
+
+	vm := NewVM(nil, nil, 0)
+	vm.SetHost(host)
+
+	fnID := vm.allocJSID()
+	vm.jsFunctionItems[fnID] = &jsFunctionObject{name: "traceTarget"}
+	vm.jsCallStack = append(vm.jsCallStack, jsCallFrame{
+		fn:         Value{Type: VTJSFunction, Num: fnID},
+		callLine:   41,
+		callColumn: 7,
+		callFile:   "www/tests/test_console_extensions.js",
+	})
+	vm.jsActiveEnvID = 1
+	vm.lastLine = 52
+	vm.lastColumn = 13
+	vm.sourceName = "www/tests/test_console_extensions.js"
+
+	consoleDispatch(vm, "trace", []Value{NewString("hello")})
+	rendered := out.String()
+	if !strings.Contains(rendered, "Trace: hello") || !strings.Contains(rendered, "traceTarget") || !strings.Contains(rendered, ":52:13") {
+		t.Fatalf("expected trace output with frame metadata, got %q", rendered)
+	}
+
+	out.Reset()
+	vm.jsCallStack = vm.jsCallStack[:0]
+	vm.jsActiveEnvID = 0
+	vm.jsRootEnvID = 0
+	vm.engineMode = EngineModeVBScript
+	consoleDispatch(vm, "trace", []Value{NewString("vb")})
+	if out.Len() != 0 {
+		t.Fatalf("expected no trace output for non-JScript contexts, got %q", out.String())
 	}
 }

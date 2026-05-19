@@ -402,6 +402,7 @@ type VM struct {
 	jsPromiseItems                 map[int64]*jsPromiseObject
 	jsGeneratorItems               map[int64]*jsGeneratorObject
 	jsProxyItems                   map[int64]*jsProxyObject
+	jsStreamHookItems              map[int64]*jsNodeStreamHookResource
 	jsAsyncFSReadResults           chan jsAsyncFSReadResult
 	jsTimerItems                   map[int64]*jsTimerItem  // active setTimeout/setInterval handles
 	jsTimerResultQueue             chan jsTimerFiredResult // goroutine -> VM thread timer completions
@@ -442,12 +443,13 @@ type VM struct {
 	jsCallStack []jsCallFrame
 	// withStack holds the subject object for each active With...End With block.
 	// OpWithEnter appends, OpWithLeave shrinks, OpWithLoad peeks at the top.
-	withStack     []Value
-	jsTryStack    []int
-	jsErrStack    []Value
-	jsActiveEnvID int64
-	jsThisValue   Value
-	jsNewTarget   Value
+	withStack         []Value
+	jsTryStack        []int
+	jsErrStack        []Value
+	jsActiveEnvID     int64
+	jsThisValue       Value
+	jsNewTarget       Value
+	consoleTimerItems map[string]time.Time
 
 	onResumeNext bool
 	// executeGlobalResumeGuard preserves caller Resume Next semantics for top-level
@@ -656,6 +658,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		jsPromiseItems:                 make(map[int64]*jsPromiseObject),
 		jsGeneratorItems:               make(map[int64]*jsGeneratorObject),
 		jsProxyItems:                   make(map[int64]*jsProxyObject),
+		jsStreamHookItems:              make(map[int64]*jsNodeStreamHookResource),
 		jsAsyncFSReadResults:           make(chan jsAsyncFSReadResult, jsAsyncFSReadResultQueueSize),
 		jsTimerItems:                   make(map[int64]*jsTimerItem),
 		jsTimerResultQueue:             make(chan jsTimerFiredResult, jsTimerResultQueueSize),
@@ -680,6 +683,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		jsTryStack:         make([]int, 0, 8),
 		jsErrStack:         make([]Value, 0, 4),
 		jsThisValue:        Value{Type: VTJSUndefined},
+		consoleTimerItems:  make(map[string]time.Time),
 		terminateCursor:    -1,
 		nextCallMemberICID: 1,
 		callMemberIC:       make(map[uint32]callMemberICEntry, 32),
@@ -1471,6 +1475,7 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.jsSymbolGlobalRegistry = child.jsSymbolGlobalRegistry
 	vm.jsNextSymbolID = child.jsNextSymbolID
 	vm.jsProxyItems = child.jsProxyItems
+	vm.jsStreamHookItems = child.jsStreamHookItems
 	vm.jsModuleInstances = child.jsModuleInstances
 	vm.jsModuleLoading = child.jsModuleLoading
 	vm.jsRootEnvID = child.jsRootEnvID
@@ -4919,7 +4924,7 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 		return Value{Type: VTEmpty}
 	}
 
-	// Route console.log / console.info / console.error / console.warn calls.
+	// Route console object calls shared by VBScript and JScript.
 	if objID == nativeObjectConsole {
 		return consoleDispatch(vm, member, args)
 	}

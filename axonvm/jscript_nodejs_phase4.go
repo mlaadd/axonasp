@@ -112,6 +112,10 @@ func (vm *VM) jsRequire(args []Value) Value {
 		return vm.jsNodeGetRootBinding("querystring")
 	case "url":
 		return vm.jsNodeGetRootBinding("url")
+	case "events":
+		return vm.jsGetOrCreateEventsModule()
+	case "stream":
+		return vm.jsGetOrCreateStreamModule()
 	default:
 		vm.jsThrowReferenceError("Cannot find module '" + moduleName + "'")
 		return Value{Type: VTJSUndefined}
@@ -231,15 +235,41 @@ func (vm *VM) jsNodeValueBytes(v Value, encoding string) ([]byte, bool) {
 		}
 		return out, true
 	case VTJSObject:
-		if vm.jsObjectStringProperty(v, "__js_type") == "Buffer" {
+		isBuffer := vm.jsObjectStringProperty(v, "__js_type") == "Buffer" ||
+			vm.jsObjectStringProperty(v, "__js_class") == "Buffer" ||
+			vm.jsObjectStringProperty(v, "__js_ctor") == "Buffer"
+		if isBuffer {
 			if item, ok := vm.jsBufferItems[v.Num]; ok && item != nil {
+				buf := make([]byte, len(item.data))
+				copy(buf, item.data)
+				return buf, true
+			}
+			if ref := vm.jsObjectStringProperty(v, "__js_buffer_data"); strings.HasPrefix(ref, "__buffer_") {
+				if refID, err := strconv.ParseInt(strings.TrimPrefix(ref, "__buffer_"), 10, 64); err == nil {
+					if item, ok := vm.jsBufferItems[refID]; ok && item != nil {
+						buf := make([]byte, len(item.data))
+						copy(buf, item.data)
+						return buf, true
+					}
+				}
+			}
+			if utf8Val := vm.jsObjectStringProperty(v, "__js_buffer_utf8"); utf8Val != "" {
+				return []byte(utf8Val), true
+			}
+		}
+	}
+	strVal := vm.valueToString(v)
+	if strings.HasPrefix(strVal, "[JSObject:") && strings.HasSuffix(strVal, "]") {
+		idText := strings.TrimSuffix(strings.TrimPrefix(strVal, "[JSObject:"), "]")
+		if objID, err := strconv.ParseInt(idText, 10, 64); err == nil {
+			if item, ok := vm.jsBufferItems[objID]; ok && item != nil {
 				buf := make([]byte, len(item.data))
 				copy(buf, item.data)
 				return buf, true
 			}
 		}
 	}
-	return []byte(vm.valueToString(v)), true
+	return []byte(strVal), true
 }
 
 // jsNodeResolveSandboxPath resolves one fs path inside the server sandbox.

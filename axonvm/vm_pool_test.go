@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestAcquireVMFromCachedProgramResetsState verifies pooled VMs restore immutable program state
@@ -47,6 +48,7 @@ func TestAcquireVMFromCachedProgramResetsState(t *testing.T) {
 	vm.constGlobals["dynamicconst"] = true
 	vm.responseCookieItems[20001] = "cookie"
 	vm.nativeObjectProxies[20002] = nativeObjectProxy{ParentID: 1, Member: "Dirty"}
+	vm.consoleTimerItems["dirty"] = time.Now()
 	vm.ip = 9
 	vm.sp = 3
 	vm.lastLine = 42
@@ -76,6 +78,9 @@ func TestAcquireVMFromCachedProgramResetsState(t *testing.T) {
 	}
 	if len(reused.responseCookieItems) != 0 || len(reused.nativeObjectProxies) != 0 {
 		t.Fatalf("expected dynamic native-object maps to be cleared")
+	}
+	if len(reused.consoleTimerItems) != 0 {
+		t.Fatalf("expected console timer map to be cleared")
 	}
 	if reused.Globals[len(reused.Globals)-1].Type == VTString && reused.Globals[len(reused.Globals)-1].Str == "dirty" {
 		t.Fatalf("expected globals to be restored from the base template")

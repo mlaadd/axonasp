@@ -148,6 +148,9 @@ type jsCallFrame struct {
 	returnIP             int
 	envID                int64
 	savedFP              int
+	callLine             int
+	callColumn           int
+	callFile             string
 	fn                   Value
 	thisVal              Value
 	newTarget            Value
@@ -1491,6 +1494,7 @@ func (vm *VM) jsCreatePrototypeObject(owner Value) Value {
 func jsCtorNeedsPrototype(ctorName string) bool {
 	switch ctorName {
 	case "Array", "Object", "String", "Date", "RegExp", "Enumerator", "VBArray", "Set", "Map", "WeakMap", "WeakSet", "Promise",
+		"Error", "TypeError", "ReferenceError", "SyntaxError", "RangeError", "EvalError", "URIError",
 		"WeakRef", "FinalizationRegistry",
 		"ArrayBuffer", "DataView",
 		"Int8Array", "Uint8Array", "Uint8ClampedArray",
@@ -1815,6 +1819,13 @@ func (vm *VM) ensureJSRootEnv() {
 	bindings["Promise"] = vm.jsCreatePromiseObject()
 	bindings["Number"] = vm.jsCreateNumberObject()
 	bindings["Symbol"] = vm.jsCreateSymbolObject()
+	bindings["Error"] = vm.jsCreateIntrinsicObject("", "Error")
+	bindings["TypeError"] = vm.jsCreateIntrinsicObject("", "TypeError")
+	bindings["ReferenceError"] = vm.jsCreateIntrinsicObject("", "ReferenceError")
+	bindings["SyntaxError"] = vm.jsCreateIntrinsicObject("", "SyntaxError")
+	bindings["RangeError"] = vm.jsCreateIntrinsicObject("", "RangeError")
+	bindings["EvalError"] = vm.jsCreateIntrinsicObject("", "EvalError")
+	bindings["URIError"] = vm.jsCreateIntrinsicObject("", "URIError")
 	bindings["Set"] = vm.jsCreateIntrinsicObject("", "Set")
 	bindings["Map"] = vm.jsCreateIntrinsicObject("", "Map")
 	bindings["WeakMap"] = vm.jsCreateIntrinsicObject("", "WeakMap")
@@ -1868,6 +1879,7 @@ func (vm *VM) ensureJSRootEnv() {
 		bindings["URL"] = urlCtor
 		bindings["URLSearchParams"] = urlSearchParamsCtor
 		bindings["url"] = vm.jsCreateURLModuleObject(urlCtor, urlSearchParamsCtor)
+		bindings["__axon_stream"] = vm.jsCreateNodeStreamHooksObject()
 		// Phase 2: Timing globals
 		bindings["setTimeout"] = vm.jsCreateIntrinsicObject("", "setTimeout")
 		bindings["clearTimeout"] = vm.jsCreateIntrinsicObject("", "clearTimeout")
@@ -3036,7 +3048,7 @@ func (vm *VM) jsCreateClosure(template Value) Value {
 		HasValue:     true,
 		Enumerable:   false,
 		Configurable: false,
-		Writable:     false,
+		Writable:     true,
 	})
 	return fnVal
 }
@@ -3085,6 +3097,9 @@ func (vm *VM) jsBeginFunctionCall(fn Value, thisVal Value, args []Value, ctorObj
 		returnIP:             vm.ip,
 		envID:                vm.jsActiveEnvID,
 		savedFP:              vm.fp,
+		callLine:             vm.lastLine,
+		callColumn:           vm.lastColumn,
+		callFile:             vm.sourceName,
 		fn:                   fn,
 		thisVal:              vm.jsThisValue,
 		newTarget:            vm.jsNewTarget,
@@ -5030,6 +5045,10 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 		case "process":
 			// Node.js process object methods
 			if result, handled := vm.jsCallProcessMethod(member, args); handled {
+				return result, true
+			}
+		case "__axon_stream":
+			if result, handled := vm.jsCallNodeStreamHookMethod(member, args); handled {
 				return result, true
 			}
 		case "Buffer":
@@ -8931,13 +8950,32 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			}
 			child := vm.cloneForExecuteLocal(len(vm.bytecode))
 			if child.jsBeginFunctionCall(callee, thisVal, args, Value{Type: VTJSUndefined}, false, Value{Type: VTJSUndefined}, false) {
-				if err := child.Run(); err != nil {
+				var childErr error
+				var childThrow *jsAsyncRejectionError
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							if are, ok := r.(*jsAsyncRejectionError); ok {
+								childThrow = are
+								return
+							}
+							panic(r)
+						}
+					}()
+					childErr = child.Run()
+				}()
+				if childThrow != nil {
 					vm.syncExecuteGlobalState(child)
-					if vmErr, ok := err.(*VMError); ok {
+					vm.jsThrow(childThrow.reason)
+					return Value{Type: VTJSUndefined}
+				}
+				if childErr != nil {
+					vm.syncExecuteGlobalState(child)
+					if vmErr, ok := childErr.(*VMError); ok {
 						vm.jsThrowJSError(jscript.JSSyntaxErrorCode(vmErr.Code))
 						return Value{Type: VTJSUndefined}
 					}
-					vm.jsThrowTypeError(err.Error())
+					vm.jsThrowTypeError(childErr.Error())
 					return Value{Type: VTJSUndefined}
 				}
 				result := Value{Type: VTJSUndefined}
@@ -9188,6 +9226,12 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 				return NewBool(false)
 			}
 			return NewBool(vm.jsTruthy(args[0]))
+		case "Error", "TypeError", "ReferenceError", "SyntaxError", "RangeError", "EvalError", "URIError":
+			msg := ""
+			if len(args) > 0 && args[0].Type != VTJSUndefined {
+				msg = vm.jsToString(args[0])
+			}
+			return vm.jsCreateErrorObject(ctorName, msg)
 		case "Symbol":
 			desc := ""
 			if len(args) > 0 && args[0].Type != VTJSUndefined {
@@ -10089,6 +10133,12 @@ func (vm *VM) jsConstruct(constructor Value, args []Value, newTarget Value, isSu
 		case "Symbol":
 			vm.jsThrowTypeError("Symbol is not a constructor")
 			return Value{Type: VTJSUndefined}
+		case "Error", "TypeError", "ReferenceError", "SyntaxError", "RangeError", "EvalError", "URIError":
+			msg := ""
+			if len(args) > 0 && args[0].Type != VTJSUndefined {
+				msg = vm.jsToString(args[0])
+			}
+			return vm.jsCreateErrorObject(ctorName, msg)
 		case "Proxy":
 			return vm.jsCreateProxy(args)
 		case "Date":

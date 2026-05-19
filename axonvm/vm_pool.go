@@ -24,6 +24,7 @@ import (
 	"encoding/binary"
 	"strings"
 	"sync"
+	"time"
 
 	"g3pix.com.br/axonasp/axonvm/asp"
 )
@@ -726,6 +727,9 @@ func (vm *VM) ensureDynamicMaps() {
 	if vm.jsModuleLoading == nil {
 		vm.jsModuleLoading = make(map[string]struct{})
 	}
+	if vm.jsStreamHookItems == nil {
+		vm.jsStreamHookItems = make(map[int64]*jsNodeStreamHookResource)
+	}
 	if vm.jsIntlDateTimeFormatItems == nil {
 		vm.jsIntlDateTimeFormatItems = make(map[int64]*jsIntlDateTimeFormatObject)
 	}
@@ -758,6 +762,9 @@ func (vm *VM) ensureDynamicMaps() {
 	}
 	if vm.jsSymbolGlobalRegistry == nil {
 		vm.jsSymbolGlobalRegistry = make(map[string]Value)
+	}
+	if vm.consoleTimerItems == nil {
+		vm.consoleTimerItems = make(map[string]time.Time)
 	}
 }
 
@@ -867,6 +874,7 @@ func (vm *VM) resetDynamicMaps() {
 	clear(vm.jsPromiseItems)
 	clear(vm.jsGeneratorItems)
 	clear(vm.jsProxyItems)
+	clear(vm.jsStreamHookItems)
 	// Stop all active timers and drain timer-result channel before reset.
 	vm.jsStopAllTimers()
 	vm.jsImmediateQueue = vm.jsImmediateQueue[:0]
@@ -890,6 +898,7 @@ drainedAsyncFS:
 	vm.jsTryStack = vm.jsTryStack[:0]
 	clear(vm.jsErrStack)
 	vm.jsErrStack = vm.jsErrStack[:0]
+	clear(vm.consoleTimerItems)
 	vm.jsActiveEnvID = 0
 	vm.jsRootEnvID = 0
 	vm.jsThisValue = Value{Type: VTJSUndefined}
