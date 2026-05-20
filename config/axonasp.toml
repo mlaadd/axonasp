@@ -366,5 +366,5 @@ service_executable_path = "./axonasp-http"
 service_environment_variables = []
 
 [javascript]
-#Enable the compatibility mode with Node.js, this is a experimental feature
+#Enable the compatibility mode with Node.js, this is a experimental feature. 
 enable_node_compatibility = true

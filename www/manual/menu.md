@@ -24,6 +24,7 @@
     * [CLI and TUI](md/runtime/cli-tui.md)
     * [System Pages and Error Pages](md/runtime/system-pages.md)
     * [AxonASP Error Code Reference](md/runtime/axonasp-error-codes.md)
+    * [Global Console Object](md/runtime/console-object.md)
 * Configuration
     * [axonasp.toml](md/config/axonasp-toml.md)
 * AxonLive
@@ -49,7 +50,6 @@
     * [Application](md/asp/application.md)
     * [ASPError](md/asp/asperror.md)
     * [ASP Dictionary](md/asp/dictionary.md)
-    * [Global Console Object](md/asp/console-object.md)
 * Javascript (JScript support)
     * [Use Javascript in ASP Pages](md/javascript/jscript-support.md)
     * [ES6 Features and Beyond](md/javascript/jscript-es6-support.md)
