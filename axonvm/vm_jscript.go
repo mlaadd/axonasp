@@ -1608,15 +1608,6 @@ func (vm *VM) jsResolveObjectMember(objID int64, member string, visited map[int6
 	if !ok {
 		return jsPropertyDescriptor{}, false
 	}
-	if val, exists := obj[member]; exists {
-		return jsPropertyDescriptor{
-			Value:        val,
-			HasValue:     true,
-			Enumerable:   true,
-			Configurable: true,
-			Writable:     true,
-		}, true
-	}
 	proto, exists := obj["__js_proto"]
 	if !exists || (proto.Type != VTJSObject && proto.Type != VTJSFunction) {
 		return jsPropertyDescriptor{}, false
@@ -1909,11 +1900,8 @@ func (vm *VM) ensureJSRootEnv() {
 			bindings["__dirname"] = NewString("")
 		}
 		bindings["global"] = Value{Type: VTJSObject, Num: rootID}
+		bindings["globalThis"] = Value{Type: VTJSObject, Num: rootID}
 	}
-
-	// Root-level console is always available in JScript for AxonASP,
-	// but we use the JScript-optimized version here.
-	bindings["console"] = vm.jsCreateConsoleObject()
 
 	// Create the root environment frame
 	vm.jsEnvItems[rootID] = &jsEnvFrame{parentID: 0, bindings: bindings}
@@ -2335,6 +2323,9 @@ func (vm *VM) jsGetNameFromEnv(envID int64, name string) Value {
 			break
 		}
 		if val, ok := env.bindings[name]; ok {
+			if val.Type == VTArgRef {
+				val = vm.stack[int(val.Num)]
+			}
 			return val
 		}
 		id = env.parentID
@@ -2472,6 +2463,9 @@ func (vm *VM) jsGetName(name string) Value {
 			break
 		}
 		if val, ok := env.bindings[name]; ok {
+			if val.Type == VTArgRef {
+				val = vm.stack[int(val.Num)]
+			}
 			return val
 		}
 		envID = env.parentID
@@ -2479,6 +2473,9 @@ func (vm *VM) jsGetName(name string) Value {
 	if vm.jsRootEnvID != 0 {
 		if root, ok := vm.jsEnvItems[vm.jsRootEnvID]; ok {
 			if val, ok := root.bindings[name]; ok {
+				if val.Type == VTArgRef {
+					val = vm.stack[int(val.Num)]
+				}
 				return val
 			}
 		}
@@ -2843,6 +2840,9 @@ func (vm *VM) jsConcatString(v Value) string {
 	v = resolveCallable(vm, v)
 	if arr, ok := vm.jsAsConcatArray(v); ok {
 		return vm.jsArrayToString(arr)
+	}
+	if v.Type == VTJSObject || v.Type == VTJSFunction || v.Type == VTJSProxy {
+		return vm.jsToString(v)
 	}
 	return vm.valueToString(v)
 }
@@ -4939,15 +4939,6 @@ func (vm *VM) jsMemberGet(target Value, member string) (Value, bool) {
 				return val, false
 			}
 		}
-		// Intercept standard methods if not found in descriptors or object items
-		switch {
-		case strings.EqualFold(member, "toString"):
-			return vm.jsCreateNativeFunction("toString", "ObjectToString"), false
-		case strings.EqualFold(member, "toLocaleString"):
-			return vm.jsCreateNativeFunction("toLocaleString", "ObjectToLocaleString"), false
-		case strings.EqualFold(member, "valueOf"):
-			return vm.jsCreateNativeFunction("valueOf", "ObjectValueOf"), false
-		}
 		return Value{Type: VTJSUndefined}, false
 	case VTJSPromise:
 		if strings.EqualFold(member, "then") {
@@ -6214,11 +6205,8 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			}
 			thisArg := jsArgOrUndefined(args, 1)
 			for i := 0; i < len(target.Arr.Values); i++ {
-				result := vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
-				if callback.Type == VTJSFunction && len(vm.jsCallStack) > 0 && result.Type == VTJSUndefined {
-					return Value{Type: VTJSUndefined}, true
-				}
-				if vm.jsTruthy(result) {
+				callResult := vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
+				if vm.jsTruthy(callResult) {
 					return target.Arr.Values[i], true
 				}
 			}
@@ -6230,11 +6218,8 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			}
 			thisArg := jsArgOrUndefined(args, 1)
 			for i := 0; i < len(target.Arr.Values); i++ {
-				result := vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
-				if callback.Type == VTJSFunction && len(vm.jsCallStack) > 0 && result.Type == VTJSUndefined {
-					return Value{Type: VTJSUndefined}, true
-				}
-				if vm.jsTruthy(result) {
+				callResult := vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
+				if vm.jsTruthy(callResult) {
 					return NewInteger(int64(i)), true
 				}
 			}
@@ -6311,7 +6296,7 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			parts := make([]string, len(target.Arr.Values))
 			totalSize := 0
 			for i := range target.Arr.Values {
-				parts[i] = vm.valueToString(target.Arr.Values[i])
+				parts[i] = vm.jsConcatString(target.Arr.Values[i])
 				totalSize += len(parts[i])
 				if i > 0 {
 					totalSize += len(sep)
@@ -6331,10 +6316,7 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			}
 			thisArg := jsArgOrUndefined(args, 1)
 			for i := 0; i < len(target.Arr.Values); i++ {
-				result := vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
-				if callback.Type == VTJSFunction && len(vm.jsCallStack) > 0 && result.Type == VTJSUndefined {
-					return Value{Type: VTJSUndefined}, true
-				}
+				_ = vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
 			}
 			return Value{Type: VTJSUndefined}, true
 		case strings.EqualFold(member, "every"):
@@ -6345,9 +6327,6 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			thisArg := jsArgOrUndefined(args, 1)
 			for i := 0; i < len(target.Arr.Values); i++ {
 				result := vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
-				if callback.Type == VTJSFunction && len(vm.jsCallStack) > 0 && result.Type == VTJSUndefined {
-					return Value{Type: VTJSUndefined}, true
-				}
 				if !vm.jsTruthy(result) {
 					return NewBool(false), true
 				}
@@ -6361,9 +6340,6 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			thisArg := jsArgOrUndefined(args, 1)
 			for i := 0; i < len(target.Arr.Values); i++ {
 				result := vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
-				if callback.Type == VTJSFunction && len(vm.jsCallStack) > 0 && result.Type == VTJSUndefined {
-					return Value{Type: VTJSUndefined}, true
-				}
 				if vm.jsTruthy(result) {
 					return NewBool(true), true
 				}
@@ -6379,9 +6355,6 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			A := vm.jsArraySpeciesCreate(target, length)
 			for i := 0; i < length; i++ {
 				result := vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
-				if callback.Type == VTJSFunction && len(vm.jsCallStack) > 0 && result.Type == VTJSUndefined {
-					return Value{Type: VTJSUndefined}, true
-				}
 				vm.jsIndexSet(A, NewInteger(int64(i)), result)
 			}
 			return A, true
@@ -6394,9 +6367,6 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			filtered := make([]Value, 0, len(target.Arr.Values))
 			for i := 0; i < len(target.Arr.Values); i++ {
 				result := vm.jsCall(callback, thisArg, []Value{target.Arr.Values[i], NewInteger(int64(i)), target})
-				if callback.Type == VTJSFunction && len(vm.jsCallStack) > 0 && result.Type == VTJSUndefined {
-					return Value{Type: VTJSUndefined}, true
-				}
 				if vm.jsTruthy(result) {
 					filtered = append(filtered, target.Arr.Values[i])
 				}
@@ -6424,9 +6394,6 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			}
 			for i := start; i < len(target.Arr.Values); i++ {
 				result := vm.jsCall(callback, Value{Type: VTJSUndefined}, []Value{acc, target.Arr.Values[i], NewInteger(int64(i)), target})
-				if callback.Type == VTJSFunction && len(vm.jsCallStack) > 0 && result.Type == VTJSUndefined {
-					return Value{Type: VTJSUndefined}, true
-				}
 				acc = result
 			}
 			return acc, true
@@ -6448,9 +6415,6 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			}
 			for i := start; i >= 0; i-- {
 				result := vm.jsCall(callback, Value{Type: VTJSUndefined}, []Value{acc, target.Arr.Values[i], NewInteger(int64(i)), target})
-				if callback.Type == VTJSFunction && len(vm.jsCallStack) > 0 && result.Type == VTJSUndefined {
-					return Value{Type: VTJSUndefined}, true
-				}
 				acc = result
 			}
 			return acc, true
@@ -8950,19 +8914,26 @@ func (vm *VM) dispatchJSIntrinsicCall(thisVal Value, ctorName string, args []Val
 		}
 		return NewBool(vm.jsSetPrototype(target, proto))
 	case "ConsoleLog":
-		return consoleDispatch(vm, "log", args)
+		consoleDispatch(vm, "log", args)
+		return Value{Type: VTJSUndefined}
 	case "ConsoleWarn":
-		return consoleDispatch(vm, "warn", args)
+		consoleDispatch(vm, "warn", args)
+		return Value{Type: VTJSUndefined}
 	case "ConsoleError":
-		return consoleDispatch(vm, "error", args)
+		consoleDispatch(vm, "error", args)
+		return Value{Type: VTJSUndefined}
 	case "ConsoleInfo":
-		return consoleDispatch(vm, "info", args)
+		consoleDispatch(vm, "info", args)
+		return Value{Type: VTJSUndefined}
 	case "ConsoleDebug":
-		return consoleDispatch(vm, "debug", args)
+		consoleDispatch(vm, "debug", args)
+		return Value{Type: VTJSUndefined}
 	case "ConsoleTrace":
-		return consoleDispatch(vm, "trace", args)
+		consoleDispatch(vm, "trace", args)
+		return Value{Type: VTJSUndefined}
 	case "ConsoleClear":
-		return consoleDispatch(vm, "clear", args)
+		consoleDispatch(vm, "clear", args)
+		return Value{Type: VTJSUndefined}
 	case "ProcessCwd":
 		res, _ := vm.jsCallProcessMethod("cwd", args)
 		return res
@@ -9047,13 +9018,6 @@ func (vm *VM) dispatchJSIntrinsicCall(thisVal Value, ctorName string, args []Val
 		return vm.jsSetImmediate(args)
 	case "ClearImmediate":
 		return vm.jsClearImmediate(args)
-	case "ObjectToString":
-		return NewString(vm.jsObjectToStringTag(thisVal))
-	case "ObjectToLocaleString":
-		// Standard toLocaleString defaults to toString for regular objects.
-		return NewString(vm.jsObjectToStringTag(thisVal))
-	case "ObjectValueOf":
-		return thisVal
 	case "AtomicsAdd", "AtomicsSub", "AtomicsAnd", "AtomicsOr", "AtomicsXor", "AtomicsLoad", "AtomicsStore", "AtomicsExchange", "AtomicsCompareExchange", "AtomicsIsLockFree":
 		methodName := ctorName[7:] // Strip "Atomics"
 		res, _ := vm.jsAtomicsCall(methodName, args)
@@ -9189,9 +9153,16 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 				p.Revoked = true
 			}
 			return Value{Type: VTJSUndefined}
-		case "ReflectGet", "ReflectSet", "ReflectHas", "ReflectDeleteProperty", "ReflectOwnKeys", "ReflectDefineProperty", "ReflectGetOwnPropertyDescriptor", "ReflectGetPrototypeOf", "ReflectIsExtensible", "ReflectPreventExtensions", "ReflectSetPrototypeOf":
-			return vm.dispatchJSIntrinsicCall(thisVal, ctorName, args)
-		case "AtomicsAdd", "AtomicsSub", "AtomicsAnd", "AtomicsOr", "AtomicsXor", "AtomicsLoad", "AtomicsStore", "AtomicsExchange", "AtomicsCompareExchange", "AtomicsIsLockFree":
+		case "ReflectGet", "ReflectSet", "ReflectHas", "ReflectDeleteProperty", "ReflectOwnKeys", "ReflectDefineProperty", "ReflectGetOwnPropertyDescriptor", "ReflectGetPrototypeOf", "ReflectIsExtensible", "ReflectPreventExtensions", "ReflectSetPrototypeOf",
+			"AtomicsAdd", "AtomicsSub", "AtomicsAnd", "AtomicsOr", "AtomicsXor", "AtomicsLoad", "AtomicsStore", "AtomicsExchange", "AtomicsCompareExchange", "AtomicsIsLockFree",
+			"ConsoleLog", "ConsoleWarn", "ConsoleError", "ConsoleInfo", "ConsoleDebug", "ConsoleTrace", "ConsoleClear",
+			"ProcessCwd", "ProcessExit", "ProcessNextTick",
+			"OSHostname", "OSType", "OSPlatform", "OSArch", "OSRelease", "OSUptime", "OSFreemem", "OSTotalmem", "OSCpus",
+			"PathJoin", "PathResolve", "PathBasename", "PathDirname", "PathExtname", "PathNormalize",
+			"HTTPCreateServer", "HTTPRequest", "HTTPGet", "HTTPServerListen",
+			"QSParse", "QSStringify", "QSEscape", "QSUnescape",
+			"SetTimeout", "ClearTimeout", "SetInterval", "ClearInterval", "SetImmediate", "ClearImmediate",
+			"ObjectToString", "ObjectToLocaleString", "ObjectValueOf":
 			return vm.dispatchJSIntrinsicCall(thisVal, ctorName, args)
 		case "ReflectApply":
 			if len(args) < 1 {
@@ -9420,19 +9391,6 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			return vm.jsParseFloatES5(args)
 		case "require":
 			return vm.jsRequire(args)
-		// Phase 2: Node.js timing globals
-		case "setTimeout":
-			return vm.jsSetTimeout(args)
-		case "clearTimeout":
-			return vm.jsClearTimeout(args)
-		case "setInterval":
-			return vm.jsSetInterval(args)
-		case "clearInterval":
-			return vm.jsClearInterval(args)
-		case "setImmediate":
-			return vm.jsSetImmediate(args)
-		case "clearImmediate":
-			return vm.jsClearImmediate(args)
 		case "decodeURI":
 			decoded, err := jsDecodeURIValue(vm.valueToString(jsArgOrUndefined(args, 0)))
 			if err != nil {
@@ -9674,6 +9632,9 @@ func (vm *VM) jsToObject(v Value) Value {
 }
 
 func (vm *VM) jsToString(v Value) string {
+	if v.Type == VTArgRef {
+		v = vm.stack[int(v.Num)]
+	}
 	switch v.Type {
 	case VTJSUndefined:
 		return "undefined"

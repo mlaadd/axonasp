@@ -47,6 +47,7 @@ var consoleMethodFormats = map[string]consoleOutputFormat{
 	"error": {writer: os.Stderr, symbol: "✖ ", level: "ERROR", logFile: "error.log"},
 	"warn":  {writer: os.Stderr, symbol: "⚠ ", level: "WARN", logFile: "error.log"},
 	"trace": {writer: os.Stderr, symbol: "↳ ", level: "TRACE", logFile: "error.log"},
+	"debug": {writer: os.Stdout, symbol: "⚙ ", level: "DEBUG", logFile: "console.log"},
 }
 
 const consoleDefaultTimerLabel = "default"
@@ -103,6 +104,9 @@ func consoleDispatch(vm *VM, method string, args []Value) Value {
 		}
 		consoleWriteMessage(vm, consoleMethodFormats["trace"], message)
 		return Value{Type: VTEmpty}
+	case "clear":
+		// No-op for now in CLI
+		return Value{Type: VTEmpty}
 	}
 
 	if len(args) == 0 {
@@ -111,10 +115,13 @@ func consoleDispatch(vm *VM, method string, args []Value) Value {
 
 	format, supported := consoleMethodFormats[lower]
 	if !supported {
-		return Value{Type: VTEmpty}
+		format = consoleMethodFormats["log"]
 	}
 
 	msg := consoleSerializeArgs(vm, args)
+	if msg == "" && len(args) > 0 {
+		msg = "(empty)"
+	}
 	consoleWriteMessage(vm, format, msg)
 
 	return Value{Type: VTEmpty}
@@ -305,37 +312,115 @@ func consoleJSFrameName(vm *VM, frame jsCallFrame) string {
 // In CLI TUI mode we write to the host output buffer and avoid a trailing newline
 // so the TUI output box remains stable. Other runtimes keep the default stream+newline behavior.
 func resolveConsoleOutputTarget(vm *VM, format consoleOutputFormat) (io.Writer, string) {
-	if vm == nil || vm.host == nil || vm.host.Request() == nil {
+	if vm == nil || vm.host == nil {
 		return format.writer, "\n"
 	}
 
-	if vm.host.Request().ServerVars.Get("AXONASP_CLI_TUI") != "1" {
-		return format.writer, "\n"
+	// Always prefer host output in CLI mode if available, unless in TUI where we need more control.
+	if vm.executionMode == ExecutionModeCLI || vm.executionMode == ExecutionModeTUI {
+		if vm.host.Response() != nil && vm.host.Response().Output != nil {
+			lineEnding := "\n"
+			if vm.host.Request() != nil && vm.host.Request().ServerVars.Get("AXONASP_CLI_TUI") == "1" {
+				lineEnding = ""
+			}
+			return vm.host.Response().Output, lineEnding
+		}
 	}
 
-	if vm.host.Response() != nil && vm.host.Response().Output != nil {
-		return vm.host.Response().Output, ""
-	}
-
-	return vm.host, ""
+	return format.writer, "\n"
 }
 
 // consoleSerializeArg converts a single VM Value to a printable string.
-// Primitive types are stringified directly. Arrays and objects are JSON-encoded.
+// Primitive types are stringified directly. Arrays and objects are stringified recursively.
 func consoleSerializeArg(vm *VM, v Value) string {
+	return consoleSerializeValue(vm, v, make(map[int64]struct{}))
+}
+
+func consoleSerializeValue(vm *VM, v Value, visited map[int64]struct{}) string {
+	if v.Type == VTArgRef && vm != nil {
+		v = vm.stack[int(v.Num)]
+	}
+
 	switch v.Type {
 	case VTArray:
-		return consoleSerializeArray(vm, v.Arr)
-	case VTJSObject:
-		return consoleSerializeJSObject(vm, v)
-	case VTNativeObject:
-		// Attempt to serialize a Scripting.Dictionary as a JSON object.
-		if vm != nil {
-			if _, ok := vm.dictionaryItems[v.Num]; ok {
-				return consoleSerializeDictionary(vm, v)
+		if v.Arr == nil {
+			return "[]"
+		}
+		if _, ok := visited[v.Num]; ok {
+			return "[Circular Array]"
+		}
+		visited[v.Num] = struct{}{}
+		defer delete(visited, v.Num)
+
+		items := make([]string, len(v.Arr.Values))
+		for i, item := range v.Arr.Values {
+			items[i] = consoleSerializeValue(vm, item, visited)
+		}
+		return "[" + strings.Join(items, ", ") + "]"
+
+	case VTJSObject, VTJSFunction:
+		if _, ok := visited[v.Num]; ok {
+			return "[Circular Object]"
+		}
+		visited[v.Num] = struct{}{}
+		defer delete(visited, v.Num)
+
+		obj, ok := vm.jsObjectItems[v.Num]
+		if !ok || obj == nil {
+			return "{}"
+		}
+
+		jsType := vm.jsObjectStringProperty(v, "__js_type")
+		if jsType == "" {
+			jsType = vm.jsObjectStringProperty(v, "__js_ctor")
+		}
+
+		// Handle simple wrapper objects or well-known types as strings if they are small
+		if jsType != "" && jsType != "Object" && jsType != "Array" && jsType != "Function" {
+			// For console, process, etc., just show the type tag unless it's the root of log
+			if len(visited) > 1 {
+				return "[object " + jsType + "]"
 			}
 		}
-		return "[object]"
+
+		m := make([]string, 0, len(obj))
+		for k, val := range obj {
+			if strings.HasPrefix(k, "__js_") {
+				continue // Skip internal markers
+			}
+			m = append(m, k+": "+consoleSerializeValue(vm, val, visited))
+		}
+		if jsType != "" && jsType != "Object" && jsType != "Function" {
+			return jsType + " {" + strings.Join(m, ", ") + "}"
+		}
+		return "{" + strings.Join(m, ", ") + "}"
+
+	case VTNativeObject:
+		if vm != nil {
+			if v.Num == nativeObjectConsole {
+				return "[object console]"
+			}
+			if v.Num == nativeObjectResponse {
+				return "[object Response]"
+			}
+			if v.Num == nativeObjectRequest {
+				return "[object Request]"
+			}
+			if v.Num == nativeObjectServer {
+				return "[object Server]"
+			}
+			if v.Num == nativeObjectSession {
+				return "[object Session]"
+			}
+			if v.Num == nativeObjectApplication {
+				return "[object Application]"
+			}
+			if _, ok := vm.dictionaryItems[v.Num]; ok {
+				return consoleSerializeDictionary(vm, v, visited)
+			}
+		}
+		return "[object NativeObject]"
+
 	default:
 		if vm != nil {
 			return vm.valueToString(v)
@@ -344,44 +429,8 @@ func consoleSerializeArg(vm *VM, v Value) string {
 	}
 }
 
-// consoleSerializeArray converts a VBScript or JScript array into a JSON array string.
-func consoleSerializeArray(vm *VM, arr *VBArray) string {
-	if arr == nil || len(arr.Values) == 0 {
-		return "[]"
-	}
-	items := make([]interface{}, len(arr.Values))
-	for i, item := range arr.Values {
-		items[i] = consoleValueToInterface(vm, item)
-	}
-	b, err := json.Marshal(items)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
-}
-
-// consoleSerializeJSObject converts a JScript object (VTJSObject) into a JSON object string.
-func consoleSerializeJSObject(vm *VM, v Value) string {
-	if vm == nil {
-		return "{}"
-	}
-	obj, ok := vm.jsObjectItems[v.Num]
-	if !ok || obj == nil {
-		return "{}"
-	}
-	m := make(map[string]interface{}, len(obj))
-	for k, val := range obj {
-		m[k] = consoleValueToInterface(vm, val)
-	}
-	b, err := json.Marshal(m)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
-}
-
-// consoleSerializeDictionary converts a native Dictionary object into a JSON object string.
-func consoleSerializeDictionary(vm *VM, v Value) string {
+// consoleSerializeDictionary converts a native Dictionary object into a string.
+func consoleSerializeDictionary(vm *VM, v Value, visited map[int64]struct{}) string {
 	if vm == nil {
 		return "{}"
 	}
@@ -391,16 +440,12 @@ func consoleSerializeDictionary(vm *VM, v Value) string {
 		keysVal.Arr == nil || itemsVal.Arr == nil {
 		return "{}"
 	}
-	m := make(map[string]interface{}, len(keysVal.Arr.Values))
+	m := make([]string, len(keysVal.Arr.Values))
 	for i := 0; i < len(keysVal.Arr.Values) && i < len(itemsVal.Arr.Values); i++ {
 		k := keysVal.Arr.Values[i].String()
-		m[k] = consoleValueToInterface(vm, itemsVal.Arr.Values[i])
+		m[i] = k + ": " + consoleSerializeValue(vm, itemsVal.Arr.Values[i], visited)
 	}
-	b, err := json.Marshal(m)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
+	return "Dictionary {" + strings.Join(m, ", ") + "}"
 }
 
 // consoleValueToInterface recursively converts a VM Value to a Go interface{} for JSON marshaling.
@@ -430,14 +475,48 @@ func consoleValueToInterface(vm *VM, v Value) interface{} {
 	case VTJSObject:
 		if vm != nil {
 			if obj, ok := vm.jsObjectItems[v.Num]; ok && obj != nil {
-				m := make(map[string]interface{}, len(obj))
+				result := make(map[string]interface{}, len(obj))
 				for k, val := range obj {
-					m[k] = consoleValueToInterface(vm, val)
+					if strings.HasPrefix(k, "__js_") {
+						continue
+					}
+					result[k] = consoleValueToInterface(vm, val)
 				}
-				return m
+				return result
 			}
 		}
 		return map[string]interface{}{}
+	case VTNativeObject:
+		if vm != nil {
+			switch v.Num {
+			case nativeObjectConsole:
+				return "[object console]"
+			case nativeObjectResponse:
+				return "[object Response]"
+			case nativeObjectRequest:
+				return "[object Request]"
+			case nativeObjectServer:
+				return "[object Server]"
+			case nativeObjectSession:
+				return "[object Session]"
+			case nativeObjectApplication:
+				return "[object Application]"
+			}
+			if _, ok := vm.dictionaryItems[v.Num]; ok {
+				keysVal, _ := vm.dispatchDictionaryMethod(v.Num, "Keys", nil)
+				itemsVal, _ := vm.dispatchDictionaryMethod(v.Num, "Items", nil)
+				if keysVal.Type == VTArray && itemsVal.Type == VTArray &&
+					keysVal.Arr != nil && itemsVal.Arr != nil {
+					m := make(map[string]interface{}, len(keysVal.Arr.Values))
+					for i := 0; i < len(keysVal.Arr.Values) && i < len(itemsVal.Arr.Values); i++ {
+						k := keysVal.Arr.Values[i].String()
+						m[k] = consoleValueToInterface(vm, itemsVal.Arr.Values[i])
+					}
+					return m
+				}
+			}
+		}
+		return "[object NativeObject]"
 	default:
 		if vm != nil {
 			return vm.valueToString(v)

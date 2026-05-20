@@ -6122,6 +6122,24 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 
 	// The console object exposes no settable properties; method access returns Empty.
 	if target.Num == nativeObjectConsole {
+		if vm.engineMode == EngineModeJavaScript || len(vm.jsCallStack) > 0 || vm.jsActiveEnvID != 0 {
+			switch {
+			case strings.EqualFold(member, "log"):
+				return vm.jsCreateIntrinsicFunction("console.log", "ConsoleLog")
+			case strings.EqualFold(member, "warn"):
+				return vm.jsCreateIntrinsicFunction("console.warn", "ConsoleWarn")
+			case strings.EqualFold(member, "error"):
+				return vm.jsCreateIntrinsicFunction("console.error", "ConsoleError")
+			case strings.EqualFold(member, "info"):
+				return vm.jsCreateIntrinsicFunction("console.info", "ConsoleInfo")
+			case strings.EqualFold(member, "debug"):
+				return vm.jsCreateIntrinsicFunction("console.debug", "ConsoleDebug")
+			case strings.EqualFold(member, "trace"):
+				return vm.jsCreateIntrinsicFunction("console.trace", "ConsoleTrace")
+			case strings.EqualFold(member, "clear"):
+				return vm.jsCreateIntrinsicFunction("console.clear", "ConsoleClear")
+			}
+		}
 		return Value{Type: VTEmpty}
 	}
 
@@ -6574,10 +6592,12 @@ func (vm *VM) aspErrorPropertyValue(errObj *asp.ASPError, property string) Value
 
 // valueToString converts VM values to string and resolves dynamic native values when needed.
 func (vm *VM) valueToString(v Value) string {
+	if v.Type == VTArgRef {
+		v = vm.stack[int(v.Num)]
+	}
 	v = resolveCallable(vm, v)
 	if v.Type == VTJSObject || v.Type == VTJSFunction {
-		jsType := vm.jsObjectStringProperty(v, "__js_type")
-		if jsType == "Error" {
+		if vm.jsObjectStringProperty(v, "__js_type") == "Error" {
 			name := vm.jsObjectStringProperty(v, "name")
 			msg := vm.jsObjectStringProperty(v, "message")
 			if name == "" {
@@ -6591,36 +6611,8 @@ func (vm *VM) valueToString(v Value) string {
 			}
 			return name + ": " + msg
 		}
-		if jsType != "" {
-			return "[object " + jsType + "]"
-		}
-		jsCtor := vm.jsObjectStringProperty(v, "__js_ctor")
-		if jsCtor != "" {
-			return "[object " + jsCtor + "]"
-		}
 	}
 	if v.Type == VTNativeObject {
-		if v.Num == nativeObjectConsole {
-			return "[object console]"
-		}
-		if v.Num == nativeObjectResponse {
-			return "[object Response]"
-		}
-		if v.Num == nativeObjectRequest {
-			return "[object Request]"
-		}
-		if v.Num == nativeObjectServer {
-			return "[object Server]"
-		}
-		if v.Num == nativeObjectSession {
-			return "[object Session]"
-		}
-		if v.Num == nativeObjectApplication {
-			return "[object Application]"
-		}
-		if v.Num == nativeObjectErr {
-			return vm.errPropertyValue("Description").String()
-		}
 		if cookieName, exists := vm.responseCookieItems[v.Num]; exists {
 			return vm.host.Response().GetCookieValue(cookieName)
 		}
@@ -6629,6 +6621,9 @@ func (vm *VM) valueToString(v Value) string {
 		}
 		if subMatchValue, exists := vm.regExpSubMatchValueItems[v.Num]; exists {
 			return subMatchValue.value
+		}
+		if v.Num == nativeObjectErr {
+			return vm.errPropertyValue("Description").String()
 		}
 		// ADODB.Field proxy: coerce to its default Value property in string context.
 		if adodbDefault, handled := vm.dispatchADODBFieldPropertyGet(v.Num, "__default__"); handled {

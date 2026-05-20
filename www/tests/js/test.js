@@ -145,3 +145,4 @@ if (report.missing.length > 0) {
     console.log("\nRecursos que você precisa implementar no AxonASP:");
     report.missing.forEach(m => console.log(`- ${m.name}`));
 }
+
