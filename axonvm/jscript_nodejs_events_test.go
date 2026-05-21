@@ -29,7 +29,9 @@ import (
 func TestJScriptEventEmitterRequire(t *testing.T) {
 	source := jscriptSrc(`
 		var events = require("events");
-		Response.Write(typeof events === "object" ? "1" : "0");
+		// In Node.js, require("events") returns the EventEmitter constructor itself
+		// (a function), with an "EventEmitter" property that points back to itself.
+		Response.Write(typeof events === "function" ? "1" : "0");
 		Response.Write(typeof events.EventEmitter === "function" ? "1" : "0");
 	`)
 	out, err := runJScript2(t, source)

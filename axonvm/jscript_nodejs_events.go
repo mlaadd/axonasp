@@ -108,8 +108,16 @@ func (vm *VM) jsRunNodeEventsPolyfill() Value {
 		return Value{Type: VTJSUndefined}
 	}
 
-	child := vm.cloneForExecuteLocal(startIP)
+	// Use cloneForExecuteGlobal to get a clean stack and block scope —
+	// the polyfill is a standalone script and must not inherit the caller's
+	// lexical block scopes (which can shadow or interfere with polyfill
+	// identifiers, especially when require() is called from inside an
+	// arrow function that has const/let bindings).
+	child := vm.cloneForExecuteGlobal(startIP)
 	child.sourceName = "__builtin__:events"
+	// Ensure the polyfill's top-level var declarations land in the root environment,
+	// not in whatever local scope the parent VM is currently executing in.
+	child.jsActiveEnvID = child.jsRootEnvID
 	if err := child.Run(); err != nil {
 		vm.syncExecuteGlobalState(child)
 		return Value{Type: VTJSUndefined}

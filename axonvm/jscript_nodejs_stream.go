@@ -85,8 +85,12 @@ func (vm *VM) jsRunNodeStreamPolyfill() Value {
 		return Value{Type: VTJSUndefined}
 	}
 
-	child := vm.cloneForExecuteLocal(startIP)
+	// Use cloneForExecuteGlobal for the same reason as the events polyfill:
+	// the polyfill is a standalone script and must not inherit the caller's
+	// lexical block scopes.
+	child := vm.cloneForExecuteGlobal(startIP)
 	child.sourceName = "__builtin__:stream"
+	child.jsActiveEnvID = child.jsRootEnvID
 	if err := child.Run(); err != nil {
 		vm.syncExecuteGlobalState(child)
 		return Value{Type: VTJSUndefined}
