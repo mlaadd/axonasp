@@ -1426,22 +1426,20 @@ func (c *Compiler) isGlobalDefinitionToken(token vbscript.Token) bool {
 		return false
 	}
 
-	if c.matchKeywordOrIdentifier(vbscript.KeywordClass, "class") ||
-		c.matchKeywordOrIdentifier(vbscript.KeywordSub, "sub") ||
-		c.matchKeywordOrIdentifier(vbscript.KeywordFunction, "function") ||
-		c.matchKeywordOrIdentifier(vbscript.KeywordConst, "const") ||
-		c.matchKeywordOrIdentifier(vbscript.KeywordEnd, "type") {
+	if c.tokenMatchesKeywordOrIdentifier(token, vbscript.KeywordClass, "class") ||
+		c.tokenMatchesKeywordOrIdentifier(token, vbscript.KeywordSub, "sub") ||
+		c.tokenMatchesKeywordOrIdentifier(token, vbscript.KeywordFunction, "function") ||
+		c.tokenMatchesKeywordOrIdentifier(token, vbscript.KeywordConst, "const") {
 		return true
 	}
 
-	if c.matchKeywordOrIdentifier(vbscript.KeywordPublic, "public") ||
-		c.matchKeywordOrIdentifier(vbscript.KeywordPrivate, "private") {
+	if c.tokenMatchesKeywordOrIdentifier(token, vbscript.KeywordPublic, "public") ||
+		c.tokenMatchesKeywordOrIdentifier(token, vbscript.KeywordPrivate, "private") {
 		peek := c.peekToken()
 		return c.tokenMatchesKeywordOrIdentifier(peek, vbscript.KeywordClass, "class") ||
 			c.tokenMatchesKeywordOrIdentifier(peek, vbscript.KeywordSub, "sub") ||
 			c.tokenMatchesKeywordOrIdentifier(peek, vbscript.KeywordFunction, "function") ||
-			c.tokenMatchesKeywordOrIdentifier(peek, vbscript.KeywordConst, "const") ||
-			c.tokenMatchesKeywordOrIdentifier(peek, vbscript.KeywordEnd, "type")
+			c.tokenMatchesKeywordOrIdentifier(peek, vbscript.KeywordConst, "const")
 	}
 
 	return false
@@ -1502,6 +1500,25 @@ func (c *Compiler) emit(op OpCode, operands ...int) int {
 		// Reserve 8-byte monomorphic inline cache payload:
 		// shapeID(4), slot(2), flags(2).
 		c.bytecode = append(c.bytecode, 0, 0, 0, 0, 0, 0, 0, 0)
+	}
+
+	return pos
+}
+
+// emitExt emits one extended opcode sequence using the OpExtPrefix escape.
+// Current extended opcodes use 16-bit operands only.
+func (c *Compiler) emitExt(op ExtOpCode, operands ...int) int {
+	pos := len(c.bytecode)
+	c.bytecode = append(c.bytecode, byte(OpExtPrefix), byte(op))
+	c.lastCoercePos = -1
+
+	for _, operand := range operands {
+		if operand < 0 || uint64(operand) > uint64(math.MaxUint16) {
+			panic("Extended opcode operand exceeds 16-bit range")
+		}
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(operand))
+		c.bytecode = append(c.bytecode, buf...)
 	}
 
 	return pos

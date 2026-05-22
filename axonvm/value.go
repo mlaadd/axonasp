@@ -76,13 +76,13 @@ const (
 
 type Value struct {
 	Type  ValueType
-	Num   int64    // Used for Bool (0/1), Integer, Date, NativeObject ID, and Builtin Index
-	Flt   float64  // Used for Double
-	Str   string   // Strings in Go are lightweight pointers
-	Arr   *VBArray // Used for VBScript arrays
+	Num   int64     // Used for Bool (0/1), Integer, Date, NativeObject ID, and Builtin Index
+	Flt   float64   // Used for Double
+	Str   string    // Strings in Go are lightweight pointers
+	Arr   *VBArray  // Used for VBScript arrays
 	Rec   *VBRecord // Used for User-Defined Types (UDT)
-	Names []string // Stores local names for VTUserSub or field names for VTObject
-	Big   *big.Int // Used for JavaScript BigInt
+	Names []string  // Stores local names for VTUserSub or field names for VTObject
+	Big   *big.Int  // Used for JavaScript BigInt
 }
 
 // VBRecord stores data for a User-Defined Type (UDT) instance.

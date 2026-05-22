@@ -39,6 +39,22 @@ func scanBytecodeForOp(bytecode []byte, target OpCode) bool {
 	return false
 }
 
+// scanBytecodeForExtOp returns true if the given extended opcode appears in the
+// bytecode stream after instruction-boundary parsing.
+func scanBytecodeForExtOp(bytecode []byte, target ExtOpCode) bool {
+	for i := 0; i < len(bytecode); {
+		op := OpCode(bytecode[i])
+		if op == OpExtPrefix && i+1 < len(bytecode) {
+			ext := ExtOpCode(bytecode[i+1])
+			if ext == target {
+				return true
+			}
+		}
+		i += 1 + opcodeOperandSize(op)
+	}
+	return false
+}
+
 // countBytecodeOp counts occurrences of the given opcode in bytecode.
 func countBytecodeOp(bytecode []byte, target OpCode) int {
 	n := 0

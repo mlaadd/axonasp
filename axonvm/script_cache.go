@@ -112,7 +112,7 @@ type CachedProgram struct {
 	GlobalTypeNames     []string
 	IncludeDependencies []string
 	// RecordDecls and RecordDeclLookup carry compiled UDT metadata required by
-	// OpInitRecord/OpGetRecordMember/OpSetRecordMember in cached VM startup paths.
+	// ExtOpInitRecord/ExtOpGetRecordMember/ExtOpSetRecordMember in cached VM startup paths.
 	RecordDecls      []CompiledRecordDecl
 	RecordDeclLookup map[string]int
 }

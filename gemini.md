@@ -62,7 +62,10 @@ All work occurs within the `axonasp2` directory structure:
 * **Strict VBScript Rules:** Case insensitivity, 1-based string indexing, Banker's rounding for CLng, Option Compare rules, ByRef/ByVal behavior.
 * **Completeness:** Implement full Get, Set, Let for functions, members, objects, and parameters. Collections/Events/Methods/Properties must be fully complete (e.g., Property get/set, property empty). Never implement stubs, or incomplete code, unless asked. Always wire the functionality end-to-end (lexer, compiler, VM execution, error handling). Whenever a binary version of the function or return value exists, implement it as well.
 * **Implementation:** Accounting for the necessary differences between the HTTP server, CLI, and FastCGI server, ALWAYS maintain feature parity and support across all three implementations (server/main.go, fastcgi/main.go, cli/main.go).
-* **OPCodes:** Follow the existing opcode structure in `axonvm/opcodes.go`. New opcodes must be added in a way that maintains the single-pass architecture and does not require backtracking or multiple passes. Always implement the full opcode lifecycle (connection, emit, execute, error handling).
+* **OPCodes:** Follow the existing opcode structure in `axonvm/opcode.go`. New opcodes must be added in a way that maintains the single-pass architecture and does not require backtracking or multiple passes. Always implement the full opcode lifecycle (connection, emit, execute, error handling).
+* **Opcode Space Expansion (Prefix/Escape):** `OpCode` is byte-sized, so primary opcode space is hard-capped at 256 values. Use `OpExtPrefix` for new families when the primary space is exhausted.
+* **Extended Opcode Encoding:** Emit `[OpExtPrefix, ExtOpCode, operands...]` and decode through the VM extended-op switch. Keep primary opcodes for hot paths; move colder/specialized features to extended space first.
+* **Extended Opcode Size Contract:** Current extended opcodes use one `uint16` operand. Any new extended opcode with different operand width must update compiler emission, VM decode, and all bytecode scanners/remappers (`opcodeOperandSize`, optimizer walkers, and remap paths).
 * **File Loading:** RESX and INC files CANNOT be loaded directly; they must always be loaded through an ASP page.
 
 ### 2. State & Configuration

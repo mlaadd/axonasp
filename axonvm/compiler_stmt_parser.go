@@ -465,14 +465,14 @@ func (c *Compiler) parseStatement() {
 
 			// Property assignment: obj.Prop = value
 			if peq, ok := c.next.(*vbscript.PunctuationToken); ok && peq.Type == vbscript.PunctEqual {
-				// Check if target is a known UDT to use fast OpSetRecordMember
+				// Check if target is a known UDT to use fast ExtOpSetRecordMember
 				udtName, isUDT := c.lastEmittedUDTNameFromOp()
 				if isUDT && len(memberChain) == 1 {
 					memberIdx, _, _, found := c.getUDTMemberIndex(udtName, memberName)
 					if found {
 						c.move() // Consume '='
 						c.parseExpression(PrecNone)
-						c.emit(OpSetRecordMember, memberIdx)
+						c.emitExt(ExtOpSetRecordMember, memberIdx)
 						return
 					}
 				}
@@ -1870,7 +1870,7 @@ func (c *Compiler) emitTypedInit(name string, declaredType ValueType, udtName st
 	if declaredType == VTRecord {
 		udtIdx, ok := c.recordDeclLookup[strings.ToLower(udtName)]
 		if ok {
-			c.emit(OpInitRecord, udtIdx)
+			c.emitExt(ExtOpInitRecord, udtIdx)
 			op, idx := c.resolveSetVar(name)
 			c.emit(OpSet, int(op), idx) // Use OpSet to assign the record instance
 		}

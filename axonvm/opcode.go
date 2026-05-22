@@ -487,17 +487,39 @@ const (
 	OpJSMathMin   // [OpCode]
 	OpJSMathMax   // [OpCode]
 
-	// Phase 2 JScript Integer Fast Paths
-	// OpInitRecord creates one zero-initialized UDT record instance from a compiled
+	// OpExtPrefix is the escape opcode for extended instruction space.
+	//
+	// Why this exists:
+	// - OpCode is byte-based, so the primary opcode space is capped at 256 values.
+	// - The VM hit that hard cap and could not add more primary opcodes safely.
+	//
+	// How it works:
+	// - The compiler emits [OpExtPrefix, ExtOpCode, operands...].
+	// - The VM decodes OpExtPrefix and dispatches the second byte through one
+	//   dedicated extended-opcode switch.
+	// - Existing one-byte primary opcodes stay unchanged and keep hot-path speed.
+	//
+	// Current encoding contract:
+	// - Every extended opcode currently carries one uint16 operand.
+	// - Encoded size is 4 bytes total: prefix(1) + ext(1) + operand(2).
+	// - opcodeOperandSize(OpExtPrefix) is therefore 3 bytes.
+	OpExtPrefix
+)
+
+// ExtOpCode is the second-byte opcode namespace reached via OpExtPrefix.
+type ExtOpCode byte
+
+const (
+	// ExtOpInitRecord creates one zero-initialized UDT record instance from a compiled
 	// record declaration index and pushes it onto the stack.
-	// [OpCode, DefIdxHigh, DefIdxLow]
-	OpInitRecord // [OpCode, DefIdxHigh, DefIdxLow]
-	// OpGetRecordMember loads one UDT member value by fixed member index.
-	// [OpCode, MemberIdxHigh, MemberIdxLow]
-	OpGetRecordMember
-	// OpSetRecordMember writes one UDT member value by fixed member index.
-	// [OpCode, MemberIdxHigh, MemberIdxLow]
-	OpSetRecordMember
+	// [OpExtPrefix, ExtOpInitRecord, DefIdxHigh, DefIdxLow]
+	ExtOpInitRecord ExtOpCode = iota
+	// ExtOpGetRecordMember loads one UDT member value by fixed member index.
+	// [OpExtPrefix, ExtOpGetRecordMember, MemberIdxHigh, MemberIdxLow]
+	ExtOpGetRecordMember
+	// ExtOpSetRecordMember writes one UDT member value by fixed member index.
+	// [OpExtPrefix, ExtOpSetRecordMember, MemberIdxHigh, MemberIdxLow]
+	ExtOpSetRecordMember
 )
 
 func (op OpCode) String() string {
@@ -612,12 +634,8 @@ func (op OpCode) String() string {
 		return "OpNewClass"
 	case OpArraySet:
 		return "OpArraySet"
-	case OpInitRecord:
-		return "OpInitRecord"
-	case OpGetRecordMember:
-		return "OpGetRecordMember"
-	case OpSetRecordMember:
-		return "OpSetRecordMember"
+	case OpExtPrefix:
+		return "OpExtPrefix"
 	case OpMemberGet:
 		return "OpMemberGet"
 	case OpMe:
@@ -968,5 +986,18 @@ func (op OpCode) String() string {
 		return "OpJSMathMax"
 	default:
 		return "OpUnknown"
+	}
+}
+
+func (op ExtOpCode) String() string {
+	switch op {
+	case ExtOpInitRecord:
+		return "ExtOpInitRecord"
+	case ExtOpGetRecordMember:
+		return "ExtOpGetRecordMember"
+	case ExtOpSetRecordMember:
+		return "ExtOpSetRecordMember"
+	default:
+		return "ExtOpUnknown"
 	}
 }

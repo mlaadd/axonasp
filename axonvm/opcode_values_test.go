@@ -18,7 +18,8 @@ func TestPrintOpcodeValues(t *testing.T) {
 	fmt.Printf("OpDecLocalInt: %d\n", int(OpDecLocalInt))
 	fmt.Printf("OpNop: %d\n", int(OpNop))
 	fmt.Printf("OpJSJumpIfLessFast: %d\n", int(OpJSJumpIfLessFast))
-	fmt.Printf("OpInitRecord: %d\n", int(OpInitRecord))
-	fmt.Printf("OpGetRecordMember: %d\n", int(OpGetRecordMember))
-	fmt.Printf("OpSetRecordMember: %d\n", int(OpSetRecordMember))
+	fmt.Printf("OpExtPrefix: %d\n", int(OpExtPrefix))
+	fmt.Printf("ExtOpInitRecord: %d\n", int(ExtOpInitRecord))
+	fmt.Printf("ExtOpGetRecordMember: %d\n", int(ExtOpGetRecordMember))
+	fmt.Printf("ExtOpSetRecordMember: %d\n", int(ExtOpSetRecordMember))
 }

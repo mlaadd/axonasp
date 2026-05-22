@@ -757,12 +757,12 @@ func (c *Compiler) getInfixRule(token vbscript.Token) func(*Compiler, vbscript.T
 					c.emitTrailingCoerceIfValueContext()
 				} else {
 					// Plain property access: Obj.Prop
-					// Check if target is a known UDT to use fast OpGetRecordMember
+					// Check if target is a known UDT to use fast ExtOpGetRecordMember
 					udtName, isUDT := c.lastEmittedUDTNameFromOp()
 					if isUDT {
 						memberIdx, memberType, nextUDTName, found := c.getUDTMemberIndex(udtName, name)
 						if found {
-							c.emit(OpGetRecordMember, memberIdx)
+							c.emitExt(ExtOpGetRecordMember, memberIdx)
 							c.updateLastEmittedType(memberType, nextUDTName)
 							c.emitTrailingCoerceIfValueContext()
 							return

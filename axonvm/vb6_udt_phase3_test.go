@@ -46,14 +46,14 @@ Response.Write p.Name & "|" & p.Age & "|" & p.Home.City
 	}
 
 	bytecode := compiler.Bytecode()
-	if !scanBytecodeForOp(bytecode, OpInitRecord) {
-		t.Fatal("expected OpInitRecord in UDT bytecode")
+	if !scanBytecodeForExtOp(bytecode, ExtOpInitRecord) {
+		t.Fatal("expected ExtOpInitRecord in UDT bytecode")
 	}
-	if !scanBytecodeForOp(bytecode, OpGetRecordMember) {
-		t.Fatal("expected OpGetRecordMember in UDT bytecode")
+	if !scanBytecodeForExtOp(bytecode, ExtOpGetRecordMember) {
+		t.Fatal("expected ExtOpGetRecordMember in UDT bytecode")
 	}
-	if !scanBytecodeForOp(bytecode, OpSetRecordMember) {
-		t.Fatal("expected OpSetRecordMember in UDT bytecode")
+	if !scanBytecodeForExtOp(bytecode, ExtOpSetRecordMember) {
+		t.Fatal("expected ExtOpSetRecordMember in UDT bytecode")
 	}
 
 	vm := NewVMFromCompiler(compiler)

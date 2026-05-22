@@ -973,7 +973,6 @@ func opcodeOperandSize(op OpCode) int {
 		OpArgGlobalRef, OpArgLocalRef,
 		OpLetGlobal, OpLetLocal,
 		OpCall,
-		OpInitRecord, OpGetRecordMember, OpSetRecordMember,
 		OpJSDeclareName, OpJSGetName, OpJSSetName, OpJSGetLocal, OpJSSetLocal, OpJSIncLocal, OpJSDecLocal,
 		OpJSRootFrameEnter, OpJSRootFrameLeave,
 		OpJSCreateClosure, OpJSCall, OpJSTailCall, OpJSCallComputedMember, OpJSTailCallComputedMember, OpJSNewArray, OpJSSuperCall,
@@ -1001,6 +1000,9 @@ func opcodeOperandSize(op OpCode) int {
 	// 1-byte opcodes (none)
 	case OpJSSetProto, OpJSSetThis, OpJSSuperIndexGet, OpJSSuperIndexSet:
 		return 0
+	// 3-byte operands: ExtOpCode(1) + Operand(2)
+	case OpExtPrefix:
+		return 3
 	// 4-byte operands
 	case OpLine, OpArraySet, OpCallBuiltin, OpSetDirective, OpSetOption, OpJSCallMember, OpJSTailCallMember, OpJSDefineProperty, OpJSSuperCallMember, OpJSExport:
 		return 4
@@ -1061,6 +1063,15 @@ func remapExecuteGlobalBytecode(bytecode []byte, constBase int, bytecodeBase int
 			idx := int(binary.BigEndian.Uint16(bytecode[ip:])) + constBase
 			binary.BigEndian.PutUint16(bytecode[ip:], uint16(idx))
 			ip += 10
+		case OpExtPrefix:
+			ext := ExtOpCode(bytecode[ip])
+			ip++
+			switch ext {
+			case ExtOpInitRecord, ExtOpGetRecordMember, ExtOpSetRecordMember:
+				ip += 2
+			default:
+				panic("unsupported extended opcode in remapExecuteGlobalBytecode")
+			}
 		case OpJSRot, OpJSSuperCall, OpJSCall, OpJSTailCall, OpJSCallComputedMember, OpJSTailCallComputedMember, OpJSNewArray, OpJSSuperCallComputedMember:
 			ip += 2
 		case OpJSDefineProperty:
@@ -2874,49 +2885,57 @@ aspExecLoop:
 			}
 			vm.push(Value{Type: VTObject, Num: vm.activeClassObjectID})
 
-		case OpInitRecord:
-			defIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
-			vm.ip += 2
-			if int(defIdx) >= len(vm.RecordDecls) {
-				vm.raise(vbscript.InternalError, "Invalid UDT definition index")
-				vm.push(Value{Type: VTEmpty})
-				continue
-			}
-			decl := vm.RecordDecls[defIdx]
-			rec := vm.acquireRecord(len(decl.Members))
-			rec.DefIdx = int(defIdx)
-			vm.push(Value{Type: VTRecord, Rec: rec})
+		case OpExtPrefix:
+			ext := ExtOpCode(vm.bytecode[vm.ip])
+			vm.ip++
+			switch ext {
+			case ExtOpInitRecord:
+				defIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+				vm.ip += 2
+				if int(defIdx) >= len(vm.RecordDecls) {
+					vm.raise(vbscript.InternalError, "Invalid UDT definition index")
+					vm.push(Value{Type: VTEmpty})
+					continue
+				}
+				decl := vm.RecordDecls[defIdx]
+				rec := vm.acquireRecord(len(decl.Members))
+				rec.DefIdx = int(defIdx)
+				vm.push(Value{Type: VTRecord, Rec: rec})
 
-		case OpGetRecordMember:
-			memberIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
-			vm.ip += 2
-			recVal := vm.pop()
-			if recVal.Type != VTRecord || recVal.Rec == nil {
-				vm.raise(vbscript.CouldNotFindTargetObject, "UDT required for GetRecordMember")
-				vm.push(Value{Type: VTEmpty})
-				continue
-			}
-			if int(memberIdx) >= len(recVal.Rec.Members) {
-				vm.raise(vbscript.InternalError, "Invalid UDT member index")
-				vm.push(Value{Type: VTEmpty})
-				continue
-			}
-			vm.push(recVal.Rec.Members[memberIdx])
+			case ExtOpGetRecordMember:
+				memberIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+				vm.ip += 2
+				recVal := vm.pop()
+				if recVal.Type != VTRecord || recVal.Rec == nil {
+					vm.raise(vbscript.CouldNotFindTargetObject, "UDT required for GetRecordMember")
+					vm.push(Value{Type: VTEmpty})
+					continue
+				}
+				if int(memberIdx) >= len(recVal.Rec.Members) {
+					vm.raise(vbscript.InternalError, "Invalid UDT member index")
+					vm.push(Value{Type: VTEmpty})
+					continue
+				}
+				vm.push(recVal.Rec.Members[memberIdx])
 
-		case OpSetRecordMember:
-			memberIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
-			vm.ip += 2
-			rhs := vm.pop()
-			recVal := vm.pop()
-			if recVal.Type != VTRecord || recVal.Rec == nil {
-				vm.raise(vbscript.CouldNotFindTargetObject, "UDT required for SetRecordMember")
-				continue
+			case ExtOpSetRecordMember:
+				memberIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+				vm.ip += 2
+				rhs := vm.pop()
+				recVal := vm.pop()
+				if recVal.Type != VTRecord || recVal.Rec == nil {
+					vm.raise(vbscript.CouldNotFindTargetObject, "UDT required for SetRecordMember")
+					continue
+				}
+				if int(memberIdx) >= len(recVal.Rec.Members) {
+					vm.raise(vbscript.InternalError, "Invalid UDT member index")
+					continue
+				}
+				recVal.Rec.Members[memberIdx] = rhs
+
+			default:
+				vm.raise(vbscript.InternalError, "Unsupported extended opcode")
 			}
-			if int(memberIdx) >= len(recVal.Rec.Members) {
-				vm.raise(vbscript.InternalError, "Invalid UDT member index")
-				continue
-			}
-			recVal.Rec.Members[memberIdx] = rhs
 
 		case OpMemberSet, OpMemberSetSet:
 			// OpMemberSet: [OpCode, ConstMemberIdxHigh, ConstMemberIdxLow]
@@ -7999,7 +8018,7 @@ func (vm *VM) zeroValueForType(t ValueType) Value {
 	case VTObject:
 		return Value{Type: VTNothing}
 	case VTRecord:
-		return Value{Type: VTRecord} // Requires initialization via OpInitRecord
+		return Value{Type: VTRecord} // Requires initialization via ExtOpInitRecord
 	default:
 		return Value{Type: VTEmpty}
 	}
