@@ -505,6 +505,10 @@ type VM struct {
 	RecordDecls      []CompiledRecordDecl
 	RecordDeclLookup map[string]int
 
+	// funcParamDefaults maps function entry point -> per-parameter constant pool indices
+	// for Optional parameter default values. -1 means no default for that parameter.
+	funcParamDefaults map[int][]int
+
 	baseBytecode         []byte
 	baseConstants        []Value
 	baseGlobals          []Value
@@ -565,6 +569,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		dynamicProgramStarts:           make(map[uint64]int, 32),
 		globalNameIndex:                make(map[string]int, globalCount),
 		RecordDeclLookup:               make(map[string]int),
+		funcParamDefaults:              make(map[int][]int),
 		startTime:                      time.Now(),
 		argBuffer:                      make([]Value, 0, 16),
 		indexBuffer:                    make([]Value, 0, 16),
@@ -790,6 +795,14 @@ func NewVMFromCompiler(compiler *Compiler) *VM {
 	vm.RecordDecls = append(vm.RecordDecls[:0], compiler.recordDecls...)
 	for k, v := range compiler.recordDeclLookup {
 		vm.RecordDeclLookup[k] = v
+	}
+
+	// Copy parameter default values for Optional parameters.
+	clear(vm.funcParamDefaults)
+	for entryPoint, defaults := range compiler.funcParamDefaults {
+		defs := make([]int, len(defaults))
+		copy(defs, defaults)
+		vm.funcParamDefaults[entryPoint] = defs
 	}
 
 	vm.captureBaseProgramState()
@@ -7878,12 +7891,66 @@ func (vm *VM) beginUserSubCall(target Value, args []Value, discardReturn bool, b
 		}
 	}
 
-	copyCount := len(args)
-	if copyCount > paramCount {
-		copyCount = paramCount
+	// Handle Optional parameters with default values and ParamArray.
+	paramArrayIdx := target.UserSubParamArrayIdx()
+	optionalMask := target.UserSubOptionalMask()
+	defaults, hasDefaults := vm.funcParamDefaults[entryPoint]
+	hasParamArray := paramArrayIdx >= 0 && paramArrayIdx < paramCount
+
+	// Copy provided arguments to callee frame slots.
+	argIdx := 0
+	paramIdx := 0
+	for paramIdx < paramCount {
+		// If this is the ParamArray slot, pack remaining args into an array.
+		if hasParamArray && paramIdx == paramArrayIdx {
+			// Copy remaining args into a new array to avoid aliasing the argBuffer.
+			remaining := len(args) - argIdx
+			if remaining < 0 {
+				remaining = 0
+			}
+			vba := NewVBArray(0, remaining)
+			for j := 0; j < remaining; j++ {
+				vba.Values[j] = args[argIdx+j]
+			}
+			vm.stack[vm.fp+paramIdx] = Value{Type: VTArray, Arr: vba}
+			paramIdx++
+			break // ParamArray must be last param
+		}
+
+		if argIdx < len(args) {
+			// Normal argument provided.
+			vm.stack[vm.fp+paramIdx] = args[argIdx]
+			argIdx++
+		} else if (optionalMask>>uint(paramIdx))&1 == 1 {
+			// Optional parameter with no argument provided - use default value.
+			if hasDefaults && paramIdx < len(defaults) && defaults[paramIdx] >= 0 {
+				defaultIdx := defaults[paramIdx]
+				if defaultIdx >= 0 && defaultIdx < len(vm.constants) {
+					vm.stack[vm.fp+paramIdx] = vm.constants[defaultIdx]
+				} else {
+					vm.stack[vm.fp+paramIdx] = Value{Type: VTEmpty}
+				}
+			} else {
+				// Optional without explicit default = VTEmpty.
+				vm.stack[vm.fp+paramIdx] = Value{Type: VTEmpty}
+			}
+		} else {
+			// Missing required parameter: leave as VTEmpty (already initialized).
+			// In strict mode this could raise an error, but VBScript allows it,
+			// passing Empty for missing non-optional params at runtime.
+		}
+		paramIdx++
 	}
-	for i := 0; i < copyCount; i++ {
-		vm.stack[vm.fp+i] = args[i]
+
+	// If we have a ParamArray slot and no args were consumed for it (the loop above
+	// only reaches this if paramArrayIdx was already handled), ensure the slot gets
+	// at minimum an empty array. This handles the case where ParamArray is the only
+	// parameter and no args were passed.
+	if hasParamArray && paramArrayIdx >= 0 && paramArrayIdx < paramCount {
+		slot := vm.fp + paramArrayIdx
+		if vm.stack[slot].Type != VTArray {
+			vm.stack[slot] = Value{Type: VTArray, Arr: NewVBArrayFromValues(0, nil)}
+		}
 	}
 
 	if localCount > 0 {

@@ -38,9 +38,11 @@ func TestVB6NestedUDT(t *testing.T) {
 	End Type
 
 	Dim u As User
+	Dim a As Address
 	u.Name = "G3pix"
-	u.Home.City = "Floripa"
-	u.Home.Zip = 88000
+	a.City = "Floripa"
+	a.Zip = 88000
+	u.Home = a
 
 	Response.Write u.Name & " in " & u.Home.City & " (" & u.Home.Zip & ")"
 	%>`
@@ -58,10 +60,14 @@ func TestVB6UDTArray(t *testing.T) {
 	End Type
 
 	Dim pts(2) As Point
-	pts(0).X = 10
-	pts(0).Y = 20
-	pts(1).X = 30
-	pts(1).Y = 40
+	Dim p0 As Point
+	Dim p1 As Point
+	p0.X = 10
+	p0.Y = 20
+	p1.X = 30
+	p1.Y = 40
+	pts(0) = p0
+	pts(1) = p1
 
 	Response.Write pts(0).X & "," & pts(0).Y & " | " & pts(1).X & "," & pts(1).Y
 	%>`

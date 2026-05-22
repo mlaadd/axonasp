@@ -107,17 +107,18 @@ var (
 
 	// keywordAsIdentifiers maps keyword-like strings that can also be used as identifiers
 	keywordAsIdentifiers = map[string]Keyword{
-		"binary":   KeywordBinary,
-		"compare":  KeywordCompare,
-		"default":  KeywordDefault,
-		"erase":    KeywordErase,
-		"error":    KeywordError,
-		"explicit": KeywordExplicit,
-		"optional": KeywordOptional,
-		"base":     KeywordBase,
-		"property": KeywordProperty,
-		"step":     KeywordStep,
-		"text":     KeywordText,
+		"binary":     KeywordBinary,
+		"compare":    KeywordCompare,
+		"default":    KeywordDefault,
+		"erase":      KeywordErase,
+		"error":      KeywordError,
+		"explicit":   KeywordExplicit,
+		"optional":   KeywordOptional,
+		"paramarray": KeywordParamArray,
+		"base":       KeywordBase,
+		"property":   KeywordProperty,
+		"step":       KeywordStep,
+		"text":       KeywordText,
 	}
 )
 

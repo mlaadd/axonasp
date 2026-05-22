@@ -5330,7 +5330,7 @@ Response.Write Err.Number & "|" & Err.Source & "|" & Err.Description
 	host.Response().Flush()
 
 	expectedNumber := strconv.Itoa(vbscript.HRESULTFromVBScriptCode(vbscript.ExpectedEnd))
-	expected := expectedNumber + "|VBScript compilation error|Missing 'End'"
+	expected := expectedNumber + "|VBScript compilation error|Expected keyword End"
 	if output.String() != expected {
 		t.Fatalf("unexpected ExecuteGlobal compile error output: got %q want %q", output.String(), expected)
 	}

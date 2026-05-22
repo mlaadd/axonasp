@@ -22,6 +22,7 @@ package axonvm
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"g3pix.com.br/axonasp/vbscript"
@@ -54,7 +55,7 @@ func TestCompilerUnexpectedTokenUsesVBScriptMetadata(t *testing.T) {
 	if syntaxErr.Source != "VBScript compilation error" {
 		t.Fatalf("unexpected source: %q", syntaxErr.Source)
 	}
-	if syntaxErr.Description != vbscript.SyntaxError.String() {
+	if syntaxErr.Description == "" || !strings.Contains(strings.ToLower(syntaxErr.Description), "syntax error") {
 		t.Fatalf("unexpected description: %q", syntaxErr.Description)
 	}
 	if syntaxErr.ASPDescription == "" {

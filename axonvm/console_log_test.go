@@ -37,6 +37,9 @@ func TestResolveConsoleOutputTarget_CLITUI(t *testing.T) {
 
 	vm := NewVM(nil, nil, 0)
 	vm.SetHost(host)
+	vm.executionMode = ExecutionModeTUI
+	vm.executionMode = ExecutionModeTUI
+	vm.executionMode = ExecutionModeTUI
 
 	writer, lineEnding := resolveConsoleOutputTarget(vm, consoleMethodFormats["log"])
 	if lineEnding != "" {
@@ -61,6 +64,7 @@ func TestResolveConsoleOutputTarget_Default(t *testing.T) {
 	host := NewMockHost()
 	vm := NewVM(nil, nil, 0)
 	vm.SetHost(host)
+	vm.executionMode = ExecutionModeTUI
 
 	_, lineEnding := resolveConsoleOutputTarget(vm, consoleMethodFormats["log"])
 	if lineEnding != "\n" {
@@ -77,6 +81,7 @@ func TestConsoleTimeAndTimeEnd(t *testing.T) {
 
 	vm := NewVM(nil, nil, 0)
 	vm.SetHost(host)
+	vm.executionMode = ExecutionModeTUI
 
 	consoleDispatch(vm, "time", []Value{NewString("phase")})
 	if _, exists := vm.consoleTimerItems["phase"]; !exists {
@@ -105,6 +110,7 @@ func TestConsoleDirFormatsObject(t *testing.T) {
 
 	vm := NewVM(nil, nil, 0)
 	vm.SetHost(host)
+	vm.executionMode = ExecutionModeTUI
 
 	objID := vm.allocJSID()
 	vm.jsObjectItems[objID] = map[string]Value{
@@ -128,6 +134,7 @@ func TestConsoleTraceJScriptOnly(t *testing.T) {
 
 	vm := NewVM(nil, nil, 0)
 	vm.SetHost(host)
+	vm.executionMode = ExecutionModeTUI
 
 	fnID := vm.allocJSID()
 	vm.jsFunctionItems[fnID] = &jsFunctionObject{name: "traceTarget"}
@@ -168,6 +175,7 @@ func TestConsoleMethodsSerializeAllArgs(t *testing.T) {
 
 	vm := NewVM(nil, nil, 0)
 	vm.SetHost(host)
+	vm.executionMode = ExecutionModeTUI
 
 	methods := []struct {
 		name     string

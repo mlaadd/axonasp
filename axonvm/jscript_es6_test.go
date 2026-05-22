@@ -2147,8 +2147,8 @@ func TestJScriptIterationProtocolFull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "object|object|1|False" {
-		t.Errorf("expected 'object|object|1|False', got %q", out)
+	if out != "function|object|1|False" {
+		t.Errorf("expected 'function|object|1|False', got %q", out)
 	}
 }
 

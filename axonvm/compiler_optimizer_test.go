@@ -76,7 +76,7 @@ func runVBSAndGetOutput(t *testing.T, source string) string {
 	if err := compiler.Compile(); err != nil {
 		t.Fatalf("compile failed: %v", err)
 	}
-	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	vm := NewVMFromCompiler(compiler)
 	host := NewMockHost()
 	var buf bytes.Buffer
 	host.SetOutput(&buf)

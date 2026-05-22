@@ -25,6 +25,7 @@ import (
 	"math"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -129,6 +130,9 @@ func (v Value) String() string {
 		}
 		return fmt.Sprintf("[Object:%d]", v.Num)
 	case VTNativeObject:
+		if v.Num == nativeObjectConsole {
+			return "[object console]"
+		}
 		return fmt.Sprintf("[NativeObject:%d]", v.Num)
 	case VTBuiltin:
 		return fmt.Sprintf("[Builtin:%d]", v.Num)
@@ -215,9 +219,35 @@ func NewEmpty() Value {
 // paramCount is the number of declared parameters.
 // localCount is the total number of local slots (params + locals + function return slot when applicable).
 // isFunc is true for Function and false for Sub.
+// ParamMeta stores extended parameter metadata for a VTUserSub function.
+// Used by the VM during call setup for Optional/ParamArray/ByVal handling.
+type ParamMeta struct {
+	Name            string    // Parameter name
+	Flags           byte      // bit 0: Optional, bit 1: ParamArray
+	DeclaredType    ValueType // VB6 As Type (VTEmpty = Variant)
+	DeclaredUDTName string    // UDT name if DeclaredType is VTRecord
+	DefaultValueIdx int       // Constant pool index for default value, -1 if none
+}
+
+// ParamMeta flag bits.
+const (
+	ParamFlagOptional   byte = 1 << iota // Parameter is Optional
+	ParamFlagParamArray                  // Parameter is ParamArray
+	ParamFlagByVal                       // Parameter is explicit ByVal
+)
+
 // byRefMask encodes which parameters are ByRef: bit i set = param i is ByRef.
 // localNames is the list of symbol names for all local variable slots.
+// optionalMask encodes which parameters are Optional: bit i set = param i is Optional.
+// paramArrayIdx is the index of the ParamArray parameter, or -1 if none.
 func NewUserSub(entryPoint int, paramCount int, localCount int, isFunc bool, byRefMask uint64, localNames []string) Value {
+	return NewUserSubEx(entryPoint, paramCount, localCount, isFunc, byRefMask, 0, -1, localNames)
+}
+
+// NewUserSubEx creates a VTUserSub value with full VB6 advanced signature metadata.
+// optionalMask encodes which parameters are Optional: bit i set = param i is Optional.
+// paramArrayIdx is the index of the ParamArray parameter, or -1 if none.
+func NewUserSubEx(entryPoint int, paramCount int, localCount int, isFunc bool, byRefMask uint64, optionalMask uint64, paramArrayIdx int, localNames []string) Value {
 	if paramCount < 0 {
 		paramCount = 0
 	}
@@ -231,10 +261,41 @@ func NewUserSub(entryPoint int, paramCount int, localCount int, isFunc bool, byR
 		marker += 0.5
 	}
 	v := Value{Type: VTUserSub, Num: int64(entryPoint), Flt: marker, Names: localNames}
-	if byRefMask != 0 {
-		v.Str = strconv.FormatUint(byRefMask, 10)
+
+	// Encode byRefMask, optionalMask, and paramArrayIdx into Str.
+	// Format: "byRefMask|optionalMask|paramArrayIdx"
+	var sb strings.Builder
+	if byRefMask != 0 || optionalMask != 0 || paramArrayIdx >= 0 {
+		sb.WriteString(strconv.FormatUint(byRefMask, 10))
+		sb.WriteByte('|')
+		sb.WriteString(strconv.FormatUint(optionalMask, 10))
+		sb.WriteByte('|')
+		sb.WriteString(strconv.Itoa(paramArrayIdx))
+		v.Str = sb.String()
 	}
 	return v
+}
+
+// parseUserSubStr decodes the Str metadata of a VTUserSub value into its components.
+func parseUserSubStr(s string) (byRefMask uint64, optionalMask uint64, paramArrayIdx int) {
+	paramArrayIdx = -1 // default: no ParamArray
+	if s == "" {
+		return 0, 0, -1
+	}
+	parts := strings.SplitN(s, "|", 3)
+	if len(parts) >= 1 && parts[0] != "" {
+		byRefMask, _ = strconv.ParseUint(parts[0], 10, 64)
+	}
+	if len(parts) >= 2 && parts[1] != "" {
+		optionalMask, _ = strconv.ParseUint(parts[1], 10, 64)
+	}
+	if len(parts) >= 3 && parts[2] != "" {
+		paIdx, err := strconv.Atoi(parts[2])
+		if err == nil {
+			paramArrayIdx = paIdx
+		}
+	}
+	return
 }
 
 // UserSubIsFunc reports whether a VTUserSub value represents a Function.
@@ -258,17 +319,26 @@ func (v Value) UserSubLocalCount() int {
 		return packed
 	}
 	return packed >> 12
-
 }
 
 // UserSubByRefMask returns the ByRef parameter bitmask for a VTUserSub value.
 // Bit i set means parameter i is declared ByRef.
 func (v Value) UserSubByRefMask() uint64 {
-	if v.Str == "" {
-		return 0
-	}
-	mask, _ := strconv.ParseUint(v.Str, 10, 64)
+	mask, _, _ := parseUserSubStr(v.Str)
 	return mask
+}
+
+// UserSubOptionalMask returns the Optional parameter bitmask for a VTUserSub value.
+// Bit i set means parameter i is Optional.
+func (v Value) UserSubOptionalMask() uint64 {
+	_, mask, _ := parseUserSubStr(v.Str)
+	return mask
+}
+
+// UserSubParamArrayIdx returns the index of the ParamArray parameter, or -1 if none.
+func (v Value) UserSubParamArrayIdx() int {
+	_, _, idx := parseUserSubStr(v.Str)
+	return idx
 }
 
 // ArgRefIsGlobal reports whether this VTArgRef references a global slot.

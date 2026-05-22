@@ -111,6 +111,7 @@ const (
 	KeywordErase
 	KeywordDefault
 	KeywordOptional
+	KeywordParamArray
 	KeywordAnd
 	KeywordByRef
 	KeywordByVal
@@ -182,6 +183,8 @@ func (k Keyword) String() string {
 		return "Default"
 	case KeywordOptional:
 		return "Optional"
+	case KeywordParamArray:
+		return "ParamArray"
 	case KeywordAnd:
 		return "And"
 	case KeywordByRef:

@@ -1253,14 +1253,24 @@ func (c *Compiler) tokenMatchesKeywordOrIdentifier(token vbscript.Token, kw vbsc
 	}
 }
 
+// procParamResult holds the result of parsing procedure formal parameters.
+type procParamResult struct {
+	names         []string
+	byRefMask     uint64
+	optionalMask  uint64
+	paramArrayIdx int   // index of ParamArray param, -1 if none
+	defaults      []int // constant pool indices for default values, -1 for params without defaults
+}
+
 // parseProcedureParameterNames parses Sub/Function formal parameter names and modifiers.
-// Returns the parameter name list and a byRefMask where bit i = 1 means param i is ByRef.
-// VBScript default is ByRef when no modifier is specified.
-func (c *Compiler) parseProcedureParameterNames() ([]string, uint64) {
-	var params []string
-	var byRefMask uint64
+// Supports VB6 advanced signatures: ByRef, ByVal, Optional [As Type] = DefaultValue, ParamArray.
+// Returns the parameter metadata including names, masks, default value constant indices.
+func (c *Compiler) parseProcedureParameterNames() procParamResult {
+	result := procParamResult{
+		paramArrayIdx: -1,
+	}
 	if p, ok := c.next.(*vbscript.PunctuationToken); !ok || p.Type != vbscript.PunctLParen {
-		return params, byRefMask
+		return result
 	}
 
 	c.move()
@@ -1272,23 +1282,97 @@ func (c *Compiler) parseProcedureParameterNames() ([]string, uint64) {
 		if c.matchEof() {
 			break
 		}
+
 		// VBScript default for parameters without an explicit modifier is ByRef.
 		isByRef := true
-		if c.checkKeyword(vbscript.KeywordByRef) {
-			c.move()
-			isByRef = true
-		} else if c.checkKeyword(vbscript.KeywordByVal) {
-			c.move()
-			isByRef = false
+		isOptional := false
+		isParamArray := false
+
+		// Parse ByRef/ByVal/Optional/ParamArray modifiers in any order.
+	parsedModifiers:
+		for {
+			if c.checkKeyword(vbscript.KeywordByRef) {
+				c.move()
+				isByRef = true
+			} else if c.checkKeyword(vbscript.KeywordByVal) {
+				c.move()
+				isByRef = false
+			} else if c.matchKeywordOrIdentifier(vbscript.KeywordOptional, "optional") {
+				c.move()
+				isOptional = true
+			} else if c.matchKeywordOrIdentifier(vbscript.KeywordParamArray, "paramarray") {
+				c.move()
+				isParamArray = true
+				isByRef = false // ParamArray is always ByVal
+				result.paramArrayIdx = paramIdx
+			} else {
+				break parsedModifiers
+			}
 		}
-		if c.matchKeywordOrIdentifier(vbscript.KeywordOptional, "optional") {
-			c.move()
-		}
+
 		paramName := c.expectIdentifier()
-		params = append(params, paramName)
-		if isByRef && paramIdx < 64 {
-			byRefMask |= 1 << uint(paramIdx)
+		result.names = append(result.names, paramName)
+
+		// For ParamArray parameters, consume the trailing "()" syntax.
+		// VB6 syntax: ParamArray values()  -- the () marks it as an array.
+		if isParamArray {
+			if p, ok := c.next.(*vbscript.PunctuationToken); ok && p.Type == vbscript.PunctLParen {
+				c.move() // consume '('
+				if p2, ok2 := c.next.(*vbscript.PunctuationToken); ok2 && p2.Type == vbscript.PunctRParen {
+					c.move() // consume ')'
+				} else {
+					// If there's something between the parens, this is likely an error.
+					panic(c.vbCompileError(vbscript.SyntaxError,
+						"ParamArray parameter must be declared with empty parentheses: values()"))
+				}
+			} else {
+				panic(c.vbCompileError(vbscript.SyntaxError,
+					"ParamArray parameter requires empty parentheses: values()"))
+			}
 		}
+
+		// Parse optional As Type clause.
+		declaredType, udtName := c.parseAsTypeClause()
+		if declaredType != VTEmpty {
+			// Record type declaration for the parameter in the local scope.
+			lower := strings.ToLower(paramName)
+			c.localVarTypes[lower] = declaredType
+			if declaredType == VTRecord {
+				c.localRecordTypes[lower] = udtName
+			}
+		}
+
+		// Parse optional = DefaultValue for Optional parameters.
+		defaultIdx := -1
+		if isOptional {
+			if p, ok := c.next.(*vbscript.PunctuationToken); ok && p.Type == vbscript.PunctEqual {
+				c.move()
+				// Compile the default value expression.
+				c.parseExpression(PrecNone)
+				defaultIdx = c.extractDefaultConst()
+			}
+		}
+
+		result.defaults = append(result.defaults, defaultIdx)
+
+		// Set byRefMask: only ByRef params get a bit set.
+		if isByRef && !isParamArray && paramIdx < 64 {
+			result.byRefMask |= 1 << uint(paramIdx)
+		}
+
+		// Set optionalMask.
+		if isOptional && paramIdx < 64 {
+			result.optionalMask |= 1 << uint(paramIdx)
+		}
+
+		// Validate ParamArray: must be the last parameter.
+		if isParamArray {
+			// Check there's no comma after this parameter (it must be last).
+			if p, ok := c.next.(*vbscript.PunctuationToken); ok && p.Type == vbscript.PunctComma {
+				panic(c.vbCompileError(vbscript.SyntaxError, "ParamArray must be the last parameter"))
+			}
+		}
+
 		paramIdx++
 		if p, ok := c.next.(*vbscript.PunctuationToken); ok && p.Type == vbscript.PunctComma {
 			c.move()
@@ -1298,7 +1382,31 @@ func (c *Compiler) parseProcedureParameterNames() ([]string, uint64) {
 		c.move()
 	}
 
-	return params, byRefMask
+	return result
+}
+
+// extractDefaultConst extracts a constant index from the most recently compiled expression
+// (used for Optional parameter default values). It scans backwards from the end of bytecode
+// for the trailing OpConstant followed by a 2-byte constant index, skipping any OpNop
+// placeholders left by the constant folder. If the expression is not a simple compile-time
+// constant (e.g. a function call), it raises a compile error since VB6 requires Optional
+// parameter defaults to be constant expressions.
+func (c *Compiler) extractDefaultConst() int {
+	bc := c.bytecode
+	// Scan backwards, skipping OpNop placeholders.
+	i := len(bc)
+	for i >= 3 && OpCode(bc[i-3]) == OpNop {
+		i -= 3
+	}
+	if i >= 3 && OpCode(bc[i-3]) == OpConstant {
+		idx := int(binary.BigEndian.Uint16(bc[i-2:]))
+		// Remove the trailing opcode(s) from bytecode.
+		c.bytecode = bc[:i-3]
+		return idx
+	}
+	// The expression is not a simple compile-time constant.
+	panic(c.vbCompileError(vbscript.SyntaxError,
+		"Optional parameter default value must be a constant expression"))
 }
 
 // parseClassMethodDeclaration compiles one class Sub/Function body and registers runtime class method metadata.
@@ -1318,9 +1426,9 @@ func (c *Compiler) parseClassMethodDeclaration(className string, isFunc bool, is
 	}
 
 	methodName := c.expectIdentifier()
-	params, byRefMask := c.parseProcedureParameterNames()
+	paramResult := c.parseProcedureParameterNames()
 	if strings.EqualFold(methodName, "Class_Initialize") || strings.EqualFold(methodName, "Class_Terminate") {
-		if len(params) != 0 {
+		if len(paramResult.names) != 0 {
 			panic(c.vbCompileError(vbscript.ClassInitializeOrTerminateDoNotHaveArguments, "Class_Initialize/Class_Terminate must not declare arguments"))
 		}
 	}
@@ -1329,7 +1437,14 @@ func (c *Compiler) parseClassMethodDeclaration(className string, isFunc bool, is
 	jumpOverBody := c.emitJump(OpJump)
 
 	entryPoint := len(c.bytecode)
-	c.constants[placeholder] = NewUserSub(entryPoint, len(params), c.locals.Count(), isFunc, byRefMask, nil)
+	c.constants[placeholder] = NewUserSubEx(entryPoint, len(paramResult.names), c.locals.Count(), isFunc, paramResult.byRefMask, paramResult.optionalMask, paramResult.paramArrayIdx, nil)
+
+	// Store default value constant indices for Optional parameters.
+	if len(paramResult.defaults) > 0 {
+		defaults := make([]int, len(paramResult.defaults))
+		copy(defaults, paramResult.defaults)
+		c.funcParamDefaults[entryPoint] = defaults
+	}
 
 	prevIsLocal := c.isLocal
 	prevLocals := c.locals
@@ -1354,7 +1469,7 @@ func (c *Compiler) parseClassMethodDeclaration(className string, isFunc bool, is
 		c.currentFunctionName = ""
 	}
 
-	for _, p := range params {
+	for _, p := range paramResult.names {
 		c.locals.Add(p)
 		c.declaredLocals[strings.ToLower(p)] = true
 	}
@@ -1401,7 +1516,7 @@ func (c *Compiler) parseClassMethodDeclaration(className string, isFunc bool, is
 		}
 	}
 
-	c.constants[placeholder] = NewUserSub(entryPoint, len(params), c.locals.Count(), isFunc, byRefMask, c.locals.names)
+	c.constants[placeholder] = NewUserSubEx(entryPoint, len(paramResult.names), c.locals.Count(), isFunc, paramResult.byRefMask, paramResult.optionalMask, paramResult.paramArrayIdx, c.locals.names)
 
 	if isFunc {
 		c.emit(OpGetLocal, returnIdx)
@@ -1473,9 +1588,9 @@ func (c *Compiler) parseClassPropertyDeclaration(className string, isPublic bool
 	}
 
 	propertyName := c.expectIdentifier()
-	params, byRefMaskProp := c.parseProcedureParameterNames()
+	paramResult := c.parseProcedureParameterNames()
 
-	if (accessorKind == classPropertyAccessorLet || accessorKind == classPropertyAccessorSet) && len(params) == 0 {
+	if (accessorKind == classPropertyAccessorLet || accessorKind == classPropertyAccessorSet) && len(paramResult.names) == 0 {
 		panic(c.vbCompileError(vbscript.PropertySetOrLetMustHaveArguments, "Property Let/Set requires one value parameter"))
 	}
 
@@ -1483,7 +1598,14 @@ func (c *Compiler) parseClassPropertyDeclaration(className string, isPublic bool
 	jumpOverBody := c.emitJump(OpJump)
 
 	entryPoint := len(c.bytecode)
-	c.constants[placeholder] = NewUserSub(entryPoint, len(params), c.locals.Count(), isFunction, byRefMaskProp, nil)
+	c.constants[placeholder] = NewUserSubEx(entryPoint, len(paramResult.names), c.locals.Count(), isFunction, paramResult.byRefMask, paramResult.optionalMask, paramResult.paramArrayIdx, nil)
+
+	// Store default value constant indices for Optional parameters.
+	if len(paramResult.defaults) > 0 {
+		defaults := make([]int, len(paramResult.defaults))
+		copy(defaults, paramResult.defaults)
+		c.funcParamDefaults[entryPoint] = defaults
+	}
 
 	prevIsLocal := c.isLocal
 	prevLocals := c.locals
@@ -1508,7 +1630,7 @@ func (c *Compiler) parseClassPropertyDeclaration(className string, isPublic bool
 		c.currentFunctionName = ""
 	}
 
-	for _, p := range params {
+	for _, p := range paramResult.names {
 		c.locals.Add(p)
 		c.declaredLocals[strings.ToLower(p)] = true
 	}
@@ -1541,7 +1663,7 @@ func (c *Compiler) parseClassPropertyDeclaration(className string, isPublic bool
 		c.expectKeyword(vbscript.KeywordProperty)
 	}
 
-	c.constants[placeholder] = NewUserSub(entryPoint, len(params), c.locals.Count(), isFunction, byRefMaskProp, c.locals.names)
+	c.constants[placeholder] = NewUserSubEx(entryPoint, len(paramResult.names), c.locals.Count(), isFunction, paramResult.byRefMask, paramResult.optionalMask, paramResult.paramArrayIdx, c.locals.names)
 
 	if isFunction {
 		c.emit(OpGetLocal, returnIdx)
@@ -1559,7 +1681,7 @@ func (c *Compiler) parseClassPropertyDeclaration(className string, isPublic bool
 		}
 	}
 
-	c.registerClassPropertyDeclaration(className, propertyName, isPublic, accessorKind, len(params), placeholder)
+	c.registerClassPropertyDeclaration(className, propertyName, isPublic, accessorKind, len(paramResult.names), placeholder)
 
 	classNameIdx := c.addConstant(NewString(className))
 	propertyNameIdx := c.addConstant(NewString(propertyName))
@@ -1569,22 +1691,22 @@ func (c *Compiler) parseClassPropertyDeclaration(className string, isPublic bool
 	}
 	switch accessorKind {
 	case classPropertyAccessorGet:
-		c.emit(OpRegisterClassPropertyGet, classNameIdx, propertyNameIdx, placeholder, len(params), isPublicOperand)
+		c.emit(OpRegisterClassPropertyGet, classNameIdx, propertyNameIdx, placeholder, len(paramResult.names), isPublicOperand)
 	case classPropertyAccessorLet:
-		c.emit(OpRegisterClassPropertyLet, classNameIdx, propertyNameIdx, placeholder, len(params), isPublicOperand)
+		c.emit(OpRegisterClassPropertyLet, classNameIdx, propertyNameIdx, placeholder, len(paramResult.names), isPublicOperand)
 	case classPropertyAccessorSet:
-		c.emit(OpRegisterClassPropertySet, classNameIdx, propertyNameIdx, placeholder, len(params), isPublicOperand)
+		c.emit(OpRegisterClassPropertySet, classNameIdx, propertyNameIdx, placeholder, len(paramResult.names), isPublicOperand)
 	}
 
 	if isDefaultMember {
 		defaultNameIdx := c.addConstant(NewString("__default__"))
 		switch accessorKind {
 		case classPropertyAccessorGet:
-			c.emit(OpRegisterClassPropertyGet, classNameIdx, defaultNameIdx, placeholder, len(params), isPublicOperand)
+			c.emit(OpRegisterClassPropertyGet, classNameIdx, defaultNameIdx, placeholder, len(paramResult.names), isPublicOperand)
 		case classPropertyAccessorLet:
-			c.emit(OpRegisterClassPropertyLet, classNameIdx, defaultNameIdx, placeholder, len(params), isPublicOperand)
+			c.emit(OpRegisterClassPropertyLet, classNameIdx, defaultNameIdx, placeholder, len(paramResult.names), isPublicOperand)
 		case classPropertyAccessorSet:
-			c.emit(OpRegisterClassPropertySet, classNameIdx, defaultNameIdx, placeholder, len(params), isPublicOperand)
+			c.emit(OpRegisterClassPropertySet, classNameIdx, defaultNameIdx, placeholder, len(paramResult.names), isPublicOperand)
 		}
 	}
 
@@ -2868,8 +2990,8 @@ func (c *Compiler) parseSubFunction(isFunc bool) {
 	}
 
 	name := c.expectIdentifier()
-	params, byRefMaskSub := c.parseProcedureParameterNames()
-	if isFunc && len(params) == 0 {
+	paramResult := c.parseProcedureParameterNames()
+	if isFunc && len(paramResult.names) == 0 {
 		c.globalZeroArgFuncs[strings.ToLower(name)] = true
 	}
 
@@ -2884,7 +3006,15 @@ func (c *Compiler) parseSubFunction(isFunc bool) {
 	jumpOverBody := c.emitJump(OpJump)
 
 	entryPoint := len(c.bytecode)
-	c.constants[placeholder] = NewUserSub(entryPoint, len(params), c.locals.Count(), isFunc, byRefMaskSub, nil)
+	c.constants[placeholder] = NewUserSubEx(entryPoint, len(paramResult.names), c.locals.Count(), isFunc, paramResult.byRefMask, paramResult.optionalMask, paramResult.paramArrayIdx, nil)
+
+	// Store default value constant indices for Optional parameters.
+	if len(paramResult.defaults) > 0 {
+		defaults := make([]int, len(paramResult.defaults))
+		copy(defaults, paramResult.defaults)
+		c.funcParamDefaults[entryPoint] = defaults
+	}
+
 	c.patchForwardCallSites(name, placeholder)
 
 	prevIsLocal := c.isLocal
@@ -2908,7 +3038,7 @@ func (c *Compiler) parseSubFunction(isFunc bool) {
 		c.currentFunctionName = ""
 	}
 
-	for _, p := range params {
+	for _, p := range paramResult.names {
 		c.locals.Add(p)
 		c.declaredLocals[strings.ToLower(p)] = true
 	}
@@ -2935,7 +3065,7 @@ func (c *Compiler) parseSubFunction(isFunc bool) {
 		c.expectKeyword(vbscript.KeywordSub)
 	}
 
-	c.constants[placeholder] = NewUserSub(entryPoint, len(params), c.locals.Count(), isFunc, byRefMaskSub, c.locals.names)
+	c.constants[placeholder] = NewUserSubEx(entryPoint, len(paramResult.names), c.locals.Count(), isFunc, paramResult.byRefMask, paramResult.optionalMask, paramResult.paramArrayIdx, c.locals.names)
 
 	if len(c.forwardLabelPatches) > 0 {
 		for label := range c.forwardLabelPatches {

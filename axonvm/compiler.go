@@ -172,6 +172,10 @@ type Compiler struct {
 	labelMap            map[string]int
 	forwardLabelPatches map[string][]int
 
+	// funcParamDefaults maps function entry point -> per-parameter constant pool indices
+	// for Optional parameter default values. -1 means no default for that parameter.
+	funcParamDefaults map[int][]int
+
 	lastEmittedType    ValueType
 	lastEmittedUDTName string
 }
@@ -553,6 +557,7 @@ func createCompiler(code string, mode vbscript.LexerMode) *Compiler {
 		activeVBSConstants:    make([]VBSConstant, 0, len(VBSConstants)),
 		labelMap:              make(map[string]int),
 		forwardLabelPatches:   make(map[string][]int),
+		funcParamDefaults:     make(map[int][]int),
 	}
 	c.activeVBSConstants = append(c.activeVBSConstants, VBSConstants...)
 

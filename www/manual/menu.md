@@ -57,6 +57,7 @@
 * ASP Modernization
     * [VB6 GoTo and Jumps](md/asp-modernization/goto-flow/overview.md)
     * [VB6 User-Defined Types (Phase 3)](md/asp-modernization/goto-flow/vb6-udt-phase3.md)
+    * [VB6 Advanced Procedure Signatures (Phase 4)](md/asp-modernization/goto-flow/advanced-procedure-signatures.md)
 * Libraries
     * [Object Overview](md/libraries/overview.md)
     * G3AXON Functions
