@@ -3714,7 +3714,8 @@ aspExecLoop:
 		case OpJSIn:
 			right := vm.pop()
 			left := vm.pop()
-			if right.Type == VTJSObject {
+			switch right.Type {
+			case VTJSObject:
 				key := vm.valueToString(left)
 				if obj, ok := vm.jsObjectItems[right.Num]; ok {
 					_, exists := obj[key]
@@ -3722,9 +3723,9 @@ aspExecLoop:
 				} else {
 					vm.push(NewBool(false))
 				}
-			} else if right.Type == VTJSProxy {
+			case VTJSProxy:
 				vm.push(NewBool(vm.jsProxyHas(right, vm.valueToString(left))))
-			} else {
+			default:
 				vm.push(NewBool(false))
 			}
 
@@ -8173,9 +8174,10 @@ func (vm *VM) coerceToDeclaredType(v Value, declaredType ValueType) (Value, erro
 			return Value{Type: VTBool, Num: boolVal}, nil
 		case VTString:
 			lower := strings.ToLower(strings.TrimSpace(v.Str))
-			if lower == "true" {
+			switch lower {
+			case "true":
 				return Value{Type: VTBool, Num: 1}, nil
-			} else if lower == "false" {
+			case "false":
 				return Value{Type: VTBool, Num: 0}, nil
 			}
 			return Value{}, fmt.Errorf("Type mismatch: cannot convert '%s' to Boolean", v.Str)

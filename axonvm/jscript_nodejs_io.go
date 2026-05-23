@@ -216,8 +216,8 @@ func (vm *VM) jsRequire(args []Value) Value {
 	}
 
 	resolved := strings.ToLower(moduleName)
-	if strings.HasPrefix(resolved, "node:") {
-		resolved = strings.TrimPrefix(resolved, "node:")
+	if after, ok := strings.CutPrefix(resolved, "node:"); ok {
+		resolved = after
 	}
 
 	switch resolved {
@@ -561,18 +561,18 @@ func (vm *VM) jsHandleAsyncFSReadResult(result jsAsyncFSReadResult) {
 
 		if result.errMsg != "" {
 			errVal := vm.jsCreateErrorObject("Error", result.errMsg)
-			vm.jsCall(result.callback, Value{Type: VTJSUndefined}, []Value{errVal, Value{Type: VTJSUndefined}})
+			vm.jsCall(result.callback, Value{Type: VTJSUndefined}, []Value{errVal, {Type: VTJSUndefined}})
 			return
 		}
 
 		val, ok := vm.jsNodeFSBytesToValue(result.data, result.encoding)
 		if !ok {
 			errVal := vm.jsCreateErrorObject("TypeError", "Unsupported encoding: "+result.encoding)
-			vm.jsCall(result.callback, Value{Type: VTJSUndefined}, []Value{errVal, Value{Type: VTJSUndefined}})
+			vm.jsCall(result.callback, Value{Type: VTJSUndefined}, []Value{errVal, {Type: VTJSUndefined}})
 			return
 		}
 
-		vm.jsCall(result.callback, Value{Type: VTJSUndefined}, []Value{Value{Type: VTNull}, val})
+		vm.jsCall(result.callback, Value{Type: VTJSUndefined}, []Value{{Type: VTNull}, val})
 	})
 }
 
@@ -648,7 +648,7 @@ func (vm *VM) jsCallFSMethod(methodName string, args []Value) (Value, bool) {
 		if !vm.jsQueueAsyncFSRead(resolved, encoding, callback, true, Value{Type: VTJSUndefined}, false) {
 			vm.jsEnqueueMicrotask(func() {
 				errVal := vm.jsCreateErrorObject("Error", "fs.readFile async queue is full")
-				vm.jsCall(callback, Value{Type: VTJSUndefined}, []Value{errVal, Value{Type: VTJSUndefined}})
+				vm.jsCall(callback, Value{Type: VTJSUndefined}, []Value{errVal, {Type: VTJSUndefined}})
 			})
 		}
 
