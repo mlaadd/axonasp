@@ -301,6 +301,7 @@ type CompiledClassDecl struct {
 	Methods    []CompiledClassMethodDecl
 	Properties []CompiledClassPropertyDecl
 	Events     []CompiledClassEventDecl
+	Interfaces []string
 }
 
 // CompiledClassFieldDecl stores one compiled class field metadata entry.
@@ -387,6 +388,19 @@ func (c *Compiler) addClassEventDeclaration(className string, event CompiledClas
 		return
 	}
 	c.classDecls[classIdx].Events = append(c.classDecls[classIdx].Events, event)
+}
+
+// addClassInterface attaches one interface name to one class declaration.
+func (c *Compiler) addClassInterface(className string, interfaceName string) {
+	if c == nil {
+		return
+	}
+	lowerClassName := strings.ToLower(strings.TrimSpace(className))
+	classIdx, exists := c.classDeclLookup[lowerClassName]
+	if !exists || classIdx < 0 || classIdx >= len(c.classDecls) {
+		return
+	}
+	c.classDecls[classIdx].Interfaces = append(c.classDecls[classIdx].Interfaces, interfaceName)
 }
 
 // hasClassEventDeclaration reports whether one class event is known in compile metadata.
@@ -1700,6 +1714,18 @@ func (c *Compiler) GlobalVarTypes() map[string]ValueType {
 	return out
 }
 
+// GlobalRecordTypes returns a copy of the declared UDT/Class names for global variables.
+func (c *Compiler) GlobalRecordTypes() map[string]string {
+	if c == nil {
+		return nil
+	}
+	out := make(map[string]string, len(c.globalRecordTypes))
+	for k, v := range c.globalRecordTypes {
+		out[k] = v
+	}
+	return out
+}
+
 // LocalVarTypes returns a copy of the VB6 As Type declarations for local variables.
 func (c *Compiler) LocalVarTypes() map[string]ValueType {
 	if c == nil {
@@ -1707,6 +1733,18 @@ func (c *Compiler) LocalVarTypes() map[string]ValueType {
 	}
 	out := make(map[string]ValueType, len(c.localVarTypes))
 	for k, v := range c.localVarTypes {
+		out[k] = v
+	}
+	return out
+}
+
+// LocalRecordTypes returns a copy of the declared UDT/Class names for local variables.
+func (c *Compiler) LocalRecordTypes() map[string]string {
+	if c == nil {
+		return nil
+	}
+	out := make(map[string]string, len(c.localRecordTypes))
+	for k, v := range c.localRecordTypes {
 		out[k] = v
 	}
 	return out

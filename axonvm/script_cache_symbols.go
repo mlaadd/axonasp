@@ -119,15 +119,27 @@ func buildCachedProgramFromCompiler(compiler *Compiler) CachedProgram {
 
 	// Build the VB6 As Type global type declarations list.
 	var globalTypeNames []string
+	var globalClassNames []string
 	if len(compiler.globalVarTypes) > 0 {
 		globalTypeNames = make([]string, 0, len(compiler.globalVarTypes))
 		for name, t := range compiler.globalVarTypes {
 			if t != VTEmpty {
 				globalTypeNames = append(globalTypeNames, name+":"+strconv.Itoa(int(t)))
+				if t == VTObject || t == VTRecord {
+					if className, ok := compiler.globalRecordTypes[name]; ok {
+						globalClassNames = append(globalClassNames, name+":"+className)
+					}
+				}
 			}
 		}
 	}
 
+	// Capture local variable types from function signatures.
+	// Since compiler.localVarTypes contains ALL locals from all functions combined,
+	// we need to use a different strategy or just store it as is if we can resolve it.
+	// Wait! VM.applyLocalVarTypes already handles this by scanning constants.
+	// So we just need to provide the maps.
+	
 	program := CachedProgram{
 		Bytecode:            cloneBytecode(compiler.Bytecode()),
 		Constants:           cloneValueSlice(compiler.Constants()),
@@ -143,6 +155,9 @@ func buildCachedProgramFromCompiler(compiler *Compiler) CachedProgram {
 		UserConstGlobals:    filterNamesByFlagSet(compiler.constGlobals, users),
 		GlobalZeroArgFuncs:  sortedTrueKeys(compiler.globalZeroArgFuncs),
 		GlobalTypeNames:     globalTypeNames,
+		GlobalClassNames:    globalClassNames,
+		LocalVarTypes:       compiler.LocalVarTypes(),
+		LocalClassTypes:     compiler.LocalRecordTypes(),
 		FuncParamDefaults:   cloneFuncParamDefaultsMap(compiler.funcParamDefaults),
 		IncludeDependencies: compiler.IncludeDependencies(),
 		RecordDecls:         cloneRecordDeclSlice(compiler.recordDecls),
@@ -299,6 +314,31 @@ func applyProgramGlobalMetadata(vm *VM, program CachedProgram) {
 					}
 					if idx < len(vm.Globals) {
 						vm.Globals[idx] = vm.zeroValueForType(declaredType)
+					}
+					break
+				}
+			}
+		}
+	}
+
+	// Apply VB6 Class/Interface names for global variables.
+	if len(program.GlobalClassNames) > 0 {
+		for i := range program.GlobalClassNames {
+			entry := program.GlobalClassNames[i]
+			colonIdx := strings.LastIndex(entry, ":")
+			if colonIdx < 1 || colonIdx >= len(entry)-1 {
+				continue
+			}
+			varName := entry[:colonIdx]
+			className := entry[colonIdx+1:]
+			lower := strings.ToLower(varName)
+			for idx, gname := range vm.globalNames {
+				if strings.EqualFold(gname, lower) {
+					if idx < len(vm.Globals) {
+						vm.Globals[idx].Interface = className
+					}
+					if vm.globalClassTypes != nil {
+						vm.globalClassTypes[uint16(idx)] = className
 					}
 					break
 				}

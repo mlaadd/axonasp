@@ -556,6 +556,9 @@ const (
 	// ExtOpWithEventsRegister registers a WithEvents binding for a variable in a class.
 	// [OpExtPrefix, ExtOpWithEventsRegister, ClassNameIdxHigh, ClassNameIdxLow, VarNameIdxHigh, VarNameIdxLow]
 	ExtOpWithEventsRegister
+	// ExtOpRegisterClassInterface registers an interface implemented by a class.
+	// [OpExtPrefix, ExtOpRegisterClassInterface, ClassNameIdxHigh, ClassNameIdxLow, InterfaceNameIdxHigh, InterfaceNameIdxLow]
+	ExtOpRegisterClassInterface
 )
 
 func (op OpCode) String() string {
@@ -1063,6 +1066,8 @@ func (op ExtOpCode) String() string {
 		return "ExtOpRaiseEvent"
 	case ExtOpWithEventsRegister:
 		return "ExtOpWithEventsRegister"
+	case ExtOpRegisterClassInterface:
+		return "ExtOpRegisterClassInterface"
 	default:
 		return "ExtOpUnknown"
 	}

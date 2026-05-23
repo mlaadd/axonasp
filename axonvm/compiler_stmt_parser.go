@@ -2149,7 +2149,7 @@ func (c *Compiler) matchAsKeyword() bool {
 	}
 }
 
-// parseAsTypeClause checks for an optional "As Type" clause and returns the declared type and UDT name if applicable.
+// parseAsTypeClause checks for an optional "As Type" clause and returns the declared type and UDT/Class name if applicable.
 func (c *Compiler) parseAsTypeClause() (ValueType, string) {
 	if !c.matchAsKeyword() {
 		return VTEmpty, "" // No type declared = Variant
@@ -2164,7 +2164,10 @@ func (c *Compiler) parseAsTypeClause() (ValueType, string) {
 	if _, exists := c.recordDeclLookup[strings.ToLower(typeName)]; exists {
 		return VTRecord, typeName
 	}
-	panic(c.vbCompileError(vbscript.SyntaxError, fmt.Sprintf("Invalid type name '%s' in As clause. Expected Integer, Long, Single, Double, String, Boolean, Byte, Object, Variant, or a User-Defined Type.", typeName)))
+	// Phase 5: Support Classes/Interfaces in As clause.
+	// Since we are single-pass, we might not have all classes declared yet.
+	// We'll treat any other identifier as an Object type (Class reference).
+	return VTObject, typeName
 }
 
 // emitTypedInit records a VB6 As Type declaration for a variable in the compiler's type maps.
@@ -2185,17 +2188,17 @@ func (c *Compiler) emitTypedInit(name string, declaredType ValueType, udtName st
 
 	if isStatic {
 		c.globalVarTypes[globalName] = declaredType
-		if declaredType == VTRecord {
-			c.globalRecordTypes[globalName] = udtName
+		if declaredType == VTRecord || declaredType == VTObject {
+			c.globalRecordTypes[globalName] = udtName // We reuse globalRecordTypes to store Class name for VTObject
 		}
 	} else if c.isLocal {
 		c.localVarTypes[lower] = declaredType
-		if declaredType == VTRecord {
+		if declaredType == VTRecord || declaredType == VTObject {
 			c.localRecordTypes[lower] = udtName
 		}
 	} else {
 		c.globalVarTypes[lower] = declaredType
-		if declaredType == VTRecord {
+		if declaredType == VTRecord || declaredType == VTObject {
 			c.globalRecordTypes[lower] = udtName
 		}
 	}
@@ -3732,4 +3735,16 @@ func (c *Compiler) parseRaiseEventStatement() {
 
 	eventNameIdx := c.addConstant(NewString(eventName))
 	c.emitExt(ExtOpRaiseEvent, eventNameIdx, argCount)
+}
+
+// parseImplementsStatement parses an Implements statement within a Class.
+func (c *Compiler) parseImplementsStatement(className string) {
+	c.expectKeyword(vbscript.KeywordImplements)
+	interfaceName := c.expectIdentifier()
+
+	c.addClassInterface(className, interfaceName)
+
+	classNameIdx := c.addConstant(NewString(className))
+	interfaceNameIdx := c.addConstant(NewString(interfaceName))
+	c.emitExt(ExtOpRegisterClassInterface, classNameIdx, interfaceNameIdx)
 }

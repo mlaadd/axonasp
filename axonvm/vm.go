@@ -258,6 +258,7 @@ type RuntimeClassDef struct {
 	Methods    map[string]RuntimeClassMethodDef
 	Properties map[string]RuntimeClassPropertyDef
 	Events     map[string]bool
+	Interfaces []string
 }
 
 // EventObserver represents one registered event handler.
@@ -458,13 +459,17 @@ type VM struct {
 	// globalTypes stores the declared VB6 type (if any) for each global slot.
 	// 0 (VTEmpty) = no declared type (Variant). Non-zero = declared type for type enforcement.
 	globalTypes []ValueType
+	// globalClassTypes stores the declared Class/Interface name for global VTObject slots.
+	globalClassTypes map[uint16]string
 	// globalWithEvents stores the indices of global variables declared WithEvents.
 	globalWithEvents map[uint16]bool
 	// funcLocalTypes maps function entry point bytecode offsets to local variable type
 	// declarations for VB6 As Type support. The inner map key is the local slot offset,
 	// the value is the declared ValueType (VTEmpty = Variant/no constraint).
 	funcLocalTypes map[int]map[int]ValueType
-	callStack      []CallFrame
+	// funcLocalClassTypes maps function entry point to local slot Class/Interface names.
+	funcLocalClassTypes map[int]map[int]string
+	callStack           []CallFrame
 	jsCallStack    []jsCallFrame
 	// withStack holds the subject object for each active With...End With block.
 	// OpWithEnter appends, OpWithLeave shrinks, OpWithLoad peeks at the top.
@@ -566,7 +571,10 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		constants:                      constants,
 		Globals:                        make([]Value, globalCount),
 		globalTypes:                    make([]ValueType, globalCount),
+		globalClassTypes:               make(map[uint16]string),
 		globalWithEvents:               make(map[uint16]bool),
+		funcLocalTypes:                 make(map[int]map[int]ValueType),
+		funcLocalClassTypes:            make(map[int]map[int]string),
 		stack:                          make([]Value, StackSize),
 		sp:                             -1,
 		stmtSP:                         -1,
@@ -717,7 +725,6 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		runtimeClasses:     make(map[string]RuntimeClassDef),
 		runtimeClassItems:  make(map[int64]*RuntimeClassInstance),
 		classInstanceOrder: make([]int64, 0, 16),
-		funcLocalTypes:     make(map[int]map[int]ValueType),
 		callStack:          make([]CallFrame, 0, 16),
 		jsCallStack:        make([]jsCallFrame, 0, 16),
 		jsTryStack:         make([]int, 0, 8),
@@ -801,7 +808,7 @@ func NewVMFromCompiler(compiler *Compiler) *VM {
 		vm.constGlobals[key] = value
 	}
 	// Apply VB6 As Type declarations for global variables.
-	vm.applyGlobalVarTypes(compiler.GlobalVarTypes())
+	vm.applyGlobalVarTypes(compiler.GlobalVarTypes(), compiler.GlobalRecordTypes())
 	// Apply VB6 As Type declarations for local variables (function-scoped).
 	vm.applyLocalVarTypes(compiler)
 
@@ -1741,7 +1748,13 @@ aspExecLoop:
 		case OpGetGlobal:
 			idx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
 			vm.ip += 2
-			vm.push(vm.Globals[idx])
+			val := vm.Globals[idx]
+			if val.Type == VTObject {
+				if className, ok := vm.globalClassTypes[idx]; ok {
+					val.Interface = className
+				}
+			}
+			vm.push(val)
 
 		case OpSetGlobal:
 			idx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
@@ -1757,6 +1770,12 @@ aspExecLoop:
 					}
 				}
 				newVal = coerced
+				// Phase 5: Preserve Interface name from global metadata.
+				if newVal.Type == VTObject {
+					if className, ok := vm.globalClassTypes[idx]; ok {
+						newVal.Interface = className
+					}
+				}
 			}
 
 			// Phase 4: WithEvents binding
@@ -1889,6 +1908,16 @@ aspExecLoop:
 					}
 				}
 				newVal = coerced
+				// Phase 5: Preserve Interface name from local metadata.
+				if newVal.Type == VTObject {
+					if vm.funcLocalClassTypes != nil {
+						if frame, ok := vm.funcLocalClassTypes[vm.getCurrentFuncEntryPoint()]; ok {
+							if className, ok2 := frame[int(offset)]; ok2 {
+								newVal.Interface = className
+							}
+						}
+					}
+				}
 			}
 			// Decrement reference count only for object slots to avoid hot-path call overhead.
 			if vm.stack[slot].Type == VTObject {
@@ -1966,9 +1995,19 @@ aspExecLoop:
 			vm.push(v)
 
 		case OpGetLocal:
-			offset := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+			idx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
 			vm.ip += 2
-			vm.push(vm.stack[vm.fp+int(offset)])
+			val := vm.stack[vm.fp+int(idx)]
+			if val.Type == VTObject {
+				if vm.funcLocalClassTypes != nil {
+					if frame, ok := vm.funcLocalClassTypes[vm.getCurrentFuncEntryPoint()]; ok {
+						if className, ok2 := frame[int(idx)]; ok2 {
+							val.Interface = className
+						}
+					}
+				}
+			}
+			vm.push(val)
 
 		case OpSetLocal:
 			offset := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
@@ -1985,6 +2024,16 @@ aspExecLoop:
 					}
 				}
 				newVal = coerced
+				// Phase 5: Preserve Interface name from local metadata.
+				if newVal.Type == VTObject {
+					if vm.funcLocalClassTypes != nil {
+						if frame, ok := vm.funcLocalClassTypes[vm.getCurrentFuncEntryPoint()]; ok {
+							if className, ok2 := frame[int(offset)]; ok2 {
+								newVal.Interface = className
+							}
+						}
+					}
+				}
 			}
 			// Decrement reference count only for object slots to avoid hot-path call overhead.
 			if vm.stack[slot].Type == VTObject {
@@ -2013,6 +2062,12 @@ aspExecLoop:
 						continue
 					}
 					newVal = coerced
+					// Phase 5: Preserve Interface name from global metadata.
+					if newVal.Type == VTObject {
+						if className, ok := vm.globalClassTypes[destIdx]; ok {
+							newVal.Interface = className
+						}
+					}
 				}
 				if vm.Globals[destIdx].Type == VTObject {
 					vm.decrementObjectRefCount(vm.Globals[destIdx])
@@ -2030,6 +2085,16 @@ aspExecLoop:
 						continue
 					}
 					newVal = coerced
+					// Phase 5: Preserve Interface name from local metadata.
+					if newVal.Type == VTObject {
+						if vm.funcLocalClassTypes != nil {
+							if frame, ok := vm.funcLocalClassTypes[vm.getCurrentFuncEntryPoint()]; ok {
+								if className, ok2 := frame[int(destIdx)]; ok2 {
+									newVal.Interface = className
+								}
+							}
+						}
+					}
 				}
 				if vm.stack[slot].Type == VTObject {
 					vm.decrementObjectRefCount(vm.stack[slot])
@@ -2853,7 +2918,11 @@ aspExecLoop:
 					continue
 				}
 				requirePublic := target.Num != vm.activeClassObjectID
-				methodTarget, ok := vm.resolveRuntimeClassMethod(target, vm.constants[memberIdx].Str, requirePublic)
+				methodName := vm.constants[memberIdx].Str
+				if target.Interface != "" {
+					methodName = target.Interface + "_" + methodName
+				}
+				methodTarget, ok := vm.resolveRuntimeClassMethod(target, methodName, requirePublic)
 				if ok {
 					if cacheID == 0 {
 						cacheID = vm.allocateCallMemberIC(callMemberICEntry{
@@ -2875,7 +2944,11 @@ aspExecLoop:
 						continue
 					}
 				}
-				propertyTarget, ok := vm.resolveRuntimeClassPropertyGet(target, vm.constants[memberIdx].Str, argCount, requirePublic)
+				propertyName := vm.constants[memberIdx].Str
+				if target.Interface != "" {
+					propertyName = target.Interface + "_" + propertyName
+				}
+				propertyTarget, ok := vm.resolveRuntimeClassPropertyGet(target, propertyName, argCount, requirePublic)
 				if ok {
 					if cacheID == 0 {
 						cacheID = vm.allocateCallMemberIC(callMemberICEntry{
@@ -2980,18 +3053,22 @@ aspExecLoop:
 					continue
 				}
 				requirePublic := target.Num != vm.activeClassObjectID
-				propertyTarget, ok := vm.resolveRuntimeClassPropertyGet(target, member.String(), 0, requirePublic)
+				memberName := member.String()
+				if target.Interface != "" {
+					memberName = target.Interface + "_" + memberName
+				}
+				propertyTarget, ok := vm.resolveRuntimeClassPropertyGet(target, memberName, 0, requirePublic)
 				if ok {
 					if vm.beginUserSubCall(propertyTarget, nil, false, target.Num) {
 						continue
 					}
 				}
-				fieldValue, ok := vm.resolveRuntimeClassField(target, member.String(), requirePublic)
+				fieldValue, ok := vm.resolveRuntimeClassField(target, memberName, requirePublic)
 				if ok {
 					vm.push(fieldValue)
 					continue
 				}
-				methodTarget, ok := vm.resolveRuntimeClassMethod(target, member.String(), requirePublic)
+				methodTarget, ok := vm.resolveRuntimeClassMethod(target, memberName, requirePublic)
 				if ok {
 					if vm.beginUserSubCall(methodTarget, nil, false, target.Num) {
 						continue
@@ -3127,6 +3204,17 @@ aspExecLoop:
 				varName := vm.constants[varNameIdx].Str
 				vm.handleWithEventsRegister(className, varName)
 
+			case ExtOpRegisterClassInterface:
+				classNameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])
+				interfaceNameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip+2:])
+				vm.ip += 4
+				className := vm.constants[classNameIdx].Str
+				interfaceName := vm.constants[interfaceNameIdx].Str
+				if def, ok := vm.runtimeClasses[strings.ToLower(className)]; ok {
+					def.Interfaces = append(def.Interfaces, interfaceName)
+					vm.runtimeClasses[strings.ToLower(className)] = def
+				}
+
 			case ExtOpJSMathSin:
 				vm.ip += 2
 				vm.push(NewDouble(math.Sin(vm.jsToNumber(vm.pop()).Flt)))
@@ -3195,13 +3283,17 @@ aspExecLoop:
 				requirePublic := target.Num != vm.activeClassObjectID
 				preferSet := op == OpMemberSetSet || value.Type == VTObject || value.Type == VTNativeObject
 				strictSet := op == OpMemberSetSet
-				propertyTarget, ok := vm.resolveRuntimeClassPropertySet(target, vm.constants[memberIdx].Str, 1, preferSet, strictSet, requirePublic)
+				memberName := vm.constants[memberIdx].Str
+				if target.Interface != "" {
+					memberName = target.Interface + "_" + memberName
+				}
+				propertyTarget, ok := vm.resolveRuntimeClassPropertySet(target, memberName, 1, preferSet, strictSet, requirePublic)
 				if ok {
 					if vm.beginUserSubCall(propertyTarget, []Value{value}, true, target.Num) {
 						continue
 					}
 				}
-				if vm.assignRuntimeClassField(target, vm.constants[memberIdx].Str, value, requirePublic) {
+				if vm.assignRuntimeClassField(target, memberName, value, requirePublic) {
 					continue
 				}
 				vm.raise(vbscript.WrongNumberOfParameters, "Wrong number of parameters or invalid property assignment")
@@ -7656,6 +7748,18 @@ func (vm *VM) registerRuntimeClassPropertyAccessor(op OpCode, className string, 
 	vm.bumpRuntimeClassVersion()
 }
 
+// getCurrentFuncEntryPoint returns the bytecode offset of the first instruction in the current procedure.
+func (vm *VM) getCurrentFuncEntryPoint() int {
+	if len(vm.callStack) == 0 {
+		return 0
+	}
+	callee := vm.callStack[len(vm.callStack)-1].callee
+	if callee.Type == VTUserSub {
+		return int(callee.Num)
+	}
+	return 0
+}
+
 // resolveRuntimeClassMethod resolves one class method target by object instance and method name.
 func (vm *VM) resolveRuntimeClassMethod(target Value, methodName string, requirePublic bool) (Value, bool) {
 	if target.Type != VTObject {
@@ -7669,14 +7773,26 @@ func (vm *VM) resolveRuntimeClassMethod(target Value, methodName string, require
 	if !exists || classDef.Methods == nil {
 		return Value{Type: VTEmpty}, false
 	}
-	methodDef, exists := classDef.Methods[strings.ToLower(strings.TrimSpace(methodName))]
-	if !exists {
-		return Value{Type: VTEmpty}, false
+
+	lowerMethodName := strings.ToLower(strings.TrimSpace(methodName))
+	methodDef, exists := classDef.Methods[lowerMethodName]
+	if exists {
+		if requirePublic && !methodDef.IsPublic {
+			return Value{Type: VTEmpty}, false
+		}
+		return methodDef.Target, true
 	}
-	if requirePublic && !methodDef.IsPublic {
-		return Value{Type: VTEmpty}, false
+
+	// Phase 5: Interface Polymorphism
+	// If the method is not found directly, check for InterfaceName_MethodName.
+	for _, interfaceName := range classDef.Interfaces {
+		interfaceMethodName := strings.ToLower(interfaceName + "_" + methodName)
+		if methodDef, exists := classDef.Methods[interfaceMethodName]; exists {
+			return methodDef.Target, true
+		}
 	}
-	return methodDef.Target, true
+
+	return Value{Type: VTEmpty}, false
 }
 
 // getActiveClassMemberValue reads one member from the currently executing class instance.
@@ -8382,14 +8498,19 @@ func (vm *VM) pop() Value {
 }
 
 // applyLocalVarTypes applies VB6 As Type declarations from the compiler to the VM's
-// funcLocalTypes map. It scans each VTUserSub constant, matches its local variable names
-// against the compiler's localVarTypes map, and stores the resulting slot-to-type mapping.
+// funcLocalTypes map.
 func (vm *VM) applyLocalVarTypes(compiler *Compiler) {
-	if vm == nil || compiler == nil || vm.funcLocalTypes == nil {
+	if vm == nil || compiler == nil {
 		return
 	}
-	localVarTypes := compiler.LocalVarTypes()
-	if len(localVarTypes) == 0 {
+	vm.applyLocalVarTypesFromMaps(compiler.LocalVarTypes(), compiler.LocalRecordTypes())
+}
+
+// applyLocalVarTypesFromMaps applies VB6 As Type declarations from provided maps to the VM's
+// funcLocalTypes and funcLocalClassTypes maps. It scans each VTUserSub constant, matches its 
+// local variable names against the maps, and stores the resulting slot-to-type mapping.
+func (vm *VM) applyLocalVarTypesFromMaps(localVarTypes map[string]ValueType, localClassTypes map[string]string) {
+	if vm == nil || vm.funcLocalTypes == nil || len(localVarTypes) == 0 {
 		return
 	}
 	// Scan constants for VTUserSub entries to find function entry points and their local names.
@@ -8403,21 +8524,33 @@ func (vm *VM) applyLocalVarTypes(compiler *Compiler) {
 			continue
 		}
 		slotTypes := make(map[int]ValueType)
+		slotClassTypes := make(map[int]string)
 		for offset, name := range localNames {
 			lower := strings.ToLower(name)
 			if declaredType, exists := localVarTypes[lower]; exists && declaredType != VTEmpty {
 				slotTypes[offset] = declaredType
+				if declaredType == VTObject || declaredType == VTRecord {
+					if className, ok := localClassTypes[lower]; ok {
+						slotClassTypes[offset] = className
+					}
+				}
 			}
 		}
 		if len(slotTypes) > 0 {
 			vm.funcLocalTypes[entryPoint] = slotTypes
+		}
+		if len(slotClassTypes) > 0 {
+			if vm.funcLocalClassTypes == nil {
+				vm.funcLocalClassTypes = make(map[int]map[int]string)
+			}
+			vm.funcLocalClassTypes[entryPoint] = slotClassTypes
 		}
 	}
 }
 
 // applyGlobalVarTypes applies VB6 As Type declarations to the VM's global variable slots.
 // Called during VM initialization from compiler metadata.
-func (vm *VM) applyGlobalVarTypes(globalTypes map[string]ValueType) {
+func (vm *VM) applyGlobalVarTypes(globalTypes map[string]ValueType, globalClassTypes map[string]string) {
 	if vm == nil || len(globalTypes) == 0 {
 		return
 	}
@@ -8431,9 +8564,17 @@ func (vm *VM) applyGlobalVarTypes(globalTypes map[string]ValueType) {
 			if strings.EqualFold(gname, lower) {
 				if idx < len(vm.globalTypes) {
 					vm.globalTypes[idx] = declaredType
+					if declaredType == VTObject || declaredType == VTRecord {
+						if className, ok := globalClassTypes[lower]; ok {
+							vm.globalClassTypes[uint16(idx)] = className
+						}
+					}
 				}
 				if idx < len(vm.Globals) {
 					vm.Globals[idx] = vm.zeroValueForType(declaredType)
+					if declaredType == VTObject {
+						vm.Globals[idx].Interface = globalClassTypes[lower]
+					}
 				}
 				break
 			}
@@ -8551,6 +8692,20 @@ func (vm *VM) coerceToDeclaredType(v Value, declaredType ValueType) (Value, erro
 
 	case VTObject:
 		if v.Type == VTObject || v.Type == VTNativeObject || v.Type == VTNothing {
+			// Phase 5: Preserve or set Interface name from the variable's declared class/interface.
+			// We store the class name in the Value struct to route calls correctly.
+			// This is especially important for local variables and class members.
+			if v.Type == VTObject {
+				// We don't overwrite if it already has one? No, we SHOULD use the
+				// declared type of the variable to enforce interface-based calling.
+				// In VB6, if you do 'Dim x As IAnimal: Set x = New Dog',
+				// calls through 'x' are routed to IAnimal_XXX.
+				// But we need to know the interface name.
+				// For globals/locals, it's in vm.globalClassTypes / vm.funcLocalClassTypes.
+				// But coerceToDeclaredType doesn't know WHICH slot it's assigning to.
+				// Wait, the caller (OpSetGlobal/OpSetLocal) knows.
+				// I'll handle .Interface setting in the opcodes instead.
+			}
 			return v, nil
 		}
 		return Value{}, fmt.Errorf("Type mismatch: cannot convert to Object")

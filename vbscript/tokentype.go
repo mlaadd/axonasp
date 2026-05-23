@@ -168,6 +168,7 @@ const (
 	KeywordEvent
 	KeywordRaiseEvent
 	KeywordWithEvents
+	KeywordImplements
 	KeywordMe
 )
 

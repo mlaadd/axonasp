@@ -118,6 +118,11 @@ type CachedProgram struct {
 	// ExtOpInitRecord/ExtOpGetRecordMember/ExtOpSetRecordMember in cached VM startup paths.
 	RecordDecls      []CompiledRecordDecl
 	RecordDeclLookup map[string]int
+
+	// Phase 5: Interface/Class tracking for typed variables.
+	GlobalClassNames    []string            // "name:classname"
+	LocalVarTypes       map[string]ValueType
+	LocalClassTypes     map[string]string
 }
 
 // cachedProgramBinaryPayload stores the serialized disk representation.
@@ -1072,6 +1077,7 @@ func NewVMFromCachedProgram(program CachedProgram) *VM {
 	for k, v := range program.RecordDeclLookup {
 		vm.RecordDeclLookup[k] = v
 	}
+	vm.applyLocalVarTypesFromMaps(program.LocalVarTypes, program.LocalClassTypes)
 	vm.captureBaseProgramState()
 	return vm
 }
