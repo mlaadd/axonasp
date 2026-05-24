@@ -186,6 +186,79 @@ func TestVMResponseCookiesMultiArgExpression(t *testing.T) {
 	}
 }
 
+// TestVMResponseCookiesChainedPropertyAssignment verifies that
+// Response.Cookies("name").Property = value compiles and executes correctly.
+// This regression test covers the chained member assignment pattern in statement
+// context (obj.Method(args).Prop = value) which previously failed with
+// "Variable not defined: 'Expires'" due to the compiler discarding the call
+// result before parsing the chained property set.
+func TestVMResponseCookiesChainedPropertyAssignment(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{
+			name:     "expires property set",
+			source:   `<% Response.Cookies("ck") = "val" : Response.Cookies("ck").Expires = "Wed, 21 Oct 2015 07:28:00 GMT" %><%= Response.Cookies("ck", "Expires") %>`,
+			expected: "Wed, 21 Oct 2015 07:28:00 GMT",
+		},
+		{
+			name:     "domain property set",
+			source:   `<% Response.Cookies("ck") = "val" : Response.Cookies("ck").Domain = "example.com" %><%= Response.Cookies("ck", "Domain") %>`,
+			expected: "example.com",
+		},
+		{
+			name:     "path property set",
+			source:   `<% Response.Cookies("ck") = "val" : Response.Cookies("ck").Path = "/app" %><%= Response.Cookies("ck", "Path") %>`,
+			expected: "/app",
+		},
+		{
+			name:     "secure property set",
+			source:   `<% Response.Cookies("ck") = "val" : Response.Cookies("ck").Secure = True %><%= Response.Cookies("ck", "Secure") %>`,
+			expected: "True",
+		},
+		{
+			name:     "httponly property set",
+			source:   `<% Response.Cookies("ck") = "val" : Response.Cookies("ck").HttpOnly = True %><%= Response.Cookies("ck", "HttpOnly") %>`,
+			expected: "True",
+		},
+		{
+			name:     "chained after two-arg call",
+			source:   `<% Response.Cookies("ck", "val1") : Response.Cookies("ck").Path = "/test" %><%= Response.Cookies("ck", "Path") %>`,
+			expected: "/test",
+		},
+		{
+			name:     "multiple chained properties",
+			source:   `<% Response.Cookies("ck") = "val" : Response.Cookies("ck").Domain = "test.com" : Response.Cookies("ck").Path = "/x" : Response.Cookies("ck").Secure = True %><%= Response.Cookies("ck", "Domain") %>|<%= Response.Cookies("ck", "Path") %>|<%= Response.Cookies("ck", "Secure") %>`,
+			expected: "test.com|/x|True",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			compiler := NewASPCompiler(tt.source)
+			if err := compiler.Compile(); err != nil {
+				t.Fatalf("compile failed: %v", err)
+			}
+
+			vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+			host := NewMockHost()
+			var output bytes.Buffer
+			host.SetOutput(&output)
+			vm.SetHost(host)
+
+			if err := vm.Run(); err != nil {
+				t.Fatalf("vm run failed: %v", err)
+			}
+
+			if output.String() != tt.expected {
+				t.Fatalf("unexpected output:\nexpected: %q\nactual:   %q", tt.expected, output.String())
+			}
+		})
+	}
+}
+
 // TestVMResponseBinaryWritePreservesVBByteString verifies BinaryWrite preserves raw VB byte-string payloads.
 func TestVMResponseBinaryWritePreservesVBByteString(t *testing.T) {
 	vm := NewVM(nil, nil, 5)

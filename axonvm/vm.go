@@ -7275,6 +7275,12 @@ func (vm *VM) dispatchMemberSet(objID int64, member string, val Value) {
 		return
 	}
 
+	// Dynamic native objects: Response cookie items
+	if cookieName, exists := vm.responseCookieItems[objID]; exists {
+		vm.host.Response().SetCookieProperty(cookieName, member, val.String())
+		return
+	}
+
 	// Dynamic native objects: G3MD
 	if g3mdObject, exists := vm.g3mdItems[objID]; exists {
 		g3mdObject.DispatchPropertySet(member, val)

@@ -567,6 +567,16 @@ func (c *Compiler) parseStatement() {
 					c.move() // Consume '='
 					c.parseExpression(PrecNone)
 					c.emit(OpArraySet, midx, argCount)
+				} else if dot, ok2 := c.next.(*vbscript.PunctuationToken); ok2 && dot.Type == vbscript.PunctDot {
+					// Chained member access after call: obj.Method(args).Prop = value
+					// or obj.Method(args).SubMethod(args). Calls parseStatementCallChain
+					// which handles .Prop = value (OpMemberSet), .SubMethod() (OpCallMember),
+					// .Prop (OpMemberGet) and terminates with OpPop if needed.
+					c.emit(OpCallMember, midx, argCount)
+					if c.parseStatementCallChain() {
+						return
+					}
+					c.emit(OpPop)
 				} else {
 					c.emit(OpCallMember, midx, argCount)
 					c.emit(OpPop)
