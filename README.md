@@ -20,10 +20,6 @@
 
 Welcome to **AxonASP 2.1**, the definitive, high-performance runtime for executing Microsoft Classic ASP and VBScript in GoLang. We didn't just update the engine; we completely reinvented it. 
 
-> [!NOTE]
-> **⚠️ Important Notice:** _AxonASP Version 1.0_ is completely **deprecated** and is not compatible with Version 2.0 or later. 
-> The architectural leaps we've made mean a clean break from the past to deliver the future of ASP.
-
 If you thought Classic ASP was dead, think again. AxonASP breathes raw power, modern infrastructure compatibility, and incredible new features into the language you know and love. It's time to realize the true potential of your applications!
 
 ---
@@ -35,10 +31,11 @@ We threw out the rulebook to achieve extreme performance improvements that will 
 *   **Zero AST, Pure Bytecode:** The new VBScript compiler is single-pass and emits bytecode directly to a highly optimized, stack-based Virtual Machine. By eliminating the Abstract Syntax Tree (AST), AxonASP executes scripts with virtually zero-allocation overhead. It is insanely fast and memory optimized.
 *   **IIS-Style VM Pooling & Advanced Caching:** We've implemented an advanced VM pool modeled perfectly after IIS, combined with aggressive script caching and `eval`/`execute`/`executeglobal` compilation caching. Processing times are phenomenally accelerated and better than the Windows Server ASP engine in most cases.
 *   **Standardization meets Innovation:** You get 99% adherence to Classic ASP and VBScript standards, meaning your legacy code drops right in. But we didn't stop there: we added over **60 custom Axon functions**, including advanced array manipulation, to make writing ASP a joy again, and full support to JavaScript code, that you can even mix with VBScript seamlessly.
-*   **Run ASP Anywhere:** Web server, FastCGI, or the command line! The brand new **CLI with TUI (Text User Interface)** allows you to execute ASP code directly from your terminal. This opens incredible possibilities: run scheduled ASP scripts as background jobs, cron tasks, and powerful system administration tools!
+*   **Run ASP Anywhere:** Web server, FastCGI, or the command line! The brand new **CLI with TUI (Text User Interface)** allows you to execute ASP code directly from your terminal. This opens incredible possibilities: run scheduled ASP scripts as background jobs, cron tasks, and powerful system administration tools! You can also run VBS and JS scripts directly from the CLI, even without the ASP page structure, making it a versatile scripting engine for all your automation needs.
 *   **AI-Ready with MCP:** AxonASP includes a built-in Model Context Protocol (MCP) server. AI agents can now connect directly to your runtime, understand your specific environment, and autonomously author complete ASP pages utilizing all available native functions.
 *   **Test-Driven ASP:** Say goodbye to broken scripts and regressions. The new `axonasp-testsuite` executable allows you to write and run automated test suites directly against your ASP files natively!
-*   **High-Performance JavaScript (ES6 and newer):** AxonASP includes a dedicated, AST-based JavaScript engine, derived from Goja. Compliant with ECMAScript 6 and newer versions, it supports JavaScript features like `JSON`, `Array.map/filter`, and strict mode, allowing you to modernize your logic while keeping the ASP infrastructure, and even mix JavaScript and VBScript in the same page if you want to. This is a game-changer for modernizing legacy applications without a full rewrite. Or if you want to write new applications in ASP but prefer JavaScript, you can do that too! 
+*   **High-Performance JavaScript (ES6 and newer):** AxonASP includes a dedicated, AST-based JavaScript engine, derived from Goja but compliant with ECMAScript 6 and newer versions. It supports JavaScript features like `JSON`, `Array.map/filter`, and strict mode, allowing you to modernize your logic while keeping the ASP infrastructure, and even mix JavaScript and VBScript in the same page if you want to. This is a game-changer for modernizing legacy applications without a full rewrite. Or if you want to write new applications in ASP but prefer JavaScript, you can do that too! 
+*   **Partial support to NodeJS-style Modules:** You can now organize your JavaScript code in modules and import them using a CommonJS-like or ES6 syntax. This allows for better code organization and reuse in larger applications. (Note: this is only supported in JavaScript code, not VBScript).
 
 ---
 
@@ -96,6 +93,7 @@ AxonASP extends Classic ASP with incredibly fast, zero-allocation native Go libr
 * **Authenticated Session Binding:** The /g3al endpoint binds every async event to the authenticated ASPSESSIONID cookie. Client-provided session identifiers are not used as an authority for page routing.
 * **Zero Additional Wrappers:** AxonLive is implemented directly inside the axonvm engine as a native procedural controller (G3AXONLIVE). This eliminates the need for bulky ASP class wrappers, providing bare-metal performance and zero garbage collection overhead.
 * **Granular DOM Manipulation:** Instead of re-rendering entire components, developers can push targeted instructions to modify styles, attributes, classes, or trigger external redirects natively from ASP.
+* **WASM + AxonLive:** You can use AxonLive + AxonASP WebAssembly for client-side rendering and logic, allowing you to write performance-critical code in VBScript and execute it directly in the browser just like Microsoft did with VBScript in Internet Explorer and like Blazor. This is a game-changer for modernizing legacy applications without a full rewrite, and it opens up incredible possibilities for offline-capable web applications and edge computing. 
 
 ### Getting Started with AxonLive
 
@@ -274,7 +272,7 @@ WASM support is currently in active development. The implementation is located i
 3. Integrate the generated WASM modules into your web applications
 4. Test and provide feedback on the experimental features
 
-> **⚠️ Important:** WASM support is experimental and subject to change. It is not yet recommended for production environments. We welcome testing and feedback from the community!
+> **⚠️ Important:** WASM support is experimental and subject to change, but most of AxonASP's core functionality is already supported. We welcome testing and feedback from the community!
 
 ---
 
@@ -317,6 +315,12 @@ This project is licensed under the MPL License - see the [LICENSE](LICENSE.txt) 
 - **Issues**: [GitHub Issues](https://github.com/guimaraeslucas/axonasp/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/guimaraeslucas/axonasp/discussions)
 - **Website**: [https://g3pix.com.br/axonasp](https://g3pix.com.br/axonasp)
+
+---
+
+> [!NOTE]
+> **⚠️ Important Notice:** _AxonASP Version 1.0_ is completely **deprecated** and is not compatible with Version 2.0 or later. 
+> The architectural leaps we've made mean a clean break from the past to deliver the future of ASP.
 
 ---
 
