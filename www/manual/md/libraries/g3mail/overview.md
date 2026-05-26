@@ -9,6 +9,15 @@ To instantiate the library, use the following syntax:
 Set mail = Server.CreateObject("G3MAIL")
 ```
 
+## Supported ProgIDs
+
+| ProgID | Notes |
+|---|---|
+| `G3MAIL` | Primary G3Pix AxonASP ProgID. |
+| `CDONTS.NewMail` | Compatibility alias mapped to the G3MAIL object. |
+| `CDO.Message` | Compatibility alias mapped to the G3MAIL object. |
+| `Persits.MailSender` | Compatibility alias mapped to the G3MAIL object. |
+
 ## Prerequisites
 - **SMTP Server access**: Requires a valid SMTP server hostname or IP address.
 - **Authentication**: Valid credentials (Username and Password) are typically required for external relaying.
@@ -16,6 +25,8 @@ Set mail = Server.CreateObject("G3MAIL")
 
 ## How it Works
 The G3MAIL object operates as a stateful message builder. You configure the server connection details and message properties (such as **Subject**, **Body**, and recipients) before calling the **Send** method. 
+
+AxonASP resolves all supported mail ProgIDs to the same native object, so the compatibility aliases listed above expose the same methods, properties, and runtime behavior as `G3MAIL`.
 
 If SMTP properties are not explicitly set in the script, the library automatically attempts to retrieve configuration from the following environment variables:
 - `SMTP_HOST`

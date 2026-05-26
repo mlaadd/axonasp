@@ -18,6 +18,8 @@ The G3ZIP object operates in two primary modes: **Read** and **Write**.
 - **Read Mode**: Initialized using the **Open** method. In this mode, you can inspect the archive content, retrieve file metadata, and extract files.
 - **Write Mode**: Initialized using the **Create** method. In this mode, you can build a new archive by adding existing files, entire directory structures, or custom text strings as virtual files.
 
+AxonASP exposes the ZIP library through a single `Server.CreateObject` ProgID. No additional compatibility aliases are implemented for this object.
+
 The library ensures proper resource management by requiring a call to the **Close** method when operations are complete, which flushes buffers and releases file handles.
 
 ## API Reference
