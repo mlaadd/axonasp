@@ -738,7 +738,7 @@ func executeASPWithStatus(w http.ResponseWriter, r *http.Request, filePath strin
 	if cache == nil {
 		cache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join("temp", "cache"), 1)
 	}
-	program, err := cache.LoadOrCompile(filePath)
+	program, err := cache.LoadOrCompileWithOptions(filePath, axonvm.ScriptCompileOptions{IncludeSiteRoot: host.Server().MapPath("/")})
 	if err != nil {
 		aspErr := axonvm.CompilerErrorToASPError(err, filePath)
 		host.Server().SetLastError(aspErr)

@@ -1006,7 +1006,11 @@ func (c *Compiler) Compile() (err error) {
 	if c.lexerMode == vbscript.ModeASP {
 		c.includeDeps = c.includeDeps[:0]
 		if strings.Contains(strings.ToLower(c.sourceCode), "#include") {
-			expanded, mappedLines, preprocessErr := preprocessASPIncludesWithDeps(c.sourceCode, c.sourceName, map[string]bool{}, 0, &c.includeDeps)
+			includeOptions := includeResolveOptions{
+				siteRoot:        c.includeSiteRoot,
+				caseInsensitive: c.includeCaseInsensitive,
+			}
+			expanded, mappedLines, preprocessErr := preprocessASPIncludesWithDepsWithOptions(c.sourceCode, c.sourceName, map[string]bool{}, 0, &c.includeDeps, includeOptions)
 			if preprocessErr != nil {
 				return c.normalizeCompileError(c.vbCompileError(vbscript.SyntaxError, preprocessErr.Error()))
 			}

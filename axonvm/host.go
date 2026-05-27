@@ -132,7 +132,7 @@ func (m *MockHost) ExecuteASPFile(absPath string) error {
 	if !cacheHit {
 		var err error
 		if cache != nil {
-			program, err = cache.LoadOrCompile(absPath)
+			program, err = cache.LoadOrCompileWithOptions(absPath, ScriptCompileOptions{IncludeSiteRoot: m.server.MapPath("/")})
 		} else {
 			content, readErr := os.ReadFile(absPath)
 			if readErr != nil {
@@ -142,6 +142,7 @@ func (m *MockHost) ExecuteASPFile(absPath string) error {
 			content = stripUTF8BOM(content)
 			compiler := NewASPCompiler(string(content))
 			compiler.SetSourceName(absPath)
+			compiler.SetIncludeSiteRoot(m.server.MapPath("/"))
 			if compileErr := compiler.Compile(); compileErr != nil {
 				return compileErr
 			}

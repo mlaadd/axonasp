@@ -147,6 +147,7 @@ func buildCachedProgramFromCompiler(compiler *Compiler) CachedProgram {
 		OptionCompare:       compiler.optionCompare,
 		OptionExplicit:      compiler.optionExplicit,
 		SourceName:          compiler.sourceName,
+		IncludeSiteRoot:     compiler.IncludeSiteRoot(),
 		GlobalNames:         cloneStringSlice(allGlobals),
 		GlobalPreludeNames:  prelude,
 		GlobalPreludeConsts: filterNamesByFlagSet(compiler.constGlobals, prelude),

@@ -817,8 +817,13 @@ func executeCLIFile(filePath string, virtualPath string, tuiMode bool) cliExecut
 	if tuiMode {
 		executionMode = axonvm.ExecutionModeTUI
 	}
+	workingDir, getwdErr := os.Getwd()
+	if getwdErr != nil || strings.TrimSpace(workingDir) == "" {
+		workingDir = "."
+	}
+	includeRoot := resolveCLIServerRootDir(workingDir)
 
-	program, err := scriptCache.LoadOrCompileWithMode(filePath, executionMode)
+	program, err := scriptCache.LoadOrCompileWithModeAndOptions(filePath, executionMode, axonvm.ScriptCompileOptions{IncludeSiteRoot: includeRoot})
 	if err != nil {
 		result.compileErr = err
 		return result

@@ -42,7 +42,7 @@ import (
 const (
 	scriptCacheDependencyMapLimit = 1000
 	scriptCacheMagicSize          = 6
-	scriptCacheBinaryVersion      = uint16(9)
+	scriptCacheBinaryVersion      = uint16(10)
 	scriptCacheDebounceWindow     = 1000 * time.Millisecond
 )
 
@@ -92,6 +92,7 @@ type CachedProgram struct {
 	OptionCompare       int
 	OptionExplicit      bool
 	SourceName          string
+	IncludeSiteRoot     string
 	GlobalPreludeNames  []string
 	GlobalPreludeConsts []string
 	UserGlobalNames     []string
@@ -129,6 +130,11 @@ type CachedProgram struct {
 type cachedProgramBinaryPayload struct {
 	ModTime int64
 	Program CachedProgram
+}
+
+// ScriptCompileOptions controls context-sensitive compilation behavior.
+type ScriptCompileOptions struct {
+	IncludeSiteRoot string
 }
 
 var scriptCacheProcessBinaryModUnix = currentProcessBinaryModUnix
@@ -197,6 +203,9 @@ func (p *cachedProgramBinaryPayload) Serialize(writer io.Writer) error {
 		return err
 	}
 	if err := writeString(buffered, p.Program.SourceName); err != nil {
+		return err
+	}
+	if err := writeString(buffered, p.Program.IncludeSiteRoot); err != nil {
 		return err
 	}
 	if err := writeStringSlice(buffered, p.Program.GlobalPreludeNames); err != nil {
@@ -317,6 +326,13 @@ func (p *cachedProgramBinaryPayload) Deserialize(reader io.Reader) error {
 			return err
 		}
 		p.Program.SourceName = sourceName
+		if version >= 10 {
+			includeSiteRoot, err := readString(reader)
+			if err != nil {
+				return err
+			}
+			p.Program.IncludeSiteRoot = includeSiteRoot
+		}
 		if version == 2 {
 			globalNames, err := readStringSlice(reader)
 			if err != nil {
@@ -831,13 +847,35 @@ func (c *ScriptCache) Invalidate(filePath string) {
 
 // LoadOrCompile applies memory, disk, and compiler fallback flow for one ASP file.
 func (c *ScriptCache) LoadOrCompile(filePath string) (CachedProgram, error) {
-	return c.LoadOrCompileWithMode(filePath, ExecutionModeServer)
+	return c.LoadOrCompileWithModeAndOptions(filePath, ExecutionModeServer, ScriptCompileOptions{})
 }
 
 // LoadOrCompileWithMode compiles and caches an ASP script, optionally bypassing cache for
 // interactive execution modes (CLI, TUI, eval) to prevent stalls. In interactive modes,
 // neither memory nor disk caches are consulted or updated, ensuring fresh compilation.
 func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode) (CachedProgram, error) {
+	return c.LoadOrCompileWithModeAndOptions(filePath, mode, ScriptCompileOptions{})
+}
+
+// LoadOrCompileWithOptions compiles and caches an ASP script with caller-provided context.
+func (c *ScriptCache) LoadOrCompileWithOptions(filePath string, options ScriptCompileOptions) (CachedProgram, error) {
+	return c.LoadOrCompileWithModeAndOptions(filePath, ExecutionModeServer, options)
+}
+
+func includeSiteRootMatches(program CachedProgram, options ScriptCompileOptions) bool {
+	requestedRoot := normalizeIncludeSiteRoot(options.IncludeSiteRoot)
+	programRoot := normalizeIncludeSiteRoot(program.IncludeSiteRoot)
+	if requestedRoot == "" {
+		return true
+	}
+	if programRoot == "" {
+		return false
+	}
+	return strings.EqualFold(requestedRoot, programRoot)
+}
+
+// LoadOrCompileWithModeAndOptions compiles and caches with explicit include-resolution context.
+func (c *ScriptCache) LoadOrCompileWithModeAndOptions(filePath string, mode ExecutionMode, options ScriptCompileOptions) (CachedProgram, error) {
 	normalized, err := c.normalizeAbsolutePath(filePath)
 	if err != nil {
 		return CachedProgram{}, err
@@ -846,15 +884,17 @@ func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode)
 
 	// If in interactive mode, bypass cache entirely to prevent stalls
 	if mode != ExecutionModeServer {
-		return c.compileOnly(normalized)
+		return c.compileOnly(normalized, options)
 	}
 
 	if program, found := c.getByCacheKey(cacheKey); found {
-		return program, nil
+		if includeSiteRootMatches(program, options) {
+			return program, nil
+		}
 	}
 
 	if c == nil {
-		return c.compileOnly(normalized)
+		return c.compileOnly(normalized, options)
 	}
 
 	gate, owner := c.acquireCompileGate(cacheKey)
@@ -863,7 +903,10 @@ func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode)
 		if gate.err != nil {
 			return CachedProgram{}, gate.err
 		}
-		return immutableCachedProgramView(gate.program), nil
+		if includeSiteRootMatches(gate.program, options) {
+			return immutableCachedProgramView(gate.program), nil
+		}
+		return c.compileOnly(normalized, options)
 	}
 
 	var result CachedProgram
@@ -871,8 +914,10 @@ func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode)
 	defer c.releaseCompileGate(cacheKey, gate, result, compileErr)
 
 	if program, found := c.getByCacheKey(cacheKey); found {
-		result = program
-		return result, nil
+		if includeSiteRootMatches(program, options) {
+			result = program
+			return result, nil
+		}
 	}
 
 	sourceInfo, err := os.Stat(normalized)
@@ -881,7 +926,7 @@ func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode)
 		return CachedProgram{}, compileErr
 	}
 
-	if c.mode.HasDiskTier() {
+	if c.mode.HasDiskTier() && strings.TrimSpace(options.IncludeSiteRoot) == "" {
 		if program, found := c.loadDiskProgram(normalized, sourceInfo); found {
 			if c.mode.HasMemoryTier() {
 				c.putByCacheKey(cacheKey, program, program.IncludeDependencies, estimateProgramSizeBytes(program))
@@ -912,6 +957,7 @@ func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode)
 	}
 
 	compiler.SetSourceName(cacheKey)
+	compiler.SetIncludeSiteRoot(options.IncludeSiteRoot)
 	if err := compiler.Compile(); err != nil {
 		compileErr = err
 		return CachedProgram{}, compileErr
@@ -919,7 +965,7 @@ func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode)
 
 	program := buildCachedProgramFromCompiler(compiler)
 
-	if c.mode.HasDiskTier() {
+	if c.mode.HasDiskTier() && strings.TrimSpace(options.IncludeSiteRoot) == "" {
 		if storeErr := c.storeDiskProgram(normalized, sourceInfo.ModTime(), program); storeErr != nil {
 			log.Printf("Warning: failed to persist bytecode cache to disk for %s: %v", normalized, storeErr)
 		}
@@ -933,7 +979,7 @@ func (c *ScriptCache) LoadOrCompileWithMode(filePath string, mode ExecutionMode)
 
 // compileOnly compiles a script without using any cache layer.
 // Used for interactive execution modes (CLI, TUI, eval) to prevent stalls.
-func (c *ScriptCache) compileOnly(filePath string) (CachedProgram, error) {
+func (c *ScriptCache) compileOnly(filePath string, options ScriptCompileOptions) (CachedProgram, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return CachedProgram{}, err
@@ -954,6 +1000,7 @@ func (c *ScriptCache) compileOnly(filePath string) (CachedProgram, error) {
 	}
 
 	compiler.SetSourceName(filePath)
+	compiler.SetIncludeSiteRoot(options.IncludeSiteRoot)
 	if err := compiler.Compile(); err != nil {
 		return CachedProgram{}, err
 	}
@@ -1741,6 +1788,7 @@ func cloneCachedProgram(program CachedProgram) CachedProgram {
 		OptionCompare:       program.OptionCompare,
 		OptionExplicit:      program.OptionExplicit,
 		SourceName:          program.SourceName,
+		IncludeSiteRoot:     program.IncludeSiteRoot,
 		GlobalPreludeNames:  cloneStringSlice(program.GlobalPreludeNames),
 		GlobalPreludeConsts: cloneStringSlice(program.GlobalPreludeConsts),
 		UserGlobalNames:     cloneStringSlice(program.UserGlobalNames),

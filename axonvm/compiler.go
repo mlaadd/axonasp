@@ -27,6 +27,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 
@@ -58,6 +59,15 @@ type SourceLineRef struct {
 
 // LineMap stores one origin entry per expanded line (1-based by index+1).
 type LineMap []SourceLineRef
+
+type includeResolveOptions struct {
+	siteRoot        string
+	caseInsensitive bool
+}
+
+func defaultIncludeResolveOptions() includeResolveOptions {
+	return includeResolveOptions{siteRoot: "", caseInsensitive: true}
+}
 
 func NewSymbolTable() *SymbolTable {
 	return &SymbolTable{
@@ -115,14 +125,16 @@ type Compiler struct {
 	isLocal             bool                 // True if currently compiling a Sub/Function
 
 	// Compilation Options
-	optionExplicit bool // Requires variables to be Dim'ed
-	optionCompare  int  // 0: Binary (default), 1: Text
-	optionBase     int  // 0 or 1 (default 0)
-	optionStrict   bool // (Future) Enforces strict typing
-	optionInfer    bool // (Future) Allows type inference
-	sourceName     string
-	lineMap        LineMap
-	includeDeps    []string
+	optionExplicit         bool // Requires variables to be Dim'ed
+	optionCompare          int  // 0: Binary (default), 1: Text
+	optionBase             int  // 0 or 1 (default 0)
+	optionStrict           bool // (Future) Enforces strict typing
+	optionInfer            bool // (Future) Allows type inference
+	sourceName             string
+	includeSiteRoot        string
+	includeCaseInsensitive bool
+	lineMap                LineMap
+	includeDeps            []string
 
 	forwardCallPatches  map[string][]int
 	forwardConstPatches map[string][]int
@@ -570,50 +582,51 @@ func createCompiler(code string, mode vbscript.LexerMode) *Compiler {
 	}
 
 	c := &Compiler{
-		lexer:                 lexer,
-		lexerMode:             mode,
-		sourceCode:            code,
-		tokenIndex:            -1,
-		bytecode:              make([]byte, 0),
-		constants:             make([]Value, 0),
-		Globals:               NewSymbolTable(),
-		locals:                NewSymbolTable(),
-		declaredGlobals:       make(map[string]bool),
-		declaredLocals:        make(map[string]bool),
-		globalVarTypes:        make(map[string]ValueType),
-		localVarTypes:         make(map[string]ValueType),
-		globalRecordTypes:     make(map[string]string),
-		localRecordTypes:      make(map[string]string),
-		constGlobals:          make(map[string]bool),
-		constLocals:           make(map[string]bool),
-		staticLocals:          make(map[string]int),
-		constLiteralGlobals:   make(map[string]Value),
-		isLocal:               false,
-		optionExplicit:        false,
-		optionCompare:         0, // Binary
-		forwardCallPatches:    make(map[string][]int),
-		forwardConstPatches:   make(map[string][]int),
-		lastCallTargetPos:     -1,
-		lastCoercePos:         -1,
-		lastDebugLine:         -1,
-		lastDebugColumn:       -1,
-		tempCounter:           0,
-		globalZeroArgFuncs:    make(map[string]bool),
-		classDecls:            make([]CompiledClassDecl, 0),
-		classDeclLookup:       make(map[string]int),
-		recordDecls:           make([]CompiledRecordDecl, 0),
-		recordDeclLookup:      make(map[string]int),
-		loopContexts:          make([]loopContext, 0),
-		jsStrictMode:          false,
-		jsFunctionStrictModes: make(map[int]bool),
-		jsBlockScopeStack:     make([]map[string]bool, 0, 32),
-		jsLocalScopeStack:     make([]jsLocalScope, 0, 16),
-		jsLocalEnabled:        false,
-		jsLocalSlotCount:      0,
-		activeVBSConstants:    make([]VBSConstant, 0, len(VBSConstants)),
-		labelMap:              make(map[string]int),
-		forwardLabelPatches:   make(map[string][]int),
-		funcParamDefaults:     make(map[int][]int),
+		lexer:                  lexer,
+		lexerMode:              mode,
+		sourceCode:             code,
+		tokenIndex:             -1,
+		bytecode:               make([]byte, 0),
+		constants:              make([]Value, 0),
+		Globals:                NewSymbolTable(),
+		locals:                 NewSymbolTable(),
+		declaredGlobals:        make(map[string]bool),
+		declaredLocals:         make(map[string]bool),
+		globalVarTypes:         make(map[string]ValueType),
+		localVarTypes:          make(map[string]ValueType),
+		globalRecordTypes:      make(map[string]string),
+		localRecordTypes:       make(map[string]string),
+		constGlobals:           make(map[string]bool),
+		constLocals:            make(map[string]bool),
+		staticLocals:           make(map[string]int),
+		constLiteralGlobals:    make(map[string]Value),
+		isLocal:                false,
+		optionExplicit:         false,
+		optionCompare:          0, // Binary
+		includeCaseInsensitive: true,
+		forwardCallPatches:     make(map[string][]int),
+		forwardConstPatches:    make(map[string][]int),
+		lastCallTargetPos:      -1,
+		lastCoercePos:          -1,
+		lastDebugLine:          -1,
+		lastDebugColumn:        -1,
+		tempCounter:            0,
+		globalZeroArgFuncs:     make(map[string]bool),
+		classDecls:             make([]CompiledClassDecl, 0),
+		classDeclLookup:        make(map[string]int),
+		recordDecls:            make([]CompiledRecordDecl, 0),
+		recordDeclLookup:       make(map[string]int),
+		loopContexts:           make([]loopContext, 0),
+		jsStrictMode:           false,
+		jsFunctionStrictModes:  make(map[int]bool),
+		jsBlockScopeStack:      make([]map[string]bool, 0, 32),
+		jsLocalScopeStack:      make([]jsLocalScope, 0, 16),
+		jsLocalEnabled:         false,
+		jsLocalSlotCount:       0,
+		activeVBSConstants:     make([]VBSConstant, 0, len(VBSConstants)),
+		labelMap:               make(map[string]int),
+		forwardLabelPatches:    make(map[string][]int),
+		funcParamDefaults:      make(map[int][]int),
 	}
 	c.activeVBSConstants = append(c.activeVBSConstants, VBSConstants...)
 
@@ -655,6 +668,104 @@ func createCompiler(code string, mode vbscript.LexerMode) *Compiler {
 	// Record where user-declared globals begin; slots below this are read-only pre-injected.
 	c.userGlobalsStart = c.Globals.Count()
 	return c
+}
+
+func normalizeIncludeSiteRoot(rootDir string) string {
+	trimmed := strings.TrimSpace(rootDir)
+	if trimmed == "" {
+		return ""
+	}
+	absRoot, err := filepath.Abs(trimmed)
+	if err != nil {
+		return filepath.Clean(trimmed)
+	}
+	return filepath.Clean(absRoot)
+}
+
+func pathInsideRoot(root string, target string) bool {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absTarget)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
+}
+
+func resolvePathCaseInsensitive(path string) (string, error) {
+	cleaned := filepath.Clean(path)
+	if cleaned == "" {
+		return "", fmt.Errorf("empty include path")
+	}
+
+	vol := filepath.VolumeName(cleaned)
+	remainder := strings.TrimPrefix(cleaned, vol)
+	startsWithSep := strings.HasPrefix(remainder, string(filepath.Separator))
+	parts := strings.Split(strings.TrimPrefix(remainder, string(filepath.Separator)), string(filepath.Separator))
+
+	current := vol
+	if startsWithSep {
+		current += string(filepath.Separator)
+	}
+
+	if len(parts) == 1 && parts[0] == "" {
+		if _, err := os.Stat(current); err != nil {
+			return "", err
+		}
+		return current, nil
+	}
+
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		entries, err := os.ReadDir(current)
+		if err != nil {
+			return "", err
+		}
+		matched := ""
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), part) {
+				matched = entry.Name()
+				break
+			}
+		}
+		if matched == "" {
+			return "", os.ErrNotExist
+		}
+		current = filepath.Join(current, matched)
+	}
+
+	if _, err := os.Stat(current); err != nil {
+		return "", err
+	}
+	return current, nil
+}
+
+func resolveExistingPath(candidate string, caseInsensitive bool) (string, error) {
+	if _, err := os.Stat(candidate); err == nil {
+		return filepath.Clean(candidate), nil
+	}
+	if !caseInsensitive || runtime.GOOS == "windows" {
+		return "", os.ErrNotExist
+	}
+	matched, err := resolvePathCaseInsensitive(candidate)
+	if err != nil {
+		return "", os.ErrNotExist
+	}
+	return filepath.Clean(matched), nil
 }
 
 // injectTypeLibConstants registers extra read-only typelibrary constants for the current compilation.
@@ -768,6 +879,10 @@ func stripUTF8BOM(data []byte) []byte {
 // preprocessASPIncludesWithDeps expands includes and optionally records resolved dependency files.
 // Optimization: Uses manual scanning instead of regexp to avoid heap allocations.
 func preprocessASPIncludesWithDeps(source string, sourceName string, visited map[string]bool, depth int, dependencies *[]string) (string, LineMap, error) {
+	return preprocessASPIncludesWithDepsWithOptions(source, sourceName, visited, depth, dependencies, defaultIncludeResolveOptions())
+}
+
+func preprocessASPIncludesWithDepsWithOptions(source string, sourceName string, visited map[string]bool, depth int, dependencies *[]string, options includeResolveOptions) (string, LineMap, error) {
 	if depth > 32 {
 		return "", nil, fmt.Errorf("include recursion limit exceeded")
 	}
@@ -849,7 +964,7 @@ func preprocessASPIncludesWithDeps(source string, sourceName string, visited map
 			replaceEnd = lineEndIndexIncludingNewline(processed, endIdx)
 		}
 
-		resolvedPath, err := resolveIncludePath(sourceName, pathVal, kind == "virtual")
+		resolvedPath, err := resolveIncludePathWithOptions(sourceName, pathVal, kind == "virtual", options)
 		if err != nil {
 			return "", nil, fmt.Errorf("include resolve failed for %s: %w", directive, err)
 		}
@@ -871,7 +986,7 @@ func preprocessASPIncludesWithDeps(source string, sourceName string, visited map
 		if dependencies != nil {
 			*dependencies = append(*dependencies, resolvedPath)
 		}
-		expanded, childMap, err := preprocessASPIncludesWithDeps(string(contentBytes), resolvedPath, visited, depth+1, dependencies)
+		expanded, childMap, err := preprocessASPIncludesWithDepsWithOptions(string(contentBytes), resolvedPath, visited, depth+1, dependencies, options)
 		delete(visited, norm)
 		if err != nil {
 			return "", nil, err
@@ -984,6 +1099,10 @@ func countLines(s string) int {
 
 // resolveIncludePath resolves one ASP include path against current source path context.
 func resolveIncludePath(sourceName string, includePath string, isVirtual bool) (string, error) {
+	return resolveIncludePathWithOptions(sourceName, includePath, isVirtual, defaultIncludeResolveOptions())
+}
+
+func resolveIncludePathWithOptions(sourceName string, includePath string, isVirtual bool, options includeResolveOptions) (string, error) {
 	trimmed := strings.TrimSpace(includePath)
 	if trimmed == "" {
 		return "", fmt.Errorf("empty include path")
@@ -991,10 +1110,6 @@ func resolveIncludePath(sourceName string, includePath string, isVirtual bool) (
 
 	trimmed = strings.ReplaceAll(trimmed, "/", string(filepath.Separator))
 	trimmed = strings.ReplaceAll(trimmed, "\\", string(filepath.Separator))
-
-	if filepath.IsAbs(trimmed) {
-		return filepath.Clean(trimmed), nil
-	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -1004,57 +1119,61 @@ func resolveIncludePath(sourceName string, includePath string, isVirtual bool) (
 	isAbsSource := filepath.IsAbs(sourceName)
 	src := filepath.Clean(sourceName)
 	sourceAbs := src
+	siteRoot := normalizeIncludeSiteRoot(options.siteRoot)
 	if !isAbsSource {
 		relSource := strings.TrimLeft(src, "/\\")
-		if strings.HasPrefix(strings.ToLower(filepath.ToSlash(relSource)), "www/") {
+		if siteRoot != "" {
+			sourceAbs = filepath.Clean(filepath.Join(siteRoot, filepath.FromSlash(strings.ReplaceAll(relSource, "\\", "/"))))
+		} else if strings.HasPrefix(strings.ToLower(filepath.ToSlash(relSource)), "www/") {
 			sourceAbs = filepath.Clean(filepath.Join(cwd, relSource))
 		} else {
 			sourceAbs = filepath.Clean(filepath.Join(cwd, "www", relSource))
 		}
 	}
 
-	findWebRoot := func(absSource string) string {
-		lower := strings.ToLower(filepath.Clean(absSource))
-		needle := string(filepath.Separator) + "www" + string(filepath.Separator)
-		if pos := strings.LastIndex(lower, needle); pos >= 0 {
-			return absSource[:pos+len(needle)-1]
+	if siteRoot == "" {
+		findWebRoot := func(absSource string) string {
+			lower := strings.ToLower(filepath.Clean(absSource))
+			needle := string(filepath.Separator) + "www" + string(filepath.Separator)
+			if pos := strings.LastIndex(lower, needle); pos >= 0 {
+				return absSource[:pos+len(needle)-1]
+			}
+			if strings.HasSuffix(lower, string(filepath.Separator)+"www") {
+				return absSource
+			}
+			return filepath.Clean(filepath.Join(cwd, "www"))
 		}
-		if strings.HasSuffix(lower, string(filepath.Separator)+"www") {
-			return absSource
-		}
-		return filepath.Clean(filepath.Join(cwd, "www"))
+		siteRoot = findWebRoot(sourceAbs)
 	}
 
-	webRoot := findWebRoot(sourceAbs)
 	sourceDir := filepath.Dir(sourceAbs)
 
 	if isVirtual || strings.HasPrefix(includePath, "/") || strings.HasPrefix(includePath, "\\") {
+		if filepath.IsAbs(trimmed) {
+			trimmed = strings.TrimLeft(trimmed, string(filepath.Separator))
+		}
 		rel := strings.TrimLeft(trimmed, string(filepath.Separator))
-		candidates := make([]string, 0, 6)
-		candidates = append(candidates,
-			filepath.Clean(filepath.Join(webRoot, rel)),
-			filepath.Clean(filepath.Join(cwd, rel)),
-		)
-
-		parts := strings.Split(rel, string(filepath.Separator))
-		if len(parts) > 1 {
-			relWithoutSite := filepath.Join(parts[1:]...)
-			candidates = append(candidates,
-				filepath.Clean(filepath.Join(webRoot, relWithoutSite)),
-				filepath.Clean(filepath.Join(cwd, relWithoutSite)),
-			)
+		candidate := filepath.Clean(filepath.Join(siteRoot, rel))
+		if !pathInsideRoot(siteRoot, candidate) {
+			return "", fmt.Errorf("virtual include escapes site root: %s", includePath)
 		}
-
-		for _, candidate := range candidates {
-			if _, statErr := os.Stat(candidate); statErr == nil {
-				return candidate, nil
-			}
+		resolved, resolveErr := resolveExistingPath(candidate, options.caseInsensitive)
+		if resolveErr != nil {
+			return "", fmt.Errorf("include not found: %s", includePath)
 		}
-
-		return candidates[0], nil
+		return resolved, nil
 	}
 
-	return filepath.Clean(filepath.Join(sourceDir, trimmed)), nil
+	if filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("absolute include file path is not allowed: %s", includePath)
+	}
+
+	candidate := filepath.Clean(filepath.Join(sourceDir, trimmed))
+	resolved, resolveErr := resolveExistingPath(candidate, options.caseInsensitive)
+	if resolveErr != nil {
+		return "", fmt.Errorf("include not found: %s", includePath)
+	}
+	return resolved, nil
 }
 
 // clearLastCallTarget resets transient call-target tracking for identifier-based call patching.
@@ -1757,6 +1876,30 @@ func (c *Compiler) SetSourceName(sourceName string) {
 	}
 
 	c.sourceName = strings.TrimSpace(sourceName)
+}
+
+// SetIncludeSiteRoot sets the virtual site root used by SSI include virtual resolution.
+func (c *Compiler) SetIncludeSiteRoot(rootDir string) {
+	if c == nil {
+		return
+	}
+	c.includeSiteRoot = normalizeIncludeSiteRoot(rootDir)
+}
+
+// IncludeSiteRoot returns the normalized virtual site root used for SSI include resolution.
+func (c *Compiler) IncludeSiteRoot() string {
+	if c == nil {
+		return ""
+	}
+	return c.includeSiteRoot
+}
+
+// SetIncludeCaseInsensitiveEnabled toggles case-insensitive filesystem lookup fallback for SSI includes.
+func (c *Compiler) SetIncludeCaseInsensitiveEnabled(enabled bool) {
+	if c == nil {
+		return
+	}
+	c.includeCaseInsensitive = enabled
 }
 
 // IncludeDependencies returns resolved include files discovered during preprocessing.

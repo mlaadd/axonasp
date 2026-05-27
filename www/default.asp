@@ -129,7 +129,7 @@
                             <td>
                                 <%= ax.AxEngineName() %>
                                 /
-                                <%= ax.AxVersion() %>
+                                <%= ax.AxVersion() %> / <%= VMENGINE %>
                             </td>
                         </tr>
                         <tr>

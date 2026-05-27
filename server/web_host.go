@@ -293,7 +293,7 @@ func (h *WebHost) ExecuteASPFile(absPath string) error {
 		if cached, found := cache.Get(absPath); found {
 			program = cached
 		} else {
-			compiled, compileErr := cache.LoadOrCompile(absPath)
+			compiled, compileErr := cache.LoadOrCompileWithOptions(absPath, axonvm.ScriptCompileOptions{IncludeSiteRoot: h.server.MapPath("/")})
 			if compileErr != nil {
 				return compileErr
 			}
@@ -335,6 +335,7 @@ func (h *WebHost) ExecuteASPFile(absPath string) error {
 		}
 
 		compiler.SetSourceName(absPath)
+		compiler.SetIncludeSiteRoot(h.server.MapPath("/"))
 		if err := compiler.Compile(); err != nil {
 			return err
 		}
