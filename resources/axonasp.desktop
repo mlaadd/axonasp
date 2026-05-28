@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=2.1
+Type=Application
+Name=AxonASP
+Comment=AxonASP Web Server
+Exec=/opt/axonasp/axonasp-server
+Icon=/opt/axonasp/logo.png
+Terminal=true
+Categories=web;
