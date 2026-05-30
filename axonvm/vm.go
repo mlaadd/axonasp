@@ -1815,6 +1815,13 @@ func (vm *VM) Run() (err error) {
 				err = vm.newMappedAxonASPError(ErrResponseBufferLimitExceeded, bufferErr, bufferErr.Error())
 				return
 			}
+			if ye, ok := r.(*jsYieldError); ok {
+				if vm.suppressTerminate {
+					panic(ye)
+				}
+				err = ye
+				return
+			}
 			vme, ok := r.(*VMError)
 			if ok {
 				if vm.onResumeNext {
@@ -2120,6 +2127,10 @@ aspExecLoop:
 					}
 				}
 			} else if v.Type == VTNativeObject {
+				if collectionValue, exists := vm.requestCollectionValueItems[v.Num]; exists {
+					vm.push(NewString(collectionValue.Joined()))
+					continue
+				}
 				// Only ADODB.Field proxies should auto-coerce through default Value in
 				// generic value contexts. Coercing every native object via __default__
 				// can break object argument passing (e.g. JSON.dump(recordset)).

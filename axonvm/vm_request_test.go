@@ -32,8 +32,12 @@ func TestVMRequestCollections(t *testing.T) {
 	vm.SetHost(host)
 
 	query := vm.dispatchNativeCall(1, "QueryString", []Value{NewString("q")})
-	if query.Type != VTString || query.Str != "hello" {
+	if query.Type != VTNativeObject {
 		t.Fatalf("unexpected QueryString result: %#v", query)
+	}
+	queryValue := vm.dispatchNativeCall(query.Num, "", nil)
+	if queryValue.Type != VTString || queryValue.Str != "hello" {
+		t.Fatalf("unexpected QueryString resolved value: %#v", queryValue)
 	}
 
 	cookieSub := vm.dispatchNativeCall(1, "Cookies", []Value{NewString("profile"), NewString("name")})

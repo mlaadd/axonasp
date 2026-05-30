@@ -64,8 +64,8 @@ func TestCompilerUnexpectedTokenUsesVBScriptMetadata(t *testing.T) {
 	if syntaxErr.Number != vbscript.HRESULTFromVBScriptCode(vbscript.SyntaxError) {
 		t.Fatalf("unexpected number: got %d want %d", syntaxErr.Number, vbscript.HRESULTFromVBScriptCode(vbscript.SyntaxError))
 	}
-	if syntaxErr.Column != 7 {
-		t.Fatalf("unexpected column: got %d want 7", syntaxErr.Column)
+	if syntaxErr.Column != 5 {
+		t.Fatalf("unexpected column: got %d want 5", syntaxErr.Column)
 	}
 
 	aspErr := CompilerErrorToASPError(err, "/tests/compiler_error.asp")

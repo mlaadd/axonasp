@@ -143,6 +143,9 @@ type G3FC struct {
 // newG3FCObject creates a native G3FC instance.
 func (vm *VM) newG3FCObject() Value {
 	obj := &G3FC{vm: vm}
+	if vm.g3fcItems == nil {
+		vm.g3fcItems = make(map[int64]*G3FC)
+	}
 	id := vm.nextDynamicNativeID
 	vm.nextDynamicNativeID++
 	vm.g3fcItems[id] = obj

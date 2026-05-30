@@ -47,6 +47,9 @@ type G3ZSTD struct {
 // newG3ZSTDObject creates one native G3ZSTD object.
 func (vm *VM) newG3ZSTDObject() Value {
 	obj := &G3ZSTD{vm: vm, defaultLevel: 3, encoderLevelID: 3}
+	if vm.g3zstdItems == nil {
+		vm.g3zstdItems = make(map[int64]*G3ZSTD)
+	}
 	id := vm.nextDynamicNativeID
 	vm.nextDynamicNativeID++
 	vm.g3zstdItems[id] = obj

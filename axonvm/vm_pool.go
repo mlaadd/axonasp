@@ -545,6 +545,12 @@ func (vm *VM) ensureDynamicMaps() {
 	if vm.g3mdItems == nil {
 		vm.g3mdItems = make(map[int64]*G3MD)
 	}
+	if vm.g3searchItems == nil {
+		vm.g3searchItems = make(map[int64]*G3Search)
+	}
+	if vm.g3stringBuilderItems == nil {
+		vm.g3stringBuilderItems = make(map[int64]*G3StringBuilder)
+	}
 	if vm.g3testItems == nil {
 		vm.g3testItems = make(map[int64]*G3Test)
 	}
@@ -572,8 +578,44 @@ func (vm *VM) ensureDynamicMaps() {
 	if vm.g3zipItems == nil {
 		vm.g3zipItems = make(map[int64]*G3Zip)
 	}
+	if vm.g3zlibItems == nil {
+		vm.g3zlibItems = make(map[int64]*G3ZLIB)
+	}
+	if vm.g3tarItems == nil {
+		vm.g3tarItems = make(map[int64]*G3TAR)
+	}
+	if vm.g3zstdItems == nil {
+		vm.g3zstdItems = make(map[int64]*G3ZSTD)
+	}
 	if vm.g3fcItems == nil {
 		vm.g3fcItems = make(map[int64]*G3FC)
+	}
+	if vm.g3axonliveItems == nil {
+		vm.g3axonliveItems = make(map[int64]*G3AXONLIVE)
+	}
+	if vm.g3axonliveProxyItems == nil {
+		vm.g3axonliveProxyItems = make(map[int64]*G3ALComponentProxy)
+	}
+	if vm.g3dbItems == nil {
+		vm.g3dbItems = make(map[int64]*G3DB)
+	}
+	if vm.g3dbResultSetItems == nil {
+		vm.g3dbResultSetItems = make(map[int64]*G3DBResultSet)
+	}
+	if vm.g3dbFieldsItems == nil {
+		vm.g3dbFieldsItems = make(map[int64]*G3DBFields)
+	}
+	if vm.g3dbRowItems == nil {
+		vm.g3dbRowItems = make(map[int64]*G3DBRow)
+	}
+	if vm.g3dbStatementItems == nil {
+		vm.g3dbStatementItems = make(map[int64]*G3DBStatement)
+	}
+	if vm.g3dbTransactionItems == nil {
+		vm.g3dbTransactionItems = make(map[int64]*G3DBTransaction)
+	}
+	if vm.g3dbResultItems == nil {
+		vm.g3dbResultItems = make(map[int64]*G3DBResult)
 	}
 	if vm.wscriptShellItems == nil {
 		vm.wscriptShellItems = make(map[int64]*WScriptShell)
@@ -680,6 +722,9 @@ func (vm *VM) ensureDynamicMaps() {
 	if vm.regExpItems == nil {
 		vm.regExpItems = make(map[int64]*regExpNativeObject)
 	}
+	if vm.jsRegExpItems == nil {
+		vm.jsRegExpItems = make(map[int64]*jsRegExpObject)
+	}
 	if vm.regExpMatchesCollectionItems == nil {
 		vm.regExpMatchesCollectionItems = make(map[int64]*regExpMatchesCollection)
 	}
@@ -740,6 +785,30 @@ func (vm *VM) ensureDynamicMaps() {
 	if vm.jsEnvItems == nil {
 		vm.jsEnvItems = make(map[int64]*jsEnvFrame)
 	}
+	if vm.jsArgumentsItems == nil {
+		vm.jsArgumentsItems = make(map[int64]*jsArgumentsBinding)
+	}
+	if vm.jsSetItems == nil {
+		vm.jsSetItems = make(map[int64]map[string]Value)
+	}
+	if vm.jsMapItems == nil {
+		vm.jsMapItems = make(map[int64]map[string]Value)
+	}
+	if vm.jsWeakRefItems == nil {
+		vm.jsWeakRefItems = make(map[int64]*jsWeakRef)
+	}
+	if vm.jsFinalizationRegistryItems == nil {
+		vm.jsFinalizationRegistryItems = make(map[int64]*jsFinalizationRegistry)
+	}
+	if vm.jsArrayIterators == nil {
+		vm.jsArrayIterators = make(map[int64]*jsArrayIterator)
+	}
+	if vm.jsStringIterators == nil {
+		vm.jsStringIterators = make(map[int64]*jsStringIterator)
+	}
+	if vm.jsRegExpStringIterators == nil {
+		vm.jsRegExpStringIterators = make(map[int64]*jsRegExpStringIterator)
+	}
 	if vm.jsArrayBuffers == nil {
 		vm.jsArrayBuffers = make(map[int64][]byte)
 	}
@@ -761,11 +830,29 @@ func (vm *VM) ensureDynamicMaps() {
 	if vm.jsIntlNumberFormatItems == nil {
 		vm.jsIntlNumberFormatItems = make(map[int64]*jsIntlNumberFormatObject)
 	}
+	if vm.jsIntlCollatorItems == nil {
+		vm.jsIntlCollatorItems = make(map[int64]*jsIntlCollatorObject)
+	}
+	if vm.jsIntlPluralRulesItems == nil {
+		vm.jsIntlPluralRulesItems = make(map[int64]*jsIntlPluralRulesObject)
+	}
+	if vm.jsIntlRelativeTimeFormatItems == nil {
+		vm.jsIntlRelativeTimeFormatItems = make(map[int64]*jsIntlRelativeTimeFormatObject)
+	}
 	if vm.jsPromiseItems == nil {
 		vm.jsPromiseItems = make(map[int64]*jsPromiseObject)
 	}
 	if vm.jsGeneratorItems == nil {
 		vm.jsGeneratorItems = make(map[int64]*jsGeneratorObject)
+	}
+	if vm.jsProxyItems == nil {
+		vm.jsProxyItems = make(map[int64]*jsProxyObject)
+	}
+	if vm.jsSymbolStateItems == nil {
+		vm.jsSymbolStateItems = make(map[int64]jsObjectState)
+	}
+	if vm.jsRegisteredSymbolIDs == nil {
+		vm.jsRegisteredSymbolIDs = make(map[int64]struct{})
 	}
 	if vm.jsAsyncFSReadResults == nil {
 		vm.jsAsyncFSReadResults = make(chan jsAsyncFSReadResult, jsAsyncFSReadResultQueueSize)

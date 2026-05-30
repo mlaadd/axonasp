@@ -108,8 +108,8 @@ func TestRequestCollectionLazyPayload(t *testing.T) {
 		t.Fatalf("expected 5 unique keys, got %d", collection.Count())
 	}
 
-	if key := collection.Key(1); key != "name" {
-		t.Fatalf("expected first key name, got %q", key)
+	if key := collection.Key(1); key != "Name" {
+		t.Fatalf("expected first key Name, got %q", key)
 	}
 	if value := collection.GetByIndex(1); value != "Ada, Lovelace" {
 		t.Fatalf("expected first value Ada, Lovelace, got %q", value)

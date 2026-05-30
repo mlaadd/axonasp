@@ -2719,21 +2719,21 @@ func (c *Compiler) compileJScriptCall(node *jsast.CallExpression) {
 					c.compileJScriptExpression(node.ArgumentList[0])
 					switch method {
 					case "sin":
-						c.emitExt(ExtOpJSMathSin, 0)
+						c.emitExt(ExtOpJSMathSin)
 					case "cos":
-						c.emitExt(ExtOpJSMathCos, 0)
+						c.emitExt(ExtOpJSMathCos)
 					case "tan":
-						c.emitExt(ExtOpJSMathTan, 0)
+						c.emitExt(ExtOpJSMathTan)
 					case "abs":
-						c.emitExt(ExtOpJSMathAbs, 0)
+						c.emitExt(ExtOpJSMathAbs)
 					case "floor":
-						c.emitExt(ExtOpJSMathFloor, 0)
+						c.emitExt(ExtOpJSMathFloor)
 					case "ceil":
-						c.emitExt(ExtOpJSMathCeil, 0)
+						c.emitExt(ExtOpJSMathCeil)
 					case "round":
-						c.emitExt(ExtOpJSMathRound, 0)
+						c.emitExt(ExtOpJSMathRound)
 					case "sqrt":
-						c.emitExt(ExtOpJSMathSqrt, 0)
+						c.emitExt(ExtOpJSMathSqrt)
 					}
 					return
 				}
@@ -2742,9 +2742,9 @@ func (c *Compiler) compileJScriptCall(node *jsast.CallExpression) {
 					c.compileJScriptExpression(node.ArgumentList[0])
 					c.compileJScriptExpression(node.ArgumentList[1])
 					if method == "min" {
-						c.emitExt(ExtOpJSMathMin, 0)
+						c.emitExt(ExtOpJSMathMin)
 					} else {
-						c.emitExt(ExtOpJSMathMax, 0)
+						c.emitExt(ExtOpJSMathMax)
 					}
 					return
 				}

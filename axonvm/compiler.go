@@ -1464,6 +1464,11 @@ func (c *Compiler) resolveVar(name string) (OpCode, int) {
 	}
 
 	if c.isLocal {
+		if c.currentClassName != "" {
+			idx := c.Globals.Add(name)
+			c.implicitGlobals[lower] = true
+			return OpGetGlobal, idx
+		}
 		idx := c.locals.Add(name)
 		return OpGetLocal, idx
 	}
