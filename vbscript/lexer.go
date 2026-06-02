@@ -372,6 +372,16 @@ func (l *Lexer) getChar(pos int) rune {
 	return l.runes[pos]
 }
 
+// sliceString returns the substring identified by [start:end] using byte offsets
+// into the original source when asciiOnly is true, or rune offsets otherwise.
+//
+// When asciiOnly, the returned string is explicitly cloned via strings.Clone so
+// that it owns an independent backing array. This prevents the entire raw ASP
+// source file (l.Code) from being pinned in the heap by a small retained token
+// substring — a classic Go string-slicing memory leak.
+//
+// The rune path (string(l.runes[start:end])) already allocates a new backing
+// array, so no additional clone is required there.
 func (l *Lexer) sliceString(start int, end int) string {
 	if start < 0 {
 		start = 0
@@ -383,7 +393,7 @@ func (l *Lexer) sliceString(start int, end int) string {
 		end = l.Length
 	}
 	if l.asciiOnly {
-		return l.Code[start:end]
+		return strings.Clone(l.Code[start:end])
 	}
 	return string(l.runes[start:end])
 }
@@ -657,8 +667,9 @@ func (l *Lexer) nextStringLiteral() Token {
 					l.Index = start + 1
 					goto slowPath
 				}
-				// Plain closing quote: zero-copy window into original source.
-				value := l.Code[contentStart:l.Index]
+				// Plain closing quote: clone the value so the returned token
+				// does not pin the entire source file via string slicing.
+				value := strings.Clone(l.Code[contentStart:l.Index])
 				l.Index++ // advance past closing quote
 				return &StringLiteralToken{
 					LiteralToken: LiteralToken{
