@@ -1,0 +1,303 @@
+:root {
+    --g3pix-panel: color-mix(in srgb, var(--bg-elevated) 92%, var(--accent-soft));
+    --g3pix-grid-gap: 1rem;
+}
+
+.g3pix-pill {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    line-height: 1;
+}
+
+.g3pix-card-meta {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.8rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.g3pix-home-section-head {
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+}
+
+.g3pix-home-search {
+    margin: 0;
+    min-width: min(100%, 360px);
+}
+
+.g3pix-child-pages {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.g3pix-child-pages h2 {
+    margin-top: 0;
+}
+
+.g3pix-help {
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    margin: 0.25rem 0 0;
+}
+
+.g3pix-shortcode-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.55rem;
+}
+
+.g3pix-shortcode-toolbar .btn {
+    margin: 0;
+}
+
+.g3pix-body,
+.g3pix-admin-body {
+    background-image: var(--hero-glow), linear-gradient(180deg, color-mix(in srgb, var(--bg) 95%, var(--accent-soft)) 0%, var(--bg) 42%);
+    background-attachment: fixed;
+}
+
+.g3pix-hero {
+    border: 1px solid var(--border);
+    background: var(--g3pix-panel);
+    box-shadow: var(--shadow);
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 1.4rem;
+    padding: clamp(1rem, 3vw, 2rem);
+}
+
+.g3pix-hero h1 {
+    margin: 0;
+    font-size: clamp(2rem, 4vw, 3.1rem);
+    line-height: 1.03;
+}
+
+.g3pix-hero p {
+    color: var(--text-muted);
+    max-width: 56ch;
+}
+
+.g3pix-chip {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    padding: 0.3rem 0.6rem;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.85rem;
+    margin-bottom: 0.8rem;
+}
+
+.g3pix-grid {
+    margin-top: 1.2rem;
+    display: grid;
+    gap: var(--g3pix-grid-gap);
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.g3pix-card {
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-soft);
+    padding: 1rem;
+}
+
+.g3pix-card h3 {
+    margin: 0 0 0.5rem;
+}
+
+.g3pix-card p {
+    margin: 0 0 1rem;
+    color: var(--text-muted);
+}
+
+.g3pix-content {
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow-soft);
+    padding: 1.2rem;
+}
+
+.g3pix-content h1 {
+    margin-top: 0;
+}
+
+.g3pix-admin-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.g3pix-metric {
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    padding: 1rem;
+    box-shadow: var(--shadow-soft);
+}
+
+.g3pix-metric strong {
+    display: block;
+    font-size: 1.9rem;
+    margin-top: 0.4rem;
+}
+
+.g3pix-form-grid {
+    display: grid;
+    gap: 0.8rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.g3pix-form-grid .full {
+    grid-column: 1 / -1;
+}
+
+.g3pix-form textarea,
+.g3pix-form input,
+.g3pix-form select {
+    width: 100%;
+    padding: 0.65rem;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text);
+}
+
+.g3pix-form label {
+    display: block;
+    margin-bottom: 0.2rem;
+    font-weight: 600;
+}
+
+.g3pix-form .actions-row {
+    margin-top: 0.8rem;
+}
+
+.g3pix-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+}
+
+.g3pix-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.g3pix-table th,
+.g3pix-table td {
+    padding: 0.6rem;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+}
+
+.g3pix-table td form {
+    display: inline;
+}
+
+.g3pix-alert {
+    border: 1px solid var(--border);
+    padding: 0.7rem;
+    margin: 0.8rem 0;
+    background: var(--bg-elevated);
+}
+
+.g3pix-alert.error {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+.g3pix-alert.success {
+    border-color: var(--success);
+    color: var(--success);
+}
+
+.g3pix-footer {
+    border-top: 1px solid var(--border);
+    margin-top: 2rem;
+}
+
+.footer-inner {
+    max-width: var(--layout-max);
+    margin: 0 auto;
+    padding: 0.8rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    color: var(--text-muted);
+}
+
+.footer-theme {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    min-width: 150px;
+}
+
+.footer-theme-label {
+    color: var(--text);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-family: "IBM Plex Mono", Consolas, monospace;
+    margin: 0;
+}
+
+.theme-select {
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text);
+    font: inherit;
+    padding: 0.42rem 0.48rem;
+}
+
+@media (max-width: 840px) {
+    .g3pix-hero {
+        grid-template-columns: 1fr;
+    }
+
+    .g3pix-home-section-head {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .g3pix-form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .nav-toggle {
+        display: inline-flex;
+    }
+
+    .nav-shell {
+        display: none;
+        width: 100%;
+        margin-top: 0.6rem;
+    }
+
+    .nav-shell.is-open {
+        display: block;
+    }
+
+    .header-inner {
+        flex-wrap: wrap;
+    }
+
+    .nav-menu {
+        width: 100%;
+    }
+}
