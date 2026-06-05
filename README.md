@@ -37,7 +37,7 @@ AxonASP extends standard ASP with native Go libraries, giving you enterprise pow
 - **G3ZIP, G3TAR, G3ZLIB, G3ZSTD:** Full compression suite built right in.
 - **And much more...** Over 60 custom Axon functions are available to extend ASP's capabilities.
 
-For a full list of libraries and documentation on how to use them, please read our extensive manual at [`./www/manual/`](www/manual/) and explore our website source at [`./resources/website/`](resources/website/).
+For a full list of libraries and documentation on how to use them, please read our extensive manual at [`./www/manual/`](www/manual/) and explore our website at [https://g3pix.com.br/axonasp](https://g3pix.com.br/axonasp), where you will find pages running in AxonASP 2.2 and also our WASM Playground.
 
 ## 🎨 AxonLive with Visual Application Builder
 
@@ -100,4 +100,4 @@ This project is licensed under the MPL License - see the [LICENSE.txt](LICENSE.t
 </p>
 
 #### Legal Disclaimer
-AxonASP is an independent software project developed by G3pix Ltda and is **not affiliated with, endorsed by, or sponsored by Microsoft Corporation**. Trademarks such as "Microsoft," "Active Server Pages," "ASP," "VBScript," "JScript" are registered trademarks of Microsoft Corporation.
+AxonASP is an independent software project developed by G3pix and is **not affiliated with, endorsed by, or sponsored by Microsoft Corporation**. Trademarks such as "Microsoft," "Active Server Pages," "ASP," "VBScript," "JScript" are registered trademarks of Microsoft Corporation.
