@@ -8,7 +8,7 @@ Therefore, as recommended by Microsoft for running other engines like Python, Ax
 
 We provide the `iis-http.cmd` file in both the Windows installation and the project root directory. You must define it in the `processPath="C:\axonasp\iis-http.cmd"` attribute. **Warning:** If AxonASP is not installed in the default directory (`C:\axonasp\`), you must modify the file to point to the correct directory. Otherwise, the system will fail to locate the configuration file, and script execution will fail silently.
 
-Because IIS does not allocate a real console during FastCGI server execution, console messages via `stdoutLogEnabled="true"` will always yield a blank `stdoutLogFile`. This is a strict limitation caused by the integrated C-supported SQLite library, which crashes the server if started without an attached console. AxonASP error and console messages will continue to be written to the location defined in the `axonasp.toml` configuration file.
+Because IIS does not allocate a real console during server execution, console messages via `stdoutLogEnabled="true"` will always yield a blank `stdoutLogFile`. This is a strict limitation caused by the integrated C-supported SQLite library, which crashes the server if started without an attached console. AxonASP error and console messages will continue to be written to the location defined in the `axonasp.toml` configuration file.
 
 ## Installation
 

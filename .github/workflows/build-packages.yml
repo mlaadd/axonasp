@@ -104,7 +104,7 @@ jobs:
         run: |
           mkdir -p axonasp-windows
           cp *.exe axonasp-windows/
-          cp -r www config mcp LICENSE.txt global.asa axonasp-windows/
+          cp -r www config mcp LICENSE.txt global.asa iis-http.cmd install-service.ps1 uninstall-service.ps1 axonasp-windows/
           zip -r "axonasp-windows-${VERSION}-amd64.zip" axonasp-windows/
 
       - name: Upload Packages as Artifacts
