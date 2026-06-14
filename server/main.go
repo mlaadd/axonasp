@@ -45,11 +45,13 @@ import (
 	"syscall"
 	"time"
 
+	_ "g3pix.com.br/axonasp/axonboot"
 	"g3pix.com.br/axonasp/axonconfig"
 	"g3pix.com.br/axonasp/axonvm"
 	"g3pix.com.br/axonasp/axonvm/asp"
 	"github.com/fsnotify/fsnotify"
 	"github.com/joho/godotenv"
+	"github.com/spf13/pflag"
 )
 
 // Configuration variables.
@@ -105,6 +107,14 @@ func registerFixedMIMETypes() {
 // loadServerConfig loads and applies server/global settings from config/axonasp.toml using Viper.
 func loadServerConfig() {
 	v := axonconfig.NewViper()
+	if pflag.Lookup("server.server_port") == nil {
+		pflag.Int("server.server_port", 8801, "Server port to listen on. This is usefull for using AxonASP in IIS with HttpPlatformHandler, as it will pass the port as an argument.")
+	}
+
+	pflag.Parse()
+
+	v.BindPFlags(pflag.CommandLine)
+
 	if strings.TrimSpace(v.ConfigFileUsed()) == "" {
 		log.Printf("Warning: Failed to read configuration file, using defaults.\n")
 	}

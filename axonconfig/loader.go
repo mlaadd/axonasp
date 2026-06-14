@@ -31,7 +31,9 @@ import (
 
 // NewViper loads axonasp.toml using cwd-relative and executable-relative fallbacks.
 func NewViper() *viper.Viper {
+
 	v := viper.New()
+
 	v.SetConfigType("toml")
 
 	configCandidates := []string{

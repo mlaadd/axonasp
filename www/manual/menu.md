@@ -15,6 +15,7 @@
     * [Script Caching](md/runtime/script-caching.md)
     * [Locale Support](md/runtime/locales.md)
     * [FastCGI Setup](md/runtime/fastcgi-setup.md)
+    * [IIS Support](md/runtime/iis-support.md)
     * [Reverse Proxy Setup](md/runtime/reverse-proxy.md)
     * [Running as a Linux Service](md/runtime/linux-service.md)
     * [Installing from Linux Packages](md/runtime/linux-packages.md)

@@ -2,14 +2,14 @@
 
 ## Overview
 
-AxonASP provides a FastCGI application server (`axonasp-fastcgi.exe`) that integrates directly with Nginx, Apache, or IIS using the FastCGI protocol. In this mode AxonASP acts as a backend process and the front-end web server handles all HTTP connections, static content, and TLS termination.
+AxonASP provides a FastCGI application server (`axonasp-fastcgi.exe`) that integrates directly with Nginx, Apache or other servers using the FastCGI protocol. In this mode AxonASP acts as a backend process and the front-end web server handles all HTTP connections, static content, and TLS termination. There is no support for IIS FastCGI, you must use the http platform handler to proxy requests to the AxonASP default server.
 
 AxonASP FastCGI fully supports **multi-host deployments** with different document roots, similar to PHP-FPM. This allows a single FastCGI server process to serve content from multiple virtual hosts, each with its own document root directory.
 
 ## Prerequisites
 
 - `axonasp-fastcgi.exe` running and reachable on the configured port (default: 9000)
-- Front-end web server with FastCGI support installed (nginx, Apache, IIS)
+- Front-end web server with FastCGI support installed (nginx, Apache)
 
 The FastCGI port is configured in `config/axonasp.toml`:
 
@@ -212,40 +212,7 @@ Apache automatically sets `DOCUMENT_ROOT` to the `DocumentRoot` directive value 
 
 ## IIS with FastCGI
 
-Configure IIS to use AxonASP as a FastCGI handler for `.asp` files:
-
-```powershell
-# Run as Administrator
-Import-Module WebAdministration
-
-# Add FastCGI application
-Add-WebConfiguration -PSPath "IIS:\" `
-    -Filter "system.webServer/fastCgi" `
-    -Value @{
-        fullPath = "C:\axonasp\axonasp-fastcgi.exe";
-        arguments = "";
-        instanceMaxRequests = 10000;
-        maxInstances = 4;
-        requestTimeout = 300;
-    }
-
-# Map .asp extension to the FastCGI handler
-Add-WebConfigurationProperty `
-    -PSPath "IIS:\Sites\Default Web Site" `
-    -Filter "system.webServer/handlers" `
-    -Name "." `
-    -Value @{
-        name = "AxonASP-FastCGI";
-        path = "*.asp";
-        verb = "*";
-        modules = "FastCgiModule";
-        scriptProcessor = "C:\axonasp\axonasp-fastcgi.exe";
-        resourceType = "File";
-        requireAccess = "Read";
-    }
-
-iisreset
-```
+AxonASP does not natively support IIS FastCGI, you must use the HttpPlatformHandler to proxy requests to the AxonASP default server. This is the way to integrate with IIS while maintaining full feature parity, as the FastCGI protocol is not natively supported on Windows because of lack of support for named pipes and other Windows IPC mechanisms in the FastCGI go implementation. Check the IIS Support documentation for more details.
 
 ## Unix Socket Mode
 

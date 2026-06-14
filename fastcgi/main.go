@@ -27,6 +27,7 @@ package main
 import (
 	"errors"
 	"fmt"
+
 	"html"
 	"io"
 	"log"
@@ -45,11 +46,13 @@ import (
 	"syscall"
 	"time"
 
+	_ "g3pix.com.br/axonasp/axonboot"
 	"g3pix.com.br/axonasp/axonconfig"
 	"g3pix.com.br/axonasp/axonvm"
 	"g3pix.com.br/axonasp/axonvm/asp"
 	"github.com/fsnotify/fsnotify"
 	"github.com/joho/godotenv"
+	"github.com/spf13/pflag"
 )
 
 // FastCGI configuration values.
@@ -91,6 +94,13 @@ func init() {
 // loadFastCGIConfig loads and applies fastcgi/global settings from config/axonasp.toml using Viper.
 func loadFastCGIConfig() {
 	v := axonconfig.NewViper()
+	if pflag.Lookup("fastcgi.server_port") == nil {
+		pflag.Int("fastcgi.server_port", 9000, "FastCGI server port to listen on")
+	}
+
+	pflag.Parse()
+
+	v.BindPFlags(pflag.CommandLine)
 	if strings.TrimSpace(v.ConfigFileUsed()) == "" {
 		log.Printf("Warning: Failed to read configuration file, using defaults.\n")
 	}
