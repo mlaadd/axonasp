@@ -40,7 +40,8 @@ Following the installation of the HttpPlatformHandler module, you must configure
 ```
 **Warning:** Ensure the IIS user, typically defined as `IIS_IUSRS`, has read/write permissions to the AxonASP folders and files. This is required for writing to the `temp` directory and for executing both `iis-http.cmd` and `axonasp-http.exe`. Without proper permissions, the process will fail silently and return a 500 Internal Server Error.
 
-The executable that IIS will proxy traffic to is `axonasp-http.exe`. Consequently, your ASP files, `global.asa`, AxonASP `web.config`, and overall infrastructure must reside within the default directory defined in `axonasp.toml` (default `C:\axonasp\www\`). IIS acts solely as a reverse proxy starting the executable. For proper isolation, we recommend that each AxonASP Application/Site is placed in a dedicated folder containing its own executable and `.toml` configuration file.
+The executable that IIS will proxy traffic to is `axonasp-http.exe`. Consequently, your ASP files, `global.asa`, AxonASP `web.config`, and overall infrastructure must reside within the default directory defined in `axonasp.toml` (default `C:\axonasp\www\`). IIS acts solely as a reverse proxy starting the executable. For proper isolation, we recommend that each AxonASP Application/Site is placed in a dedicated folder containing its own executable and `.toml` configuration file. Also,  set the `clean_sessions_on_startup` in the configuration file to prevent session being lost if IIS finish the application process, or users may experience unexpected behavior when using features that require persistent sessions. For better performance, you can also set `clean_cache_on_startup` to `false`.
+
 
 ## Limitations
 While IIS natively supports Classic ASP, it is highly resource-intensive. If possible, consider migrating to a lighter reverse proxy setup (e.g., Nginx, Caddy).
