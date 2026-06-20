@@ -1463,7 +1463,8 @@ func (c *Compiler) resolveVar(name string) (OpCode, int) {
 		// Even if not explicitly Dim'ed, if it was used once it exists in SymbolTable.
 		// We only error if Option Explicit is on and it wasn't Dim'ed.
 		// NOTE: Slots below userGlobalsStart are read-only intrinsics/constants and don't need Dim.
-		if c.optionExplicit && idx >= c.userGlobalsStart && !c.declaredGlobals[lower] {
+		// Implicit globals (created by ExecuteGlobal at runtime) are also allowed.
+		if c.optionExplicit && idx >= c.userGlobalsStart && !c.declaredGlobals[lower] && !c.implicitGlobals[lower] {
 			panic(c.vbCompileError(vbscript.VariableNotDefined, fmt.Sprintf("Variable not defined: '%s'", name)))
 		}
 		return OpGetGlobal, idx
@@ -1471,7 +1472,13 @@ func (c *Compiler) resolveVar(name string) (OpCode, int) {
 
 	// 3. Implicit Declaration check
 	if c.optionExplicit {
-		panic(c.vbCompileError(vbscript.VariableNotDefined, fmt.Sprintf("Variable not defined: '%s'", name)))
+		// Allow implicit global reads for variables that may be created
+		// at runtime via ExecuteGlobal. Classic ASP compatibility: the
+		// ExecuteGlobal statement can inject global variables/functions
+		// that the caller's compiler cannot see at compile time.
+		idx := c.Globals.Add(name)
+		c.implicitGlobals[lower] = true
+		return OpGetGlobal, idx
 	}
 
 	if c.isLocal {
@@ -1592,9 +1599,9 @@ func (c *Compiler) resolveSetVar(name string) (OpCode, int) {
 		return OpSetLocal, idx
 	}
 
-	if c.optionExplicit && !c.declaredGlobals[lower] {
-		// Special case: we might allow implicit if we are in local but it's a global
-		// but standard VBScript with Option Explicit requires Dim.
+	if c.optionExplicit && !c.declaredGlobals[lower] && !c.implicitGlobals[lower] {
+		// Allow assignment to implicit globals that may have been created
+		// at runtime via ExecuteGlobal. Classic ASP compatibility.
 		panic(c.vbCompileError(vbscript.VariableNotDefined, fmt.Sprintf("Variable not defined: '%s'", name)))
 	}
 
