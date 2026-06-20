@@ -1418,7 +1418,7 @@ func vbsAxonEnumValues(vm *VM, args []Value) (Value, error) {
 
 func compareASCIINameFold(left string, right string) int {
 	limit := min(len(right), len(left))
-	for i := 0; i < limit; i++ {
+	for i := range limit {
 		lb := toLowerASCIIByte(left[i])
 		rb := toLowerASCIIByte(right[i])
 		if lb < rb {

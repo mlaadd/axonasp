@@ -182,7 +182,7 @@ func (j *G3JSON) vmValueToGoValue(v Value, seenNative map[int64]bool, seenArrays
 			itemsVal, _ := j.vm.dispatchDictionaryMethod(v.Num, "Items", nil)
 			if keysVal.Type == VTArray && itemsVal.Type == VTArray && keysVal.Arr != nil && itemsVal.Arr != nil {
 				limit := min(len(itemsVal.Arr.Values), len(keysVal.Arr.Values))
-				for i := 0; i < limit; i++ {
+				for i := range limit {
 					k := keysVal.Arr.Values[i].String()
 					m[k] = j.vmValueToGoValue(itemsVal.Arr.Values[i], seenNative, seenArrays)
 				}

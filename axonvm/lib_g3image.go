@@ -140,10 +140,7 @@ func (g *G3Image) DispatchPropertySet(propertyName string, args []Value) bool {
 		}
 		return true
 	case "jpgquality", "jpegquality":
-		q := max(int(g.vm.asInt(val)), 1)
-		if q > 100 {
-			q = 100
-		}
+		q := min(max(int(g.vm.asInt(val)), 1), 100)
 		g.jpgQuality = q
 		return true
 	}

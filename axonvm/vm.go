@@ -8702,7 +8702,7 @@ func (vm *VM) beginUserSubCall(target Value, args []Value, discardReturn bool, b
 		vm.raise(vbscript.StackOverflow, "Stack overflow")
 	}
 
-	for i := 0; i < localCount; i++ {
+	for i := range localCount {
 		vm.stack[vm.fp+i] = Value{Type: VTEmpty}
 		vm.localTypes[vm.fp+i] = VTEmpty // Clear any stale declared type from previous frames
 	}
@@ -8734,7 +8734,7 @@ func (vm *VM) beginUserSubCall(target Value, args []Value, discardReturn bool, b
 			// Copy remaining args into a new array to avoid aliasing the argBuffer.
 			remaining := max(len(args)-argIdx, 0)
 			vba := NewVBArray(0, remaining)
-			for j := 0; j < remaining; j++ {
+			for j := range remaining {
 				vba.Values[j] = args[argIdx+j]
 			}
 			vm.stack[vm.fp+paramIdx] = Value{Type: VTArray, Arr: vba}

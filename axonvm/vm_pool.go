@@ -129,7 +129,7 @@ func getProgramPool(program CachedProgram) *vmProgramPool {
 	// Pre-warming: Fill the pool with a few pre-allocated VMs to handle initial bursts.
 	// We don't fill the entire limit (250) to avoid excessive memory usage in tests/rare scripts.
 	warmLimit := min(limit, 5)
-	for i := 0; i < warmLimit; i++ {
+	for range warmLimit {
 		vm := NewVMFromCachedProgram(entry.program)
 		vm.pooledFrom = entry
 		entry.items = append(entry.items, vm)

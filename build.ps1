@@ -163,7 +163,10 @@ function Build-Binary {
 
 $BuildSuccess = $true
 
-# --- Format and generate before any build pass ---
+# --- Fix, format and generate before any build pass ---
+Write-Info "Fixing source..."
+go fix ./... | Out-Null
+
 Write-Info "Formatting source..."
 gofmt -w . | Out-Null
 

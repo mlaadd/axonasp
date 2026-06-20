@@ -171,7 +171,10 @@ build_binary() {
     fi
 }
 
-# --- Format and generate before any build pass ---
+# --- Fix, format and generate before any build pass ---
+write_info "Fixing source..."
+go fix ./... > /dev/null 2>&1
+
 write_info "Formatting source..."
 gofmt -w . > /dev/null 2>&1
 

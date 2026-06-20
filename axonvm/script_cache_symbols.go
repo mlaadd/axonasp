@@ -121,10 +121,7 @@ func buildCachedProgramFromCompiler(compiler *Compiler) CachedProgram {
 	}
 	base := getBaseGlobalDictionary()
 	allGlobals := compiler.Globals.names
-	userStart := max(compiler.userGlobalsStart, 0)
-	if userStart > len(allGlobals) {
-		userStart = len(allGlobals)
-	}
+	userStart := min(max(compiler.userGlobalsStart, 0), len(allGlobals))
 	baseCount := min(len(base.names), userStart)
 	prelude := cloneStringSlice(allGlobals[baseCount:userStart])
 	users := cloneStringSlice(allGlobals[userStart:])

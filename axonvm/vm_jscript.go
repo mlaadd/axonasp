@@ -3081,13 +3081,7 @@ func (vm *VM) jsCreateClosure(template Value) Value {
 		isGenerator:        isGenerator,
 	}
 	if vm.jsBlockScopeDepth > 0 {
-		activeDepth := min(vm.jsBlockScopeDepth, len(vm.jsBlockScopes))
-		if activeDepth > len(vm.jsBlockScopeConst) {
-			activeDepth = len(vm.jsBlockScopeConst)
-		}
-		if activeDepth > len(vm.jsBlockScopeTDZ) {
-			activeDepth = len(vm.jsBlockScopeTDZ)
-		}
+		activeDepth := min(min(min(vm.jsBlockScopeDepth, len(vm.jsBlockScopes)), len(vm.jsBlockScopeConst)), len(vm.jsBlockScopeTDZ))
 		if activeDepth > 0 {
 			fnObj.capturedBlockScopes = append(make([]map[string]Value, 0, activeDepth), vm.jsBlockScopes[:activeDepth]...)
 			fnObj.capturedBlockScopeConst = append(make([]map[string]struct{}, 0, activeDepth), vm.jsBlockScopeConst[:activeDepth]...)
@@ -3405,7 +3399,7 @@ func (vm *VM) jsRefreshArgumentsObject(objID int64, args []Value, params []strin
 			clear(alias.paramToIndex)
 		}
 		max := min(len(args), len(params))
-		for i := 0; i < max; i++ {
+		for i := range max {
 			key := strconv.Itoa(i)
 			paramName := params[i]
 			alias.indexToParam[key] = paramName
@@ -3532,7 +3526,7 @@ func (vm *VM) jsCreateArgumentsObject(args []Value, params []string, envID int64
 			paramToIndex: make(map[string]string, len(params)),
 		}
 		max := min(len(args), len(params))
-		for i := 0; i < max; i++ {
+		for i := range max {
 			key := strconv.Itoa(i)
 			paramName := params[i]
 			alias.indexToParam[key] = paramName
@@ -6122,10 +6116,7 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			start := jsNormalizeRelativeIndex(int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt), length)
 			deleteCount := length - start
 			if len(args) > 1 {
-				deleteCount = max(int(vm.jsToNumber(args[1]).Flt), 0)
-				if deleteCount > length-start {
-					deleteCount = length - start
-				}
+				deleteCount = min(max(int(vm.jsToNumber(args[1]).Flt), 0), length-start)
 			}
 			insertItems := []Value(nil)
 			if len(args) > 2 {
@@ -6173,10 +6164,7 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			start := jsNormalizeRelativeIndex(int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt), length)
 			deleteCount := length - start
 			if len(args) > 1 {
-				deleteCount = max(int(vm.jsToNumber(args[1]).Flt), 0)
-				if deleteCount > length-start {
-					deleteCount = length - start
-				}
+				deleteCount = min(max(int(vm.jsToNumber(args[1]).Flt), 0), length-start)
 			}
 			removed := make([]Value, deleteCount)
 			copy(removed, target.Arr.Values[start:start+deleteCount])
@@ -6240,7 +6228,7 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 						lenVal, _ := vm.jsMemberGet(arg, "length")
 						length := max(int(vm.jsToNumber(lenVal).Flt), 0)
 						values = make([]Value, length)
-						for j := 0; j < length; j++ {
+						for j := range length {
 							if vm.jsArrayLikeHasIndex(arg, j) {
 								item, _ := vm.jsArrayLikeGetIndex(arg, j)
 								values[j] = item

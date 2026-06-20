@@ -480,10 +480,7 @@ func g3fcCreateFEC(data []byte, fecLevel byte) ([]byte, error) {
 	if len(data) == 0 || fecLevel == 0 {
 		return []byte{}, nil
 	}
-	parityShardsCount := max((int(fecLevel)*(G3FCMaxFECLibShards-1))/100, G3FCMinFECShards)
-	if parityShardsCount > G3FCMaxFECShards {
-		parityShardsCount = G3FCMaxFECShards
-	}
+	parityShardsCount := min(max((int(fecLevel)*(G3FCMaxFECLibShards-1))/100, G3FCMinFECShards), G3FCMaxFECShards)
 	dataShardsCount := G3FCMaxFECLibShards - parityShardsCount
 	if dataShardsCount <= 0 {
 		dataShardsCount = 1

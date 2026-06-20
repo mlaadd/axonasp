@@ -184,10 +184,7 @@ func (vm *VM) dispatchADODBStreamPropertySet(objID int64, member string, val Val
 	case strings.EqualFold(member, "LineSeparator"):
 		stream.lineSeparator = vm.asInt(val)
 	case strings.EqualFold(member, "Position"):
-		newPosition := max(int64(vm.asInt(val)), 0)
-		if newPosition > stream.size {
-			newPosition = stream.size
-		}
+		newPosition := min(max(int64(vm.asInt(val)), 0), stream.size)
 		stream.position = newPosition
 	}
 

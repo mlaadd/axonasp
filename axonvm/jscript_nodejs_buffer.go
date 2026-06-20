@@ -223,18 +223,12 @@ func (vm *VM) jsCallBufferInstanceMethod(bufObj Value, methodName string, args [
 
 		start := 0
 		if len(args) > 1 && args[1].Type != VTJSUndefined {
-			start = max(int(vm.jsToNumber(args[1]).Flt), 0)
-			if start > len(bufItem.data) {
-				start = len(bufItem.data)
-			}
+			start = min(max(int(vm.jsToNumber(args[1]).Flt), 0), len(bufItem.data))
 		}
 
 		end := len(bufItem.data)
 		if len(args) > 2 && args[2].Type != VTJSUndefined {
-			end = max(int(vm.jsToNumber(args[2]).Flt), 0)
-			if end > len(bufItem.data) {
-				end = len(bufItem.data)
-			}
+			end = min(max(int(vm.jsToNumber(args[2]).Flt), 0), len(bufItem.data))
 		}
 
 		if start >= end {

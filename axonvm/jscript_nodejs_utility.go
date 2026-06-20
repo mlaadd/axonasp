@@ -235,7 +235,7 @@ func (vm *VM) jsCallOSMethod(methodName string, _ []Value) (Value, bool) {
 	case "cpus":
 		cpuCount := max(runtime.NumCPU(), 0)
 		entries := make([]Value, cpuCount)
-		for i := 0; i < cpuCount; i++ {
+		for i := range cpuCount {
 			timesID := vm.allocJSID()
 			timesObj := make(map[string]Value, 8)
 			timesObj["__js_type"] = NewString("Object")

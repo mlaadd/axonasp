@@ -335,10 +335,7 @@ func vbsCompatLeftB(_ *VM, args []Value) (Value, error) {
 		return NewString(""), nil
 	}
 	bs := ansiBytes(args[0].String())
-	n := max(int(args[1].Num), 0)
-	if n > len(bs) {
-		n = len(bs)
-	}
+	n := min(max(int(args[1].Num), 0), len(bs))
 	return NewString(bytesToVBByteString(bs[:n])), nil
 }
 
@@ -348,10 +345,7 @@ func vbsCompatRightB(_ *VM, args []Value) (Value, error) {
 		return NewString(""), nil
 	}
 	bs := ansiBytes(args[0].String())
-	n := max(int(args[1].Num), 0)
-	if n > len(bs) {
-		n = len(bs)
-	}
+	n := min(max(int(args[1].Num), 0), len(bs))
 	return NewString(bytesToVBByteString(bs[len(bs)-n:])), nil
 }
 
