@@ -2248,6 +2248,26 @@ input[type="submit"]:active {
     word-break: break-word;
 }
 
+.wasm-playground-instructions {
+    width: calc(100% - 40px);
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 0 0 40px;
+}
+
+.wasm-playground-instructions .card.card-top-blue {
+    padding: 24px;
+}
+
+.wasm-playground-instructions .lead {
+    margin-bottom: 0;
+}
+
+.wasm-playground-instructions .card p {
+    margin: 0;
+    color: var(--text-muted);
+}
+
 /* Responsive */
 @media (max-width: 1050px) {
     .hero {
@@ -2344,6 +2364,11 @@ input[type="submit"]:active {
 
     .actions-row {
         width: 100%;
+    }
+
+    .wasm-playground-instructions {
+        width: calc(100% - 32px);
+        padding: 0 0 30px;
     }
 
     .btn,

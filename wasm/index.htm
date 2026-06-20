@@ -4,8 +4,32 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>AxonASP WASM Playground</title>
-        <link rel="stylesheet" href="axonasp.css" />
+        <title>AxonASP WASM Playground | Classic ASP in WebAssembly</title>
+        <meta name="description"
+            content="AxonASP WASM Playground for running Classic ASP code in the browser with WebAssembly. Edit the sample, load axonasp.wasm, and execute server-side ASP logic from the page." />
+        <meta name="keywords"
+            content="AxonASP, WASM Playground, Classic ASP, WebAssembly, ASP in browser, axonasp.wasm, server-side scripting" />
+        <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1" />
+        <meta name="author" content="AxonASP" />
+        <meta property="og:type" content="website" />
+        <meta property="og:title" content="AxonASP WASM Playground | Classic ASP in WebAssembly" />
+        <meta property="og:description"
+            content="Run Classic ASP code in the browser with WebAssembly, edit the sample, and execute it directly in the AxonASP playground." />
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:title" content="AxonASP WASM Playground | Classic ASP in WebAssembly" />
+        <meta name="twitter:description"
+            content="Run Classic ASP code in the browser with WebAssembly, edit the sample, and execute it directly in the AxonASP playground." />
+        <script type="application/ld+json">
+            {
+                "@context": "https://schema.org",
+                "@type": "SoftwareApplication",
+                "name": "AxonASP WASM Playground",
+                "applicationCategory": "DeveloperApplication",
+                "operatingSystem": "Browser",
+                "description": "AxonASP WASM Playground for running Classic ASP code in the browser with WebAssembly. Edit the sample, load axonasp.wasm, and execute server-side ASP logic from the page."
+            }
+        </script>
+        <link rel="stylesheet" href="axonasp.css?19062026" />
         <script src="wasm_exec.js"></script>
     </head>
 
@@ -75,7 +99,42 @@ Response.Write "<button id='btn2' onclick='dispatchLiveEvent(""btn2"", ""ask_nam
                 <h2>Output</h2>
                 <pre id="output" class="wasm-playground-output"></pre>
             </div>
+
         </main>
+
+        <section class="section wasm-playground-instructions" aria-labelledby="wasm-playground-instructions-title">
+            <div class="card card-top-blue">
+                <h2 id="wasm-playground-instructions-title">How to use the AxonASP WASM Playground</h2>
+                <p class="lead">The AxonASP WASM Playground runs Classic ASP code in the browser through WebAssembly.
+                    The page loads wasm_exec.js and axonasp.wasm before enabling the editor run button.</p>
+                <div class="grid-2">
+                    <article class="card">
+                        <h3>Add your ASP code</h3>
+                        <p>Paste your Classic ASP code inside the editor using standard server-side delimiters such as
+                            &lt;% ... %&gt;. You can use Response.Write to render markup, create server objects, and
+                            handle events inside the same script.</p>
+                    </article>
+                    <article class="card">
+                        <h3>Load the WASM module</h3>
+                        <p>When the page opens, JavaScript calls WebAssembly.instantiateStreaming(fetch("axonasp.wasm"),
+                            go.importObject). After the runtime reports that the module is ready, you can run the
+                            current script from the editor.</p>
+                    </article>
+                    <article class="card">
+                        <h3>Execute the sample</h3>
+                        <p>Click Run ASP Code to execute the current content. The output area below the editor shows the
+                            rendered result, while the status bar reports whether the WebAssembly module is loading,
+                            ready, or in an error state.</p>
+                    </article>
+                    <article class="card">
+                        <h3>Interactive events</h3>
+                        <p>For live UI actions, bind handlers such as onclick="dispatchLiveEvent(...)" and read the
+                            event name through Axon.EventName inside the ASP runtime. This keeps browser interactions
+                            and server-side logic connected in the same playground.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
 
         <script>
             const go = new Go();
