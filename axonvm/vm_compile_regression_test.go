@@ -8774,3 +8774,57 @@ End Sub
 		t.Fatalf("expected %q, got %q", expected, got)
 	}
 }
+
+// TestASPAddValuesStringNumericCoercion verifies VBScript '+' operator coercion rules:
+// - "5" + 3 = 8 (numeric addition)
+// - True + "3" raises Type Mismatch
+// - Date + "3" raises Type Mismatch
+// - "5a" + 3 raises Type Mismatch
+func TestASPAddValuesStringNumericCoercion(t *testing.T) {
+	source := `<%
+On Error Resume Next
+
+' 1. String + Numeric (valid)
+Err.Clear
+Dim res1 : res1 = "5" + 3
+Response.Write "1:" & res1 & "|Err:" & Err.Number & "|"
+
+' 2. String + Numeric (invalid string)
+Err.Clear
+Dim res2 : res2 = "5a" + 3
+Response.Write "2:Err:" & Err.Number & "|"
+
+' 3. Bool + String
+Err.Clear
+Dim res3 : res3 = True + "3"
+Response.Write "3:Err:" & Err.Number & "|"
+
+' 4. Date + String
+Err.Clear
+Dim d : d = CDate("2020-01-01")
+Dim res4 : res4 = d + "3"
+Response.Write "4:Err:" & Err.Number & "|"
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	vm := NewVMFromCompiler(compiler)
+	host := NewMockHost()
+	var output bytes.Buffer
+	host.SetOutput(&output)
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+	host.Response().Flush()
+
+	expected := "1:8|Err:0|2:Err:-2146828275|3:Err:-2146828275|4:Err:-2146828275|"
+	if got := output.String(); got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+

@@ -169,10 +169,13 @@ func (vm *VM) addValues(a Value, b Value) Value {
 		return NewString(vm.valueToString(a) + vm.valueToString(b))
 	}
 
-	leftNumeric := isNumericLike(a) || isEmpty(a)
-	rightNumeric := isNumericLike(b) || isEmpty(b)
+	// VBScript numeric addition for String + Numeric only allows numeric types (VTInteger, VTDouble).
+	// Other types like VTBool or VTDate combined with VTString under '+' operator must raise Type mismatch.
+	isStringANumericB := isString(a) && (b.Type == VTInteger || b.Type == VTDouble)
+	isStringBNumericA := isString(b) && (a.Type == VTInteger || a.Type == VTDouble)
+	bothNumeric := (isNumericLike(a) || isEmpty(a)) && (isNumericLike(b) || isEmpty(b))
 
-	if (leftNumeric && (rightNumeric || isString(b))) || (rightNumeric && isString(a)) {
+	if isStringANumericB || isStringBNumericA || bothNumeric {
 		left, leftOK := vm.coerceFloatStrict(a)
 		right, rightOK := vm.coerceFloatStrict(b)
 		if !leftOK || !rightOK {
