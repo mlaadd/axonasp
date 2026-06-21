@@ -3813,6 +3813,24 @@ aspExecLoop:
 				vm.push(NewNull())
 			} else if val.Type == VTDouble {
 				vm.push(NewDouble(-val.Flt))
+			} else if val.Type == VTString {
+				strVal := strings.TrimSpace(val.Str)
+				parsedFloat, err := strconv.ParseFloat(strVal, 64)
+				if err != nil {
+					vm.raise(vbscript.TypeMismatch, "Type mismatch")
+					vm.push(NewEmpty())
+					continue
+				}
+				if strings.Contains(strVal, ".") || strings.Contains(strings.ToLower(strVal), "e") {
+					vm.push(NewDouble(-parsedFloat))
+				} else {
+					parsedInt, intErr := strconv.ParseInt(strVal, 10, 64)
+					if intErr == nil {
+						vm.push(NewInteger(-parsedInt))
+					} else {
+						vm.push(NewDouble(-parsedFloat))
+					}
+				}
 			} else {
 				vm.push(NewInteger(-vm.coerceInt64(val)))
 			}

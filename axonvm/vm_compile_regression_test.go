@@ -8828,3 +8828,44 @@ Response.Write "4:Err:" & Err.Number & "|"
 	}
 }
 
+// TestASPUnaryNegationFloatCoercion verifies that unary negation of strings containing floats
+// yields a double-precision float value rather than rounding to integer, and that Null,
+// Empty, and numeric strings behave properly.
+func TestASPUnaryNegationFloatCoercion(t *testing.T) {
+	source := `<%
+Dim v1 : v1 = -("5.5")
+Dim v2 : v2 = -("5")
+Dim v3 : v3 = -Empty
+Dim v4 : v4 = -True
+Dim v5 : v5 = -Null
+
+Response.Write TypeName(v1) & ":" & v1 & "|"
+Response.Write TypeName(v2) & ":" & v2 & "|"
+Response.Write TypeName(v3) & ":" & v3 & "|"
+Response.Write TypeName(v4) & ":" & v4 & "|"
+Response.Write TypeName(v5) & ":" & v5
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	vm := NewVMFromCompiler(compiler)
+	host := NewMockHost()
+	var output bytes.Buffer
+	host.SetOutput(&output)
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+	host.Response().Flush()
+
+	expected := "Double:-5.5|Integer:-5|Integer:0|Integer:-1|Null:Null"
+	if got := output.String(); got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
+
