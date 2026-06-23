@@ -365,6 +365,7 @@ type VM struct {
 	wscriptShellItems              map[int64]*WScriptShell
 	wscriptExecItems               map[int64]*WScriptExecObject
 	wscriptProcessStreamItems      map[int64]*ProcessTextStream
+	wscriptEnvironmentItems        map[int64]*WshEnvironment
 	adoxCatalogItems               map[int64]*ADOXCatalog
 	adoxTablesItems                map[int64]*ADOXTables
 	adoxTableItems                 map[int64]*ADOXTableWrapper
@@ -694,6 +695,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		wscriptShellItems:              make(map[int64]*WScriptShell),
 		wscriptExecItems:               make(map[int64]*WScriptExecObject),
 		wscriptProcessStreamItems:      make(map[int64]*ProcessTextStream),
+		wscriptEnvironmentItems:        make(map[int64]*WshEnvironment),
 		adoxCatalogItems:               make(map[int64]*ADOXCatalog),
 		adoxTablesItems:                make(map[int64]*ADOXTables),
 		adoxTableItems:                 make(map[int64]*ADOXTableWrapper),
@@ -1668,6 +1670,7 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.wscriptShellItems = child.wscriptShellItems
 	vm.wscriptExecItems = child.wscriptExecItems
 	vm.wscriptProcessStreamItems = child.wscriptProcessStreamItems
+	vm.wscriptEnvironmentItems = child.wscriptEnvironmentItems
 	vm.adoxCatalogItems = child.adoxCatalogItems
 	vm.adoxTablesItems = child.adoxTablesItems
 	vm.adoxTableItems = child.adoxTableItems
@@ -5899,6 +5902,10 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 		return processStreamObject.DispatchMethod(member, args)
 	}
 
+	if wscriptEnvObject, exists := vm.wscriptEnvironmentItems[objID]; exists {
+		return wscriptEnvObject.DispatchMethod(member, args)
+	}
+
 	if adoxCatalogObject, exists := vm.adoxCatalogItems[objID]; exists {
 		return adoxCatalogObject.DispatchMethod(member, args)
 	}
@@ -7124,6 +7131,10 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 	}
 	if processStreamObject, exists := vm.wscriptProcessStreamItems[target.Num]; exists {
 		return processStreamObject.DispatchPropertyGet(member)
+	}
+
+	if wscriptEnvObject, exists := vm.wscriptEnvironmentItems[target.Num]; exists {
+		return wscriptEnvObject.DispatchPropertyGet(member)
 	}
 
 	if adoxCatalogObject, exists := vm.adoxCatalogItems[target.Num]; exists {

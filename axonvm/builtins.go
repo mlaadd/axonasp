@@ -1387,6 +1387,15 @@ func vbsAxonEnumValues(vm *VM, args []Value) (Value, error) {
 		return ValueFromVBArray(NewVBArrayFromValues(0, values)), nil
 	}
 
+	// WshEnvironment — yield KEY=VALUE strings for For Each enumeration.
+	if wshEnv, ok := vm.wscriptEnvironmentItems[target.Num]; ok && wshEnv != nil {
+		values := make([]Value, len(wshEnv.entries))
+		for i, entry := range wshEnv.entries {
+			values[i] = NewString(entry)
+		}
+		return ValueFromVBArray(NewVBArrayFromValues(0, values)), nil
+	}
+
 	obj, ok := vm.fsoItems[target.Num]
 	if !ok || obj == nil {
 		return NewEmpty(), invalidEnumerable

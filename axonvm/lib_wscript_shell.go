@@ -37,6 +37,126 @@ type WScriptShell struct {
 	vm *VM
 }
 
+// WshEnvironment wraps environment variables for a given scope as a Classic ASP
+// collection compatible with WScript.Shell.Environment. It supports .Count,
+// .Item(name), default property access (env("NAME")), and For Each enumeration
+// yielding KEY=VALUE strings.
+type WshEnvironment struct {
+	vm      *VM
+	scope   string
+	entries []string // KEY=VALUE pairs, pre-computed at creation time
+}
+
+// newWshEnvironment creates a WshEnvironment collection for the requested scope.
+// Supported scopes: "" (or "PROCESS"), "SYSTEM", "USER", "VOLATILE".
+// On all platforms PROCESS scope uses os.Environ(). On Windows, SYSTEM and USER
+// are read from the registry; on non-Windows they fall back to os.Environ().
+func (vm *VM) newWshEnvironment(scope string) Value {
+	scope = strings.ToUpper(strings.TrimSpace(scope))
+	var entries []string
+	switch scope {
+	case "SYSTEM":
+		entries = getSystemEnvironment()
+	case "USER":
+		entries = getUserEnvironment()
+	case "VOLATILE":
+		entries = getVolatileEnvironment()
+	default:
+		// "" or "PROCESS"
+		if scope != "" && scope != "PROCESS" {
+			// Unknown scope – return empty collection
+			entries = nil
+		} else {
+			entries = os.Environ()
+		}
+	}
+
+	obj := &WshEnvironment{
+		vm:      vm,
+		scope:   scope,
+		entries: entries,
+	}
+	id := vm.nextDynamicNativeID
+	vm.nextDynamicNativeID++
+	vm.wscriptEnvironmentItems[id] = obj
+	return Value{Type: VTNativeObject, Num: id}
+}
+
+// DispatchPropertyGet resolves property access on the WshEnvironment collection.
+func (we *WshEnvironment) DispatchPropertyGet(propertyName string) Value {
+	switch strings.ToLower(propertyName) {
+	case "count":
+		return NewInteger(int64(len(we.entries)))
+	}
+	// Default property: env("NAME")
+	return we.item(propertyName)
+}
+
+// DispatchMethod resolves method calls on the WshEnvironment collection.
+func (we *WshEnvironment) DispatchMethod(methodName string, args []Value) Value {
+	switch strings.ToLower(methodName) {
+	case "item":
+		if len(args) < 1 {
+			return NewString("")
+		}
+		return we.item(args[0].String())
+	case "":
+		// Default member call with args: env("NAME") / env(idx)
+		if len(args) < 1 {
+			return NewString("")
+		}
+		return we.item(args[0].String())
+	}
+	return NewEmpty()
+}
+
+// item looks up a single environment variable by name (case-insensitive for
+// Windows compatibility; on Unix it is case-sensitive). Returns the value or
+// empty string if not found.
+func (we *WshEnvironment) item(name string) Value {
+	if name == "" {
+		return NewString("")
+	}
+	for _, entry := range we.entries {
+		before, after, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		key := before
+		if strings.EqualFold(key, name) {
+			return NewString(after)
+		}
+	}
+	return NewString("")
+}
+
+// getSystemEnvironment returns system-scoped environment variables.
+// On Windows this reads from the HKLM registry; on other platforms it returns
+// os.Environ() as a best-effort fallback.
+func getSystemEnvironment() []string {
+	return getOSEnvironFallback()
+}
+
+// getUserEnvironment returns user-scoped environment variables.
+// On Windows this reads from the HKCU registry; on other platforms it returns
+// os.Environ() as a best-effort fallback.
+func getUserEnvironment() []string {
+	return getOSEnvironFallback()
+}
+
+// getVolatileEnvironment returns volatile environment variables.
+// On Windows these come from GetEnvironmentStrings; on other platforms returns
+// os.Environ() as a best-effort fallback.
+func getVolatileEnvironment() []string {
+	return getOSEnvironFallback()
+}
+
+// getOSEnvironFallback returns os.Environ() as a fallback when platform-specific
+// environment scope retrieval is not available.
+func getOSEnvironFallback() []string {
+	return os.Environ()
+}
+
 type WScriptExecObject struct {
 	vm           *VM
 	cmd          *exec.Cmd
@@ -75,6 +195,9 @@ func (vm *VM) newWScriptShellObject() Value {
 
 // DispatchPropertyGet acts as a getter.
 func (ws *WScriptShell) DispatchPropertyGet(propertyName string) Value {
+	if strings.EqualFold(propertyName, "environment") {
+		return ws.vm.newWshEnvironment("PROCESS")
+	}
 	return ws.DispatchMethod(propertyName, nil)
 }
 
@@ -242,6 +365,12 @@ func (ws *WScriptShell) DispatchMethod(methodName string, args []Value) Value {
 			return NewString("")
 		}
 		return NewString(os.Getenv(args[0].String()))
+
+	case "environment":
+		if len(args) >= 1 && args[0].String() != "" {
+			return ws.vm.newWshEnvironment(args[0].String())
+		}
+		return ws.vm.newWshEnvironment("PROCESS")
 
 	case "expandenvironmentstrings":
 		if len(args) < 1 {

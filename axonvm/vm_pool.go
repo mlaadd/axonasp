@@ -620,6 +620,9 @@ func (vm *VM) ensureDynamicMaps() {
 	if vm.wscriptProcessStreamItems == nil {
 		vm.wscriptProcessStreamItems = make(map[int64]*ProcessTextStream)
 	}
+	if vm.wscriptEnvironmentItems == nil {
+		vm.wscriptEnvironmentItems = make(map[int64]*WshEnvironment)
+	}
 	if vm.adoxCatalogItems == nil {
 		vm.adoxCatalogItems = make(map[int64]*ADOXCatalog)
 	}

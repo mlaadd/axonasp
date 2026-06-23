@@ -31,6 +31,9 @@ type WScriptExecObject struct{}
 // ProcessTextStream is the disabled placeholder for WScript text streams.
 type ProcessTextStream struct{}
 
+// WshEnvironment is the disabled placeholder for WScript.Shell.Environment.
+type WshEnvironment struct{}
+
 // newWScriptShellObject fails because WScript.Shell is disabled at compile time.
 func (vm *VM) newWScriptShellObject() Value {
 	panicLibraryDisabled("wscript_shell", "WScript.Shell")
@@ -53,6 +56,16 @@ func (ts *ProcessTextStream) DispatchPropertyGet(propertyName string) Value {
 	return Value{Type: VTEmpty}
 }
 func (ts *ProcessTextStream) DispatchMethod(methodName string, args []Value) Value {
+	return Value{Type: VTEmpty}
+}
+
+func (we *WshEnvironment) DispatchPropertyGet(propertyName string) Value {
+	return Value{Type: VTEmpty}
+}
+func (we *WshEnvironment) DispatchMethod(methodName string, args []Value) Value {
+	return Value{Type: VTEmpty}
+}
+func (vm *VM) newWshEnvironment(scope string) Value {
 	return Value{Type: VTEmpty}
 }
 
