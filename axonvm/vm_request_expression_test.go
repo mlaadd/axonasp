@@ -55,6 +55,33 @@ func TestVMRequestMemberChainExpression(t *testing.T) {
 	}
 }
 
+// TestVMRequestCookiesHasKeysExpression verifies VBScript compatibility for
+// Request.Cookies(name).HasKeys on keyed and non-keyed cookies.
+func TestVMRequestCookiesHasKeysExpression(t *testing.T) {
+	source := `<%= Request.Cookies("profile").HasKeys %>|<%= Request.Cookies("sid").HasKeys %>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	host.Request().Cookies.AddCookie("profile", "name=lucas")
+	host.Request().Cookies.AddCookie("sid", "")
+	var output bytes.Buffer
+	host.SetOutput(&output)
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	if output.String() != "True|False" {
+		t.Fatalf("unexpected output: %q", output.String())
+	}
+}
+
 // TestVMRequestBinaryReadExpression verifies Request.BinaryRead in expression call path.
 func TestVMRequestBinaryReadExpression(t *testing.T) {
 	source := `<%= Request.TotalBytes %>|<%= Request.BinaryRead(3) %>|<%= Request.BinaryRead(10) %>`

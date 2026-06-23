@@ -6267,7 +6267,10 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 			return Value{Type: VTEmpty}
 		case strings.EqualFold(member, "Cookies"):
 			if len(args) == 1 {
-				return NewString(request.GetCollectionValue("Cookies", args[0].String()))
+				if value, ok := request.Cookies.GetValue(args[0].String()); ok {
+					return vm.newRequestCollectionValueItem(value)
+				}
+				return Value{Type: VTEmpty}
 			}
 			if len(args) >= 2 {
 				return NewString(request.GetCookieAttribute(args[0].String(), args[1].String()))
@@ -6380,7 +6383,10 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 		return Value{Type: VTEmpty}
 	case nativeRequestCookies:
 		if member == "" && len(args) == 1 {
-			return NewString(vm.host.Request().GetCollectionValue("Cookies", args[0].String()))
+			if value, ok := vm.host.Request().Cookies.GetValue(args[0].String()); ok {
+				return vm.newRequestCollectionValueItem(value)
+			}
+			return Value{Type: VTEmpty}
 		}
 		if member == "" && len(args) >= 2 {
 			return NewString(vm.host.Request().GetCookieAttribute(args[0].String(), args[1].String()))
@@ -7439,6 +7445,8 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 		switch {
 		case strings.EqualFold(member, "Count"):
 			return NewInteger(int64(collectionValue.Count()))
+		case strings.EqualFold(member, "HasKeys"):
+			return NewBool(collectionValue.HasKeys())
 		case strings.EqualFold(member, "Item"):
 			return vm.newNativeObjectProxy(target.Num, "Item", nil)
 		case strings.EqualFold(member, "Key"):
