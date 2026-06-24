@@ -1851,6 +1851,7 @@ func (vm *VM) ensureJSRootEnv() {
 	bindings["Reflect"] = vm.jsCreateReflectObject()
 	bindings["Promise"] = vm.jsCreatePromiseObject()
 	bindings["Number"] = vm.jsCreateNumberObject()
+	bindings["Boolean"] = vm.jsCreateIntrinsicObject("", "Boolean")
 	bindings["Symbol"] = vm.jsCreateSymbolObject()
 	bindings["Error"] = vm.jsCreateIntrinsicObject("", "Error")
 	bindings["TypeError"] = vm.jsCreateIntrinsicObject("", "TypeError")
@@ -2895,10 +2896,7 @@ func (vm *VM) jsConcatString(v Value) string {
 	if arr, ok := vm.jsAsConcatArray(v); ok {
 		return vm.jsArrayToString(arr)
 	}
-	if v.Type == VTJSObject || v.Type == VTJSFunction || v.Type == VTJSProxy {
-		return vm.jsToString(v)
-	}
-	return vm.valueToString(v)
+	return vm.jsToString(v)
 }
 
 // jsSetSpeciesGetter attaches the standard Symbol.species getter to a constructor.

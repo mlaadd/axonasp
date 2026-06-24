@@ -34,7 +34,7 @@ func TestJScriptWeakMapBasics(t *testing.T) {
 		wm.delete(key);
 		Response.Write(", after_delete=" + wm.has(key));
 	</script>`)
-	expected := "has=True, get=val1, after_delete=False"
+	expected := "has=true, get=val1, after_delete=false"
 	if out != expected {
 		t.Errorf("expected %q, got %q", expected, out)
 	}
@@ -73,7 +73,7 @@ func TestJScriptWeakSetBasics(t *testing.T) {
 		ws.delete(key);
 		Response.Write(", after_delete=" + ws.has(key));
 	</script>`)
-	expected := "has=True, after_delete=False"
+	expected := "has=true, after_delete=false"
 	if out != expected {
 		t.Errorf("expected %q, got %q", expected, out)
 	}
@@ -160,8 +160,8 @@ func TestJScriptWeakSetIterableInitialization(t *testing.T) {
 		var ws = new WeakSet(src);
 		Response.Write(ws.has(k1) + "|" + ws.has(k2));
 	</script>`)
-	if out != "True|True" {
-		t.Errorf("expected 'True|True', got %q", out)
+	if out != "true|true" {
+		t.Errorf("expected 'true|true', got %q", out)
 	}
 }
 

@@ -1833,8 +1833,45 @@ func (vm *VM) Run() (err error) {
 				if vm.suppressTerminate || !isRootRun {
 					panic(are)
 				}
-				vm.raise(vbscript.InternalError, "Unhandled JScript exception: "+vm.valueToString(are.reason))
-				err = vm.lastError
+				vm.jsActiveEnvID = 0
+				vm.jsRootEnvID = 0
+				vm.jsCallStack = nil
+				vm.jsTryStack = nil
+				vm.jsErrStack = nil
+
+				description := "Unhandled JScript exception: " + vm.valueToString(are.reason)
+				code := vbscript.InternalError
+				hresult := int64(vbscript.HRESULTFromVBScriptCode(code))
+				if numVal, ok := vm.jsMemberGet(are.reason, "number"); ok {
+					if numVal.Type == VTInteger {
+						hresult = numVal.Num
+					} else if numVal.Type == VTDouble {
+						hresult = int64(numVal.Flt)
+					}
+				}
+
+				file, line, column := vm.mapRuntimeLocation(vm.lastLine, vm.lastColumn)
+				vme := &VMError{
+					Code:           code,
+					Line:           line,
+					Column:         column,
+					File:           file,
+					Msg:            description,
+					ASPCode:        int(code),
+					ASPDescription: description,
+					Category:       "VBScript runtime",
+					Description:    description,
+					Number:         int(hresult),
+					Source:         "VBScript runtime error",
+				}
+				vm.errSetFromVMError(vme)
+				vm.lastError = vme
+
+				if vm.onResumeNext {
+					err = nil
+				} else {
+					err = vme
+				}
 				return
 			}
 			if bufferErr, ok := r.(*asp.ResponseBufferLimitError); ok {
@@ -9561,6 +9598,24 @@ func (vm *VM) raise(code vbscript.VBSyntaxErrorCode, msg string) {
 	}
 
 	vm.errSetFromVMError(vme)
+
+	isJS := len(vm.jsCallStack) > 0 || vm.jsActiveEnvID != 0 || vm.jsRootEnvID != 0 || len(vm.jsTryStack) > 0 || len(vm.jsErrStack) > 0 || vm.engineMode == EngineModeJavaScript
+	if isJS {
+		vm.lastError = vme
+		errObj := vm.jsCreateErrorObject("Error", description)
+		vm.jsMemberSet(errObj, "number", NewInteger(int64(vme.Number)))
+		vm.jsMemberSet(errObj, "description", NewString(description))
+		vm.jsMemberSet(errObj, "message", NewString(description))
+
+		if len(vm.jsTryStack) > 0 {
+			target := vm.jsTryStack[len(vm.jsTryStack)-1]
+			vm.jsTryStack = vm.jsTryStack[:len(vm.jsTryStack)-1]
+			vm.jsErrStack = append(vm.jsErrStack, errObj)
+			vm.ip = target
+			return
+		}
+		panic(&jsAsyncRejectionError{reason: errObj})
+	}
 
 	if vm.onResumeNext || vm.executeGlobalResumeGuard {
 		vm.lastError = vme

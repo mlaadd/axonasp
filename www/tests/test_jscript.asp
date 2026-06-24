@@ -1,6 +1,4 @@
-<%
-@Language = JScript
-%>
+<%@Language = JScript%>
 <script runat="server" language="JScript">
     function replaceAll(s, findText, replaceText) {
         var out = "" + s;
@@ -105,6 +103,7 @@
 </script>
 <!DOCTYPE html>
 <html>
+
     <head>
         <meta charset="UTF-8" />
         <title>AxonASP JScript Comprehensive Demo</title>
@@ -114,20 +113,24 @@
                 margin: 20px;
                 background: #f8f8f8;
             }
+
             .box {
                 border: 1px solid #b8b8b8;
                 background: #fff;
                 padding: 10px;
                 margin-bottom: 12px;
             }
+
             .small {
                 color: #555;
                 font-size: 12px;
             }
+
             table {
                 border-collapse: collapse;
                 width: 100%;
             }
+
             th,
             td {
                 border: 1px solid #d3d3d3;
@@ -135,9 +138,11 @@
                 padding: 6px;
                 vertical-align: top;
             }
+
             th {
                 background: #f0f2f7;
             }
+
             pre {
                 background: #f3f3f3;
                 border: 1px solid #ddd;
@@ -146,6 +151,7 @@
             }
         </style>
     </head>
+
     <body>
         <h1>AxonASP JScript Comprehensive Runtime Demo</h1>
         <p>
@@ -223,9 +229,13 @@
             <script runat="server" language="JScript">
                 Server.ClearLastError();
 
-                var badObj = Server.CreateObject(
-                    "AxonASP.Invalid.Library.ProgId"
-                );
+                var badObj = null;
+                try {
+                    badObj = Server.CreateObject(
+                        "AxonASP.Invalid.Library.ProgId"
+                    );
+                } catch (e) {
+                }
                 var aspErr = Server.GetLastError();
 
                 var createResult = "Unexpected object";
@@ -249,8 +259,8 @@
                 Err.Clear();
                 Response.Write(
                     "<p class='small'>Err.Description after Err.Clear(): " +
-                        htmlEncode(Err.Description) +
-                        "</p>"
+                    htmlEncode(Err.Description) +
+                    "</p>"
                 );
             </script>
         </div>
@@ -304,13 +314,13 @@
                 );
                 Response.Write(
                     "<img src='" +
-                        htmlEncode(inlineImageUrl) +
-                        "' alt='Dynamic G3Image' style='max-width:100%; border:1px solid #bbb;' />"
+                    htmlEncode(inlineImageUrl) +
+                    "' alt='Dynamic G3Image' style='max-width:100%; border:1px solid #bbb;' />"
                 );
                 Response.Write(
                     "<p class='small'>Static file output path (mapped by server): " +
-                        htmlEncode(savePath) +
-                        "</p>"
+                    htmlEncode(savePath) +
+                    "</p>"
                 );
             </script>
         </div>
@@ -453,21 +463,18 @@
         </div>
 
         <div class="box">
-            
-            
+
+
             <h2>6) Quick Access URLs</h2>
             <p>
                 Main page:
-                <a href="test_jscript.asp?name=AxonASP"
-                    >test_jscript.asp?name=AxonASP</a
-                >
+                <a href="test_jscript.asp?name=AxonASP">test_jscript.asp?name=AxonASP</a>
             </p>
             <p>
                 Inline image endpoint only:
-                <a href="test_jscript.asp?mode=g3image-inline"
-                    >test_jscript.asp?mode=g3image-inline</a
-                >
+                <a href="test_jscript.asp?mode=g3image-inline">test_jscript.asp?mode=g3image-inline</a>
             </p>
         </div>
     </body>
+
 </html>

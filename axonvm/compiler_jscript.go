@@ -36,7 +36,7 @@ import (
 	jsunistring "g3pix.com.br/axonasp/jscript/unistring"
 )
 
-var jscriptCallAssignmentPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*\(([^\)]*)\)\s*=\s+([^;\r\n]+);`)
+var jscriptCallAssignmentAnchorPattern = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*((?:"[^"]*"|'[^']*'|[^'")\s]+)(?:\s*,\s*(?:"[^"]*"|'[^']*'|[^'")\s]+))*)\s*\)\s*=\s+([^;\r\n]+);`)
 
 const jsRestParamTemplatePrefix = "__js_rest__:"
 
@@ -90,7 +90,7 @@ func (c *Compiler) compileJScriptBlockWithLineAnchors(source string, anchors []j
 	// Classic ASP JScript commonly uses indexed default-property assignment syntax
 	// like Session("key") = value; normalize it into Session("key", value);
 	// so the GoJa parser accepts it and dispatchNativeCall(member="") can execute it.
-	source = jscriptCallAssignmentPattern.ReplaceAllString(source, `$1($2, $3);`)
+	source = normalizeJScriptCollectionAssignments(source)
 
 	prevAnchors := c.jsCompileLineAnchors
 	c.jsCompileLineAnchors = normalizeJScriptCompileLineAnchors(anchors)
@@ -183,7 +183,7 @@ func (c *Compiler) compileJScriptBlockWithLineAnchors(source string, anchors []j
 // compileJScriptEvalSnippet parses one JScript eval source and emits OpJS bytecode
 // that leaves the completion value on the stack and terminates with OpHalt.
 func (c *Compiler) compileJScriptEvalSnippet(source string) {
-	source = jscriptCallAssignmentPattern.ReplaceAllString(source, `$1($2, $3);`)
+	source = normalizeJScriptCollectionAssignments(source)
 
 	program, err := jsparser.ParseFile(nil, c.sourceName, source, jsparser.ModeTopLevelAwait)
 	if err != nil {
@@ -3923,4 +3923,120 @@ func (c *Compiler) hoistJScriptDeclarations(stmts []jsast.Statement) {
 		c.compileJScriptFunctionLiteral(fnDecl.Function, name, false)
 		c.emit(OpJSSetName, nameIdx)
 	}
+}
+
+// normalizeJScriptCollectionAssignments rewrites index-assignment syntax (e.g. Session("key") = val;) to standard calls (Session("key", val);) outside of comments and string literals.
+func normalizeJScriptCollectionAssignments(source string) string {
+	var result strings.Builder
+	result.Grow(len(source))
+
+	i := 0
+	n := len(source)
+	for i < n {
+		// Check for single-line comment
+		if i+1 < n && source[i] == '/' && source[i+1] == '/' {
+			result.WriteByte('/')
+			result.WriteByte('/')
+			i += 2
+			for i < n && source[i] != '\n' && source[i] != '\r' {
+				result.WriteByte(source[i])
+				i++
+			}
+			continue
+		}
+		// Check for multi-line comment
+		if i+1 < n && source[i] == '/' && source[i+1] == '*' {
+			result.WriteByte('/')
+			result.WriteByte('*')
+			i += 2
+			for i < n {
+				if i+1 < n && source[i] == '*' && source[i+1] == '/' {
+					result.WriteByte('*')
+					result.WriteByte('/')
+					i += 2
+					break
+				}
+				result.WriteByte(source[i])
+				i++
+			}
+			continue
+		}
+		// Check for double-quoted string literal
+		if source[i] == '"' {
+			result.WriteByte('"')
+			i++
+			for i < n {
+				if source[i] == '\\' && i+1 < n {
+					result.WriteByte('\\')
+					result.WriteByte(source[i+1])
+					i += 2
+					continue
+				}
+				if source[i] == '"' {
+					result.WriteByte('"')
+					i++
+					break
+				}
+				result.WriteByte(source[i])
+				i++
+			}
+			continue
+		}
+		// Check for single-quoted string literal
+		if source[i] == '\'' {
+			result.WriteByte('\'')
+			i++
+			for i < n {
+				if source[i] == '\\' && i+1 < n {
+					result.WriteByte('\\')
+					result.WriteByte(source[i+1])
+					i += 2
+					continue
+				}
+				if source[i] == '\'' {
+					result.WriteByte('\'')
+					i++
+					break
+				}
+				result.WriteByte(source[i])
+				i++
+			}
+			continue
+		}
+		// Check for template literal
+		if source[i] == '`' {
+			result.WriteByte('`')
+			i++
+			for i < n {
+				if source[i] == '\\' && i+1 < n {
+					result.WriteByte('\\')
+					result.WriteByte(source[i+1])
+					i += 2
+					continue
+				}
+				if source[i] == '`' {
+					result.WriteByte('`')
+					i++
+					break
+				}
+				result.WriteByte(source[i])
+				i++
+			}
+			continue
+		}
+
+		// Try matching anchored assignment pattern
+		if loc := jscriptCallAssignmentAnchorPattern.FindStringSubmatchIndex(source[i:]); loc != nil {
+			name := source[i+loc[2] : i+loc[3]]
+			args := source[i+loc[4] : i+loc[5]]
+			val := source[i+loc[6] : i+loc[7]]
+			result.WriteString(name + "(" + args + ", " + val + ");")
+			i += loc[1]
+			continue
+		}
+
+		result.WriteByte(source[i])
+		i++
+	}
+	return result.String()
 }

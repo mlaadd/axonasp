@@ -34,14 +34,14 @@ func TestJScriptReflectAPI(t *testing.T) {
 			var obj = {};
 			var success = Reflect.defineProperty(obj, "a", {value: 42, writable: true});
 			return success + "," + obj.a;
-		})()`, "True,42"},
+		})()`, "true,42"},
 
 		// 2. Reflect.getOwnPropertyDescriptor
 		{`(function(){
 			var obj = {a: 1};
 			var desc = Reflect.getOwnPropertyDescriptor(obj, "a");
 			return desc.value + "," + desc.writable;
-		})()`, "1,True"},
+		})()`, "1,true"},
 
 		// 3. Reflect.getPrototypeOf
 		{`(function(){
@@ -57,14 +57,14 @@ func TestJScriptReflectAPI(t *testing.T) {
 			Object.preventExtensions(obj);
 			var ext2 = Reflect.isExtensible(obj);
 			return ext1 + "," + ext2;
-		})()`, "True,False"},
+		})()`, "true,false"},
 
 		// 5. Reflect.preventExtensions
 		{`(function(){
 			var obj = {};
 			var success = Reflect.preventExtensions(obj);
 			return success + "," + Reflect.isExtensible(obj);
-		})()`, "True,False"},
+		})()`, "true,false"},
 
 		// 6. Reflect.setPrototypeOf
 		{`(function(){
@@ -72,7 +72,7 @@ func TestJScriptReflectAPI(t *testing.T) {
 			var proto = {a: 1};
 			var success = Reflect.setPrototypeOf(obj, proto);
 			return success + "," + obj.a;
-		})()`, "True,1"},
+		})()`, "true,1"},
 
 		// 7. Reflect with Proxy
 		{`(function(){
@@ -86,7 +86,7 @@ func TestJScriptReflectAPI(t *testing.T) {
             var s1 = Reflect.defineProperty(p, "a", {value: 2});
             var s2 = Reflect.defineProperty(p, "b", {value: 3});
             return s1 + "," + s2 + "," + target.a;
-        })()`, "True,False,2"},
+        })()`, "true,false,2"},
 
 		// 8. Object.defineProperty with Proxy
 		{`(function(){

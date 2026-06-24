@@ -63,7 +63,7 @@ func TestJScriptPhase3WellKnownSymbols(t *testing.T) {
 				var b_proto = Object.getPrototypeOf(b);
 				return (b instanceof MyArray) + "|" + (b instanceof Array) + "|" + (b_proto === Array.prototype);
 			})()`,
-			"False|True|True",
+			"false|true|true",
 		},
 		{
 			"Symbol.hasInstance",
@@ -73,7 +73,7 @@ func TestJScriptPhase3WellKnownSymbols(t *testing.T) {
 				};
 				return (42 instanceof MyChecker) + "|" + (7 instanceof MyChecker);
 			})()`,
-			"True|False",
+			"true|false",
 		},
 		{
 			"Symbol.unscopables",

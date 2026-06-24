@@ -1249,7 +1249,7 @@ func TestJScriptLooseNullComparisonDoesNotBlankFalseOrZero(t *testing.T) {
 		`Response.Write("|count=" + htmlEncode(sideEffect));` +
 		`</script>`
 	out := runASPSourceForTest(t, source)
-	if out != "strict=False|and=False|count=0" {
+	if out != "strict=false|and=false|count=0" {
 		t.Fatalf("unexpected null/false/zero rendering output: %q", out)
 	}
 }
@@ -1862,5 +1862,18 @@ func TestJScriptVarDeclarationHoisting(t *testing.T) {
 	out := runASPSourceForTest(t, source)
 	if out != "undefined|assigned" {
 		t.Fatalf("expected var hoisting output 'undefined|assigned', got %q", out)
+	}
+}
+
+func TestJScriptBooleanGlobalFunctionCall(t *testing.T) {
+	source := `<%@ Language="JScript" %>` +
+		`<%` +
+		`Response.Write("typeof Boolean = " + typeof Boolean + "<br>");` +
+		`Response.Write("Boolean('fish') = " + Boolean("fish") + "<br>");` +
+		`%>`
+	out := runASPSourceForTest(t, source)
+	expected := "typeof Boolean = function<br>Boolean('fish') = true<br>"
+	if out != expected {
+		t.Fatalf("expected Boolean function call output %q, got %q", expected, out)
 	}
 }

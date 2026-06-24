@@ -371,7 +371,7 @@ func TestJScriptGenerators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := `1:False|2:False|3:True`
+	expected := `1:false|2:false|3:true`
 	if out != expected {
 		t.Errorf("expected %q, got %q", expected, out)
 	}
@@ -1451,8 +1451,8 @@ func TestJScriptSetIterableInitialization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "True|True" {
-		t.Errorf("expected 'True|True', got %q", out)
+	if out != "true|true" {
+		t.Errorf("expected 'true|true', got %q", out)
 	}
 }
 
@@ -2585,8 +2585,8 @@ func TestJScriptWeakRef(t *testing.T) {
 			Response.Write("null/undefined");
 		}
 	</script>`)
-	if out != "wr.deref() is obj: True | target.x: 1" {
-		t.Errorf("expected 'wr.deref() is obj: True | target.x: 1', got %q", out)
+	if out != "wr.deref() is obj: true | target.x: 1" {
+		t.Errorf("expected 'wr.deref() is obj: true | target.x: 1', got %q", out)
 	}
 }
 
