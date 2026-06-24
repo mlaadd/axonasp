@@ -1843,9 +1843,10 @@ func (vm *VM) Run() (err error) {
 				code := vbscript.InternalError
 				hresult := int64(vbscript.HRESULTFromVBScriptCode(code))
 				if numVal, ok := vm.jsMemberGet(are.reason, "number"); ok {
-					if numVal.Type == VTInteger {
+					switch numVal.Type {
+					case VTInteger:
 						hresult = numVal.Num
-					} else if numVal.Type == VTDouble {
+					case VTDouble:
 						hresult = int64(numVal.Flt)
 					}
 				}

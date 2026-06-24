@@ -32,7 +32,9 @@ type WScriptExecObject struct{}
 type ProcessTextStream struct{}
 
 // WshEnvironment is the disabled placeholder for WScript.Shell.Environment.
-type WshEnvironment struct{}
+type WshEnvironment struct {
+	entries []string
+}
 
 // newWScriptShellObject fails because WScript.Shell is disabled at compile time.
 func (vm *VM) newWScriptShellObject() Value {
