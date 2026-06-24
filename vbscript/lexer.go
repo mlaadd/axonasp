@@ -1583,7 +1583,8 @@ func (l *Lexer) nextHTML() Token {
 							LineNumber: aspLine,
 							LineStart:  aspLineStart,
 						},
-						Content: content,
+						Content:     content,
+						IsScriptTag: false,
 					}
 				}
 				l.Index = probe + 1
@@ -1639,7 +1640,8 @@ func (l *Lexer) nextHTML() Token {
 						LineNumber: aspLine,
 						LineStart:  aspLineStart,
 					},
-					Content: content,
+					Content:     content,
+					IsScriptTag: false,
 				}
 			}
 
@@ -1706,7 +1708,8 @@ func (l *Lexer) nextHTML() Token {
 						LineNumber: aspLine,
 						LineStart:  aspLineStart,
 					},
-					Content: content,
+					Content:     content,
+					IsScriptTag: true,
 				}
 			}
 			l.Index += length

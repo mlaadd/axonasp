@@ -255,7 +255,8 @@ type ASPCodeEndToken struct {
 // Content stores only the inner script body without the surrounding tags.
 type ASPJScriptBlockToken struct {
 	BaseToken
-	Content string
+	Content     string
+	IsScriptTag bool
 }
 
 // ASPIncludeToken represents <!--#include ...-->

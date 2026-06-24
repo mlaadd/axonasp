@@ -1838,3 +1838,29 @@ func TestJScriptIncrementDecrementHelpersPreserveIntegerType(t *testing.T) {
 		t.Fatalf("expected integer decrement result 40, got %#v", prev)
 	}
 }
+
+func TestJScriptFunctionDeclarationHoisting(t *testing.T) {
+	source := `<%@ Language="JScript" %>` +
+		`<%` +
+		`Response.Write(a());` +
+		`function a() { return "hoisted"; }` +
+		`Response.Write("|" + a());` +
+		`%>`
+	out := runASPSourceForTest(t, source)
+	if out != "hoisted|hoisted" {
+		t.Fatalf("expected function hoisting output 'hoisted|hoisted', got %q", out)
+	}
+}
+
+func TestJScriptVarDeclarationHoisting(t *testing.T) {
+	source := `<%@ Language="JScript" %>` +
+		`<%` +
+		`Response.Write(typeof x);` +
+		`var x = "assigned";` +
+		`Response.Write("|" + x);` +
+		`%>`
+	out := runASPSourceForTest(t, source)
+	if out != "undefined|assigned" {
+		t.Fatalf("expected var hoisting output 'undefined|assigned', got %q", out)
+	}
+}

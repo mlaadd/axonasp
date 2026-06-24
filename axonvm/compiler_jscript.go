@@ -158,6 +158,8 @@ func (c *Compiler) compileJScriptBlockWithLineAnchors(source string, anchors []j
 		}
 	}
 
+	c.hoistJScriptDeclarations(program.Body)
+
 	c.compileJScriptScopedStatements(program.Body)
 
 	if hasTopLexical {
@@ -221,6 +223,8 @@ func (c *Compiler) compileJScriptEvalSnippet(source string) {
 			c.emit(OpJSTDZRegisterConst, c.addConstant(NewString(name)))
 		}
 	}
+
+	c.hoistJScriptDeclarations(program.Body)
 
 	lastIdx := len(program.Body) - 1
 	if lastIdx > 0 {
@@ -561,20 +565,8 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 		// Fallback path for top-level or non-block contexts.
 		c.compileJScriptUsingDeclaration(node, nil)
 	case *jsast.FunctionDeclaration:
-		if node.Function == nil {
-			return
-		}
-		name := ""
-		if node.Function.Name != nil {
-			name = node.Function.Name.Name.String()
-		}
-		if name == "" {
-			return
-		}
-		nameIdx := c.addConstant(NewString(name))
-		c.emit(OpJSDeclareName, nameIdx)
-		c.compileJScriptFunctionLiteral(node.Function, name, false)
-		c.emit(OpJSSetName, nameIdx)
+		// Do nothing, function declarations are hoisted to the top of the enclosing block/function.
+		return
 	case *jsast.ClassDeclaration:
 		c.compileJScriptClassDeclaration(node)
 	case *jsast.ImportDeclaration:
@@ -2892,6 +2884,8 @@ func (c *Compiler) compileJScriptFunctionLiteral(fn *jsast.FunctionLiteral, fall
 				c.emit(OpJSTDZRegisterConst, c.addConstant(NewString(name)))
 			}
 		}
+		c.hoistJScriptDeclarations(fn.Body.List)
+
 		for i := range fn.Body.List {
 			c.compileJScriptStatement(fn.Body.List[i])
 		}
@@ -3767,5 +3761,166 @@ func (c *Compiler) compileJScriptDefaultParamGuards(paramList *jsast.ParameterLi
 			c.emit(OpJSSetName, nameIdx)
 		}
 		c.patchJSJump(skipJump)
+	}
+}
+
+// collectJScriptHoistedDeclarations gathers function and variable declarations to be hoisted
+func (c *Compiler) collectJScriptHoistedDeclarations(stmts []jsast.Statement) ([]*jsast.FunctionDeclaration, []string) {
+	var fns []*jsast.FunctionDeclaration
+	var vars []string
+	seenVars := make(map[string]bool)
+
+	addVar := func(name string) {
+		if name != "" && !seenVars[name] {
+			seenVars[name] = true
+			vars = append(vars, name)
+		}
+	}
+
+	var collectNamesFromTarget func(target jsast.Expression)
+	collectNamesFromTarget = func(target jsast.Expression) {
+		if target == nil {
+			return
+		}
+		switch t := target.(type) {
+		case *jsast.Identifier:
+			addVar(t.Name.String())
+		case *jsast.AssignExpression:
+			collectNamesFromTarget(t.Left)
+		case *jsast.ArrayPattern:
+			for _, elt := range t.Elements {
+				collectNamesFromTarget(elt)
+			}
+			collectNamesFromTarget(t.Rest)
+		case *jsast.ObjectPattern:
+			for _, prop := range t.Properties {
+				switch p := prop.(type) {
+				case *jsast.PropertyShort:
+					collectNamesFromTarget(&p.Name)
+				case *jsast.PropertyKeyed:
+					collectNamesFromTarget(p.Value)
+				}
+			}
+			collectNamesFromTarget(t.Rest)
+		}
+	}
+
+	var walk func(stmt jsast.Statement)
+	walk = func(stmt jsast.Statement) {
+		if stmt == nil {
+			return
+		}
+		switch node := stmt.(type) {
+		case *jsast.BlockStatement:
+			for _, s := range node.List {
+				walk(s)
+			}
+		case *jsast.CaseStatement:
+			for _, s := range node.Consequent {
+				walk(s)
+			}
+		case *jsast.DoWhileStatement:
+			walk(node.Body)
+		case *jsast.ForInStatement:
+			if intoVar, ok := node.Into.(*jsast.ForIntoVar); ok && intoVar.Binding != nil {
+				collectNamesFromTarget(intoVar.Binding.Target)
+			}
+			walk(node.Body)
+		case *jsast.ForOfStatement:
+			if intoVar, ok := node.Into.(*jsast.ForIntoVar); ok && intoVar.Binding != nil {
+				collectNamesFromTarget(intoVar.Binding.Target)
+			}
+			walk(node.Body)
+		case *jsast.ForStatement:
+			if node.Initializer != nil {
+				if init, ok := node.Initializer.(*jsast.ForLoopInitializerVarDeclList); ok {
+					for _, binding := range init.List {
+						collectNamesFromTarget(binding.Target)
+					}
+				}
+			}
+			walk(node.Body)
+		case *jsast.IfStatement:
+			walk(node.Consequent)
+			if node.Alternate != nil {
+				walk(node.Alternate)
+			}
+		case *jsast.LabelledStatement:
+			walk(node.Statement)
+		case *jsast.SwitchStatement:
+			for _, c := range node.Body {
+				for _, s := range c.Consequent {
+					walk(s)
+				}
+			}
+		case *jsast.TryStatement:
+			walk(node.Body)
+			if node.Catch != nil {
+				walk(node.Catch.Body)
+			}
+			if node.Finally != nil {
+				walk(node.Finally)
+			}
+		case *jsast.WhileStatement:
+			walk(node.Body)
+		case *jsast.WithStatement:
+			walk(node.Body)
+		case *jsast.VariableStatement:
+			for _, binding := range node.List {
+				collectNamesFromTarget(binding.Target)
+			}
+		case *jsast.ExportDeclaration:
+			if node.Declaration != nil {
+				walk(node.Declaration)
+			}
+		case *jsast.FunctionDeclaration:
+			fns = append(fns, node)
+		}
+	}
+
+	for _, s := range stmts {
+		walk(s)
+	}
+	return fns, vars
+}
+
+// hoistJScriptDeclarations registers variable declarations and registers/initializes function declarations at the start of scope execution.
+func (c *Compiler) hoistJScriptDeclarations(stmts []jsast.Statement) {
+	fns, vars := c.collectJScriptHoistedDeclarations(stmts)
+
+	// Hoist var declarations first
+	for _, name := range vars {
+		if c.jsLocalEnabled {
+			if slot := c.jsDeclareFunctionLocal(name); slot >= 0 {
+				continue
+			}
+		}
+		nameIdx := c.addConstant(NewString(name))
+		c.emit(OpJSDeclareName, nameIdx)
+	}
+
+	// Hoist function declarations next
+	for _, fnDecl := range fns {
+		if fnDecl.Function == nil {
+			continue
+		}
+		name := ""
+		if fnDecl.Function.Name != nil {
+			name = fnDecl.Function.Name.Name.String()
+		}
+		if name == "" {
+			continue
+		}
+		nameIdx := c.addConstant(NewString(name))
+		if c.jsLocalEnabled {
+			if slot := c.jsDeclareFunctionLocal(name); slot >= 0 {
+				c.compileJScriptFunctionLiteral(fnDecl.Function, name, false)
+				c.emit(OpJSSetLocal, slot)
+				continue
+			}
+		}
+		c.emit(OpJSDeclareName, nameIdx)
+		c.compileJScriptFunctionLiteral(fnDecl.Function, name, false)
+		c.emit(OpJSSetName, nameIdx)
 	}
 }

@@ -1137,7 +1137,7 @@ func (c *Compiler) Compile() (err error) {
 	jscriptBlockCompiled := make(map[int]bool)
 	c.resetTokenStream()
 	for !c.matchEof() {
-		if tok, ok := c.next.(*vbscript.ASPJScriptBlockToken); ok {
+		if tok, ok := c.next.(*vbscript.ASPJScriptBlockToken); ok && tok.IsScriptTag {
 			jscriptBlockCompiled[c.tokenIndex] = true
 			c.compileJScriptBlockWithLineAnchors(tok.Content, []jscriptCompileLineAnchor{{GeneratedLineStart: 1, MergedLineStart: tok.GetLineNumber()}})
 		}
