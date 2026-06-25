@@ -1277,10 +1277,6 @@ func resolveIncludePathWithOptions(sourceName string, includePath string, isVirt
 	trimmed = strings.ReplaceAll(trimmed, "/", string(filepath.Separator))
 	trimmed = strings.ReplaceAll(trimmed, "\\", string(filepath.Separator))
 
-	if filepath.IsAbs(trimmed) {
-		return "", fmt.Errorf("absolute include file path is not allowed: %s", includePath)
-	}
-
 	sourceAbs := filepath.Clean(strings.TrimSpace(sourceName))
 	if !filepath.IsAbs(sourceAbs) {
 		absSource, err := filepath.Abs(sourceAbs)
@@ -1293,6 +1289,8 @@ func resolveIncludePathWithOptions(sourceName string, includePath string, isVirt
 	sourceDir := filepath.Dir(sourceAbs)
 
 	if isVirtual || strings.HasPrefix(includePath, "/") || strings.HasPrefix(includePath, "\\") {
+		// For virtual includes, a leading "/" means "relative to site root",
+		// not an absolute filesystem path — skip the absolute-path check.
 		siteRoot := normalizeIncludeSiteRoot(options.siteRoot)
 		if siteRoot == "" {
 			return "", fmt.Errorf("virtual include root is not configured: %s", includePath)
@@ -1312,6 +1310,11 @@ func resolveIncludePathWithOptions(sourceName string, includePath string, isVirt
 		return resolved, nil
 	}
 
+	// Non-virtual (file) includes must not reference absolute filesystem paths.
+	//Attention: This check is done after the virtual-include check to allow virtual includes to use leading slashes on Linux/Unix systems. Absolute paths are still disallowed for non-virtual includes.
+	if filepath.IsAbs(trimmed) {
+		return "", fmt.Errorf("absolute include file path is not allowed: %s", includePath)
+	}
 	candidate := filepath.Clean(filepath.Join(sourceDir, trimmed))
 	resolved, resolveErr := resolveExistingPath(candidate, options.caseInsensitive)
 	if resolveErr != nil {
