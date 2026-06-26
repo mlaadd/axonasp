@@ -30,6 +30,11 @@ func (vm *VM) newG3FileUploaderObject() Value {
 	return Value{Type: VTEmpty}
 }
 
+func (vm *VM) newG3FileUploaderObjectWithProgID(progID string) Value {
+	panicLibraryDisabled("g3fileuploader", "G3FileUploader library")
+	return Value{Type: VTEmpty}
+}
+
 func (f *G3FileUploader) DispatchPropertyGet(propertyName string) Value {
 	return Value{Type: VTEmpty}
 }
@@ -40,4 +45,8 @@ func (f *G3FileUploader) DispatchPropertySet(propertyName string, args []Value) 
 
 func (f *G3FileUploader) DispatchMethod(methodName string, args []Value) Value {
 	return Value{Type: VTEmpty}
+}
+
+func (f *G3FileUploader) EnumValues() (Value, error) {
+	return Value{Type: VTEmpty}, nil
 }

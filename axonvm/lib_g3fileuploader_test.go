@@ -127,3 +127,126 @@ func TestG3FileUploader_AbsolutePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestG3FileUploader_Compatibility(t *testing.T) {
+	vm := NewVM(nil, nil, 4096)
+
+	// Create a mock multipart body
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("text_field", "hello_world")
+	part, _ := writer.CreateFormFile("file_field", "hello.txt")
+	_, _ = io.WriteString(part, "file content")
+	_ = writer.Close()
+
+	req := httptest.NewRequest("POST", "/", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	host := NewMockHost()
+	host.Request().SetHTTPRequest(req)
+	tempDir, err := os.MkdirTemp("", "axon_compat_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	host.Server().SetRootDir(tempDir)
+	vm.host = host
+
+	// Test 1: Persits.Upload Alias & Method/Properties
+	persitsVal := vm.newG3FileUploaderObjectWithProgID("Persits.Upload")
+	persitsObj := vm.fileUploaderItems[persitsVal.Num]
+	if persitsObj == nil {
+		t.Fatal("expected Persits.Upload instance")
+	}
+	if persitsObj.mode != ModePersitsUpload {
+		t.Errorf("expected ModePersitsUpload, got %v", persitsObj.mode)
+	}
+
+	// Read TotalBytes (should parse request and return length > 0)
+	totalBytesVal := persitsObj.DispatchPropertyGet("TotalBytes")
+	if totalBytesVal.Type != VTInteger || totalBytesVal.Num <= 0 {
+		t.Errorf("expected TotalBytes > 0, got %+v", totalBytesVal)
+	}
+
+	// Test Save(Path) method collision (Persits returns count of files)
+	targetDir := filepath.Join(tempDir, "persits_save")
+	saveResult := persitsObj.DispatchMethod("Save", []Value{NewString(targetDir)})
+	if saveResult.Type != VTInteger || saveResult.Num != 1 {
+		t.Errorf("expected Save to return 1 saved file, got %+v", saveResult)
+	}
+
+	// Get Files collection
+	filesVal := persitsObj.DispatchPropertyGet("Files")
+	if filesVal.Type != VTNativeObject {
+		t.Fatalf("expected Files collection object, got %+v", filesVal)
+	}
+	filesCount := vm.fileUploaderItems[filesVal.Num].DispatchPropertyGet("Count")
+	if filesCount.Num != 1 {
+		t.Errorf("expected Files Count to be 1, got %d", filesCount.Num)
+	}
+
+	// Get file by index (1-based)
+	fileItemVal := vm.fileUploaderItems[filesVal.Num].DispatchMethod("Item", []Value{NewInteger(1)})
+	if fileItemVal.Type != VTNativeObject {
+		t.Fatalf("expected file item, got %+v", fileItemVal)
+	}
+	fileItemObj := vm.fileUploaderItems[fileItemVal.Num]
+	fileNameVal := fileItemObj.DispatchPropertyGet("FileName")
+	if fileNameVal.String() != "hello.txt" {
+		t.Errorf("expected filename hello.txt, got %q", fileNameVal.String())
+	}
+	fileSizeVal := fileItemObj.DispatchPropertyGet("Size")
+	if fileSizeVal.Num != 12 {
+		t.Errorf("expected size 12, got %d", fileSizeVal.Num)
+	}
+
+	// Test 2: SoftArtisans.FileUp Alias & Method/Properties
+	// Re-create request for the next uploader
+	body2 := &bytes.Buffer{}
+	writer2 := multipart.NewWriter(body2)
+	_ = writer2.WriteField("text_field", "hello_world")
+	part2, _ := writer2.CreateFormFile("file_field", "hello.txt")
+	_, _ = io.WriteString(part2, "file content")
+	_ = writer2.Close()
+	req2 := httptest.NewRequest("POST", "/", body2)
+	req2.Header.Set("Content-Type", writer2.FormDataContentType())
+	host2 := NewMockHost()
+	host2.Request().SetHTTPRequest(req2)
+	host2.Server().SetRootDir(tempDir)
+	vm.host = host2
+
+	saVal := vm.newG3FileUploaderObjectWithProgID("SoftArtisans.FileUp")
+	saObj := vm.fileUploaderItems[saVal.Num]
+	if saObj == nil {
+		t.Fatal("expected SoftArtisans.FileUp instance")
+	}
+	if saObj.mode != ModeSAFileUp {
+		t.Errorf("expected ModeSAFileUp, got %v", saObj.mode)
+	}
+
+	// Set path property
+	saSaveDir := filepath.Join(tempDir, "sa_save")
+	saObj.DispatchPropertySet("Path", []Value{NewString(saSaveDir)})
+
+	// Test parameterless Save() for SA-FileUp
+	saveResult2 := saObj.DispatchMethod("Save", nil)
+	if saveResult2.Type != VTEmpty {
+		t.Errorf("expected Save to return empty, got %+v", saveResult2)
+	}
+
+	// SA-FileUp Form mixes fields and files
+	formVal := saObj.DispatchPropertyGet("Form")
+	if formVal.Type != VTNativeObject {
+		t.Fatalf("expected Form collection, got %+v", formVal)
+	}
+
+	formFieldVal := vm.fileUploaderItems[formVal.Num].DispatchMethod("", []Value{NewString("text_field")})
+	if formFieldVal.String() != "hello_world" {
+		t.Errorf("expected 'hello_world', got %q", formFieldVal.String())
+	}
+
+	formFileVal := vm.fileUploaderItems[formVal.Num].DispatchMethod("", []Value{NewString("file_field")})
+	if formFileVal.Type != VTNativeObject {
+		t.Fatalf("expected form file field to return file object, got %+v", formFileVal)
+	}
+}

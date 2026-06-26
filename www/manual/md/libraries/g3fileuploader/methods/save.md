@@ -1,29 +1,58 @@
 # Save Method
 
 ## Overview
-Alias for the `Process` method. Saves a single uploaded file.
+Saves uploaded files to disk. The behavior, signature, and return values of this method depend on the ProgID used to instantiate the uploader (Smart Alias Detection).
 
 ## Syntax
+
+### 1. ASPUpload (Persits.Upload) Mode
 ```asp
-Set result = uploader.Save(fieldName, targetDir, newFileName)
+count = uploader.Save(Path)
+```
+
+### 2. SA-FileUp (SoftArtisans.FileUp) Mode
+```asp
+uploader.Save()
+```
+
+### 3. G3FILEUPLOADER Mode (Alias of Process)
+```asp
+Set result = uploader.Save(fieldName, targetDir, [newFileName])
 ```
 
 ## Parameters and Arguments
-- `fieldName` (String, Required): The name of the file input field.
-- `targetDir` (String, Optional): Destination directory.
-- `newFileName` (String, Optional): Optional new filename.
+- `Path` (String, Required for ASPUpload): The physical directory where all uploaded files are to be saved.
+- `fieldName` (String, Required for G3FILEUPLOADER): The form field name containing the file.
+- `targetDir` (String, Optional for G3FILEUPLOADER): Target directory.
+- `newFileName` (String, Optional for G3FILEUPLOADER): Optional new name.
 
 ## Return Values
-Returns a **Dictionary** result.
+- In **ASPUpload** mode: Returns an **Integer** representing the number of successfully saved files.
+- In **SA-FileUp** mode: Returns **Empty**.
+- In **G3FILEUPLOADER** mode: Returns a **Dictionary** containing the standardized uploader result.
 
 ## Remarks
-- Functionally identical to `Process`. Refer to the `Process` method documentation for details.
+- In **SA-FileUp** mode, the parameterless `Save()` method automatically saves all uploaded files to the folder path configured in the `Path` property.
+- If absolute paths are disabled, virtual mapping is resolved.
 
 ## Code Example
+
+### ASPUpload Example:
 ```asp
 <%
-Dim uploader, res
-Set uploader = Server.CreateObject("G3FILEUPLOADER")
-Set res = uploader.Save("myFile", "temp/", "")
+Dim upl, savedCount
+Set upl = Server.CreateObject("Persits.Upload")
+savedCount = upl.Save("C:\uploads\")
+Response.Write "Saved " & savedCount & " files."
+%>
+```
+
+### SA-FileUp Example:
+```asp
+<%
+Dim fileup
+Set fileup = Server.CreateObject("SoftArtisans.FileUp")
+fileup.Path = "C:\uploads\"
+fileup.Save
 %>
 ```

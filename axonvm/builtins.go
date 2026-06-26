@@ -1297,6 +1297,10 @@ func vbsAxonEnumValues(vm *VM, args []Value) (Value, error) {
 		return ValueFromVBArray(NewVBArrayFromValues(0, values)), nil
 	}
 
+	if fileUploader, exists := vm.fileUploaderItems[target.Num]; exists && fileUploader != nil {
+		return fileUploader.EnumValues()
+	}
+
 	if values := vm.regExpMatchesToValues(target.Num); values != nil {
 		return ValueFromVBArray(NewVBArrayFromValues(0, values)), nil
 	}

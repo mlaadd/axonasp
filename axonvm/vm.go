@@ -6681,7 +6681,7 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 					return Value{Type: VTNativeObject, Num: id}
 				}
 				if progIDKey == "g3fileuploader" || progIDKey == "persits.upload" || progIDKey == "softartisans.fileup" || progIDKey == "aspupload" {
-					return vm.newG3FileUploaderObject()
+					return vm.newG3FileUploaderObjectWithProgID(progIDKey)
 				}
 				if progIDKey == "scripting.filesystemobject" {
 					return vm.newFSORootObject()

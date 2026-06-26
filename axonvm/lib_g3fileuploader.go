@@ -24,13 +24,47 @@ package axonvm
 
 import (
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime"
+	"mime/multipart"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+type UploaderMode int
+
+const (
+	ModeG3FileUploader UploaderMode = iota
+	ModePersitsUpload
+	ModeSAFileUp
+)
+
+type fuKind int
+
+const (
+	fuKindUploader fuKind = iota
+	fuKindFormCollection
+	fuKindFilesCollection
+	fuKindFile
+)
+
+type G3FileItem struct {
+	fieldName   string
+	fileName    string
+	fileSize    int64
+	contentType string
+	fileHeader  *multipart.FileHeader
+	savedPath   string
+	saved       bool
+	imageWidth  int
+	imageHeight int
+}
 
 type G3FileUploader struct {
 	vm                   *VM
@@ -41,10 +75,42 @@ type G3FileUploader struct {
 	preserveOriginalName bool
 	allowAbsolutePaths   bool
 	debugMode            bool
+
+	mode   UploaderMode
+	kind   fuKind
+	parent *G3FileUploader
+
+	parsed         bool
+	totalBytes     int64
+	overwriteFiles bool
+	logonUser      string
+	progressID     string
+	saPath         string
+	maxBytes       int64
+
+	formValues map[string][]string
+	files      map[string][]*G3FileItem
+	allFiles   []*G3FileItem
+	allKeys    []string
+
+	fileItem *G3FileItem
 }
 
 // newG3FileUploaderObject instantiates the G3FileUploader custom functions library.
 func (vm *VM) newG3FileUploaderObject() Value {
+	return vm.newG3FileUploaderObjectWithProgID("g3fileuploader")
+}
+
+// newG3FileUploaderObjectWithProgID instantiates the G3FileUploader custom functions library with alias mode.
+func (vm *VM) newG3FileUploaderObjectWithProgID(progID string) Value {
+	mode := ModeG3FileUploader
+	progIDLower := strings.ToLower(progID)
+	if strings.Contains(progIDLower, "persits") || strings.Contains(progIDLower, "aspupload") {
+		mode = ModePersitsUpload
+	} else if strings.Contains(progIDLower, "softartisans") || strings.Contains(progIDLower, "fileup") {
+		mode = ModeSAFileUp
+	}
+
 	obj := &G3FileUploader{
 		vm:                   vm,
 		blockedExtensions:    make(map[string]bool),
@@ -52,8 +118,11 @@ func (vm *VM) newG3FileUploaderObject() Value {
 		useAllowedExtOnly:    false,
 		maxFileSize:          10 * 1024 * 1024, // 10MB default
 		preserveOriginalName: false,
-		allowAbsolutePaths:   false,
+		allowAbsolutePaths:   mode != ModeG3FileUploader,
 		debugMode:            false,
+		mode:                 mode,
+		kind:                 fuKindUploader,
+		overwriteFiles:       true,
 	}
 	id := vm.nextDynamicNativeID
 	vm.nextDynamicNativeID++
@@ -61,32 +130,227 @@ func (vm *VM) newG3FileUploaderObject() Value {
 	return Value{Type: VTNativeObject, Num: id}
 }
 
+func (f *G3FileUploader) newSubObject(kind fuKind, fileItem *G3FileItem) Value {
+	sub := &G3FileUploader{
+		vm:                   f.vm,
+		blockedExtensions:    f.blockedExtensions,
+		allowedExtensions:    f.allowedExtensions,
+		useAllowedExtOnly:    f.useAllowedExtOnly,
+		maxFileSize:          f.maxFileSize,
+		preserveOriginalName: f.preserveOriginalName,
+		allowAbsolutePaths:   f.allowAbsolutePaths,
+		debugMode:            f.debugMode,
+		mode:                 f.mode,
+		kind:                 kind,
+		parent:               f,
+		fileItem:             fileItem,
+	}
+	id := f.vm.nextDynamicNativeID
+	f.vm.nextDynamicNativeID++
+	f.vm.fileUploaderItems[id] = sub
+	return Value{Type: VTNativeObject, Num: id}
+}
+
+func (f *G3FileUploader) ensureParsed() error {
+	if f.parent != nil {
+		return f.parent.ensureParsed()
+	}
+	if f.parsed {
+		return nil
+	}
+	f.parsed = true
+
+	if f.vm.host == nil || f.vm.host.Request() == nil || f.vm.host.Request().HTTPRequest() == nil {
+		return fmt.Errorf("no HTTP request context")
+	}
+	req := f.vm.host.Request().HTTPRequest()
+
+	f.totalBytes = max(req.ContentLength, 0)
+
+	var parseLimit int64 = 32 << 20
+	if f.maxFileSize > 0 {
+		parseLimit = f.maxFileSize + (5 << 20)
+	}
+
+	err := req.ParseMultipartForm(parseLimit)
+	if err != nil {
+		return err
+	}
+
+	if req.MultipartForm == nil {
+		return fmt.Errorf("no multipart form data")
+	}
+
+	f.formValues = make(map[string][]string)
+	f.files = make(map[string][]*G3FileItem)
+	f.allFiles = []*G3FileItem{}
+	f.allKeys = []string{}
+
+	if req.MultipartForm.Value != nil {
+		for k, vals := range req.MultipartForm.Value {
+			f.formValues[strings.ToLower(k)] = vals
+			f.allKeys = append(f.allKeys, k)
+		}
+	}
+
+	if req.MultipartForm.File != nil {
+		for fieldName, fileHeaders := range req.MultipartForm.File {
+			var items []*G3FileItem
+			for _, fh := range fileHeaders {
+				item := &G3FileItem{
+					fieldName:   fieldName,
+					fileName:    fh.Filename,
+					fileSize:    fh.Size,
+					contentType: fh.Header.Get("Content-Type"),
+					fileHeader:  fh,
+				}
+				items = append(items, item)
+				f.allFiles = append(f.allFiles, item)
+			}
+			f.files[strings.ToLower(fieldName)] = items
+			f.allKeys = append(f.allKeys, fieldName)
+		}
+	}
+
+	return nil
+}
+
+func (f *G3FileUploader) EnumValues() (Value, error) {
+	_ = f.ensureParsed()
+
+	target := f
+	if f.parent != nil {
+		target = f.parent
+	}
+
+	if f.kind == fuKindFilesCollection {
+		values := make([]Value, len(target.allFiles))
+		for i, item := range target.allFiles {
+			values[i] = target.newSubObject(fuKindFile, item)
+		}
+		return ValueFromVBArray(NewVBArrayFromValues(0, values)), nil
+	} else if f.kind == fuKindFormCollection {
+		values := make([]Value, len(target.allKeys))
+		for i, k := range target.allKeys {
+			values[i] = NewString(k)
+		}
+		return ValueFromVBArray(NewVBArrayFromValues(0, values)), nil
+	} else if f.kind == fuKindUploader {
+		if f.mode == ModeSAFileUp {
+			values := make([]Value, len(target.allKeys))
+			for i, k := range target.allKeys {
+				values[i] = NewString(k)
+			}
+			return ValueFromVBArray(NewVBArrayFromValues(0, values)), nil
+		}
+		values := make([]Value, len(target.allFiles))
+		for i, item := range target.allFiles {
+			values[i] = target.newSubObject(fuKindFile, item)
+		}
+		return ValueFromVBArray(NewVBArrayFromValues(0, values)), nil
+	}
+	return ValueFromVBArray(NewVBArrayFromValues(0, nil)), nil
+}
+
 // DispatchPropertyGet acts as a getter.
 func (f *G3FileUploader) DispatchPropertyGet(propertyName string) Value {
-	switch strings.ToLower(propertyName) {
-	case "blockedextensions":
-		extList := make([]Value, 0)
-		for ext := range f.blockedExtensions {
-			extList = append(extList, NewString(ext))
+	prop := strings.ToLower(propertyName)
+
+	switch f.kind {
+	case fuKindUploader:
+		switch prop {
+		case "blockedextensions":
+			extList := make([]Value, 0)
+			for ext := range f.blockedExtensions {
+				extList = append(extList, NewString(ext))
+			}
+			return Value{Type: VTArray, Arr: NewVBArrayFromValues(0, extList)}
+		case "allowedextensions":
+			extList := make([]Value, 0)
+			for ext := range f.allowedExtensions {
+				extList = append(extList, NewString(ext))
+			}
+			return Value{Type: VTArray, Arr: NewVBArrayFromValues(0, extList)}
+		case "maxfilesize":
+			return NewInteger(f.maxFileSize)
+		case "preserveoriginalname":
+			return NewBool(f.preserveOriginalName)
+		case "allowabsolutepaths":
+			return NewBool(f.allowAbsolutePaths)
+		case "formfields":
+			return f.getFormFields()
+		case "debugmode":
+			return NewBool(f.debugMode)
+		case "totalbytes":
+			_ = f.ensureParsed()
+			return NewInteger(f.totalBytes)
+		case "overwritefiles":
+			return NewBool(f.overwriteFiles)
+		case "logonuser":
+			return NewString(f.logonUser)
+		case "progressid":
+			return NewString(f.progressID)
+		case "form":
+			return f.newSubObject(fuKindFormCollection, nil)
+		case "files":
+			return f.newSubObject(fuKindFilesCollection, nil)
+		case "path":
+			return NewString(f.saPath)
+		case "isempty":
+			_ = f.ensureParsed()
+			return NewBool(len(f.allFiles) == 0)
+		case "maxbytes":
+			return NewInteger(f.maxBytes)
 		}
-		return Value{Type: VTArray, Arr: NewVBArrayFromValues(0, extList)}
-	case "allowedextensions":
-		extList := make([]Value, 0)
-		for ext := range f.allowedExtensions {
-			extList = append(extList, NewString(ext))
+
+	case fuKindFormCollection:
+		switch prop {
+		case "count":
+			_ = f.ensureParsed()
+			target := f
+			if f.parent != nil {
+				target = f.parent
+			}
+			return NewInteger(int64(len(target.allKeys)))
 		}
-		return Value{Type: VTArray, Arr: NewVBArrayFromValues(0, extList)}
-	case "maxfilesize":
-		return NewInteger(f.maxFileSize)
-	case "preserveoriginalname":
-		return NewBool(f.preserveOriginalName)
-	case "allowabsolutepaths":
-		return NewBool(f.allowAbsolutePaths)
-	case "formfields":
-		return f.getFormFields()
-	case "debugmode":
-		return NewBool(f.debugMode)
+
+	case fuKindFilesCollection:
+		switch prop {
+		case "count":
+			_ = f.ensureParsed()
+			target := f
+			if f.parent != nil {
+				target = f.parent
+			}
+			return NewInteger(int64(len(target.allFiles)))
+		}
+
+	case fuKindFile:
+		if f.fileItem == nil {
+			return NewEmpty()
+		}
+		switch prop {
+		case "path":
+			return NewString(f.fileItem.savedPath)
+		case "filename":
+			return NewString(f.fileItem.fileName)
+		case "ext":
+			return NewString(filepath.Ext(f.fileItem.fileName))
+		case "size":
+			return NewInteger(f.fileItem.fileSize)
+		case "contenttype":
+			return NewString(f.fileItem.contentType)
+		case "binary":
+			return f.fileItem.getBinary(f.vm)
+		case "imagewidth":
+			f.fileItem.ensureImageDimensions()
+			return NewInteger(int64(f.fileItem.imageWidth))
+		case "imageheight":
+			f.fileItem.ensureImageDimensions()
+			return NewInteger(int64(f.fileItem.imageHeight))
+		}
 	}
+
 	return f.DispatchMethod(propertyName, nil)
 }
 
@@ -96,20 +360,42 @@ func (f *G3FileUploader) DispatchPropertySet(propertyName string, args []Value) 
 		return false
 	}
 	val := args[0]
-	switch strings.ToLower(propertyName) {
-	case "maxfilesize":
-		f.maxFileSize = int64(f.vm.asInt(val))
-		return true
-	case "preserveoriginalname":
-		f.preserveOriginalName = (val.Type == VTBool && val.Num != 0) || f.vm.asInt(val) != 0
-		return true
-	case "allowabsolutepaths":
-		f.allowAbsolutePaths = (val.Type == VTBool && val.Num != 0) || f.vm.asInt(val) != 0
-		return true
-	case "debugmode":
-		f.debugMode = (val.Type == VTBool && val.Num != 0) || f.vm.asInt(val) != 0
-		return true
+	prop := strings.ToLower(propertyName)
+
+	switch f.kind {
+	case fuKindUploader:
+		switch prop {
+		case "maxfilesize":
+			f.maxFileSize = int64(f.vm.asInt(val))
+			return true
+		case "preserveoriginalname":
+			f.preserveOriginalName = (val.Type == VTBool && val.Num != 0) || f.vm.asInt(val) != 0
+			return true
+		case "allowabsolutepaths":
+			f.allowAbsolutePaths = (val.Type == VTBool && val.Num != 0) || f.vm.asInt(val) != 0
+			return true
+		case "debugmode":
+			f.debugMode = (val.Type == VTBool && val.Num != 0) || f.vm.asInt(val) != 0
+			return true
+		case "overwritefiles":
+			f.overwriteFiles = (val.Type == VTBool && val.Num != 0) || f.vm.asInt(val) != 0
+			return true
+		case "logonuser":
+			f.logonUser = val.String()
+			return true
+		case "progressid":
+			f.progressID = val.String()
+			return true
+		case "path":
+			f.saPath = val.String()
+			return true
+		case "maxbytes":
+			f.maxBytes = int64(f.vm.asInt(val))
+			f.maxFileSize = f.maxBytes
+			return true
+		}
 	}
+
 	return false
 }
 
@@ -117,99 +403,287 @@ func (f *G3FileUploader) DispatchPropertySet(propertyName string, args []Value) 
 func (f *G3FileUploader) DispatchMethod(methodName string, args []Value) Value {
 	method := strings.ToLower(methodName)
 
-	switch method {
-	case "blockextension":
-		if len(args) > 0 {
-			f.blockExtension(args[0].String())
-		}
-		return NewEmpty()
-
-	case "allowextension":
-		if len(args) > 0 {
-			f.allowExtension(args[0].String())
-		}
-		return NewEmpty()
-
-	case "blockextensions":
-		if len(args) > 0 {
-			f.blockExtensions(args[0].String())
-		}
-		return NewEmpty()
-
-	case "allowextensions":
-		if len(args) > 0 {
-			f.allowExtensions(args[0].String())
-		}
-		return NewEmpty()
-
-	case "setuseallowedonly":
-		if len(args) > 0 {
-			val := args[0]
-			f.useAllowedExtOnly = (val.Type == VTBool && val.Num != 0) || f.vm.asInt(val) != 0
-		}
-		return NewEmpty()
-
-	case "process", "save":
-		if len(args) < 1 {
-			return NewEmpty()
-		}
-		fieldName := args[0].String()
-		targetDir := "./"
-		if len(args) > 1 {
-			targetDir = args[1].String()
-		}
-		newFileName := ""
-		if len(args) > 2 {
-			newFileName = args[2].String()
-		}
-		return f.processUpload(fieldName, targetDir, newFileName)
-
-	case "processall", "saveall":
-		targetDir := "./"
-		if len(args) > 0 {
-			targetDir = args[0].String()
-		}
-		return f.processAllUploads(targetDir)
-
-	case "getfileinfo":
-		if len(args) < 1 {
-			return NewEmpty()
-		}
-		fieldName := args[0].String()
-		return f.getFileInfo(fieldName)
-
-	case "getallfilesinfo":
-		return f.getAllFilesInfo()
-
-	case "form", "formvalue":
-		if len(args) < 1 {
-			return NewEmpty()
-		}
-		fieldName := args[0].String()
-		if f.vm.host != nil && f.vm.host.Request() != nil && f.vm.host.Request().HTTPRequest() != nil {
-			req := f.vm.host.Request().HTTPRequest()
-			if req.MultipartForm == nil {
-				// Attempt to parse if not already parsed
-				var parseLimit int64 = 32 << 20
-				if f.maxFileSize > 0 {
-					parseLimit = f.maxFileSize + (5 << 20)
-				}
-				_ = req.ParseMultipartForm(parseLimit)
+	switch f.kind {
+	case fuKindUploader:
+		switch method {
+		case "blockextension":
+			if len(args) > 0 {
+				f.blockExtension(args[0].String())
 			}
-			if req.MultipartForm != nil && req.MultipartForm.Value != nil {
-				if vals, ok := req.MultipartForm.Value[fieldName]; ok && len(vals) > 0 {
-					return NewString(vals[0])
+			return NewEmpty()
+
+		case "allowextension":
+			if len(args) > 0 {
+				f.allowExtension(args[0].String())
+			}
+			return NewEmpty()
+
+		case "blockextensions":
+			if len(args) > 0 {
+				f.blockExtensions(args[0].String())
+			}
+			return NewEmpty()
+
+		case "allowextensions":
+			if len(args) > 0 {
+				f.allowExtensions(args[0].String())
+			}
+			return NewEmpty()
+
+		case "setuseallowedonly":
+			if len(args) > 0 {
+				val := args[0]
+				f.useAllowedExtOnly = (val.Type == VTBool && val.Num != 0) || f.vm.asInt(val) != 0
+			}
+			return NewEmpty()
+
+		case "process":
+			if len(args) < 1 {
+				return NewEmpty()
+			}
+			fieldName := args[0].String()
+			targetDir := "./"
+			if len(args) > 1 {
+				targetDir = args[1].String()
+			}
+			newFileName := ""
+			if len(args) > 2 {
+				newFileName = args[2].String()
+			}
+			return f.processUpload(fieldName, targetDir, newFileName)
+
+		case "processall":
+			targetDir := "./"
+			if len(args) > 0 {
+				targetDir = args[0].String()
+			}
+			return f.processAllUploads(targetDir)
+
+		case "getfileinfo":
+			if len(args) < 1 {
+				return NewEmpty()
+			}
+			fieldName := args[0].String()
+			return f.getFileInfo(fieldName)
+
+		case "getallfilesinfo":
+			return f.getAllFilesInfo()
+
+		case "form":
+			if len(args) > 0 {
+				return f.getFormItem(args[0])
+			}
+			return f.newSubObject(fuKindFormCollection, nil)
+
+		case "files":
+			if len(args) > 0 {
+				return f.getFileItem(args[0])
+			}
+			return f.newSubObject(fuKindFilesCollection, nil)
+
+		case "formfields":
+			return f.getFormFields()
+
+		case "formvalue":
+			if len(args) < 1 {
+				return NewEmpty()
+			}
+			fieldName := args[0].String()
+			_ = f.ensureParsed()
+			if vals, exists := f.formValues[strings.ToLower(fieldName)]; exists && len(vals) > 0 {
+				return NewString(vals[0])
+			}
+			return NewEmpty()
+
+		case "isvalidextension":
+			if len(args) < 1 {
+				return NewBool(false)
+			}
+			ext := args[0].String()
+			return NewBool(f.isValidExtension(ext))
+
+		case "save":
+			if f.mode == ModeSAFileUp || len(args) == 0 {
+				_ = f.ensureParsed()
+				savedCount := 0
+				for _, item := range f.allFiles {
+					err := f.saveFile(item, f.saPath, true)
+					if err == nil {
+						savedCount++
+					}
+				}
+				return NewEmpty()
+			} else {
+				targetDir := args[0].String()
+				_ = f.ensureParsed()
+				savedCount := 0
+				for _, item := range f.allFiles {
+					err := f.saveFile(item, targetDir, f.overwriteFiles)
+					if err == nil {
+						savedCount++
+					}
+				}
+				return NewInteger(int64(savedCount))
+			}
+
+		case "saveall":
+			targetDir := "./"
+			if len(args) > 0 {
+				targetDir = args[0].String()
+			}
+			_ = f.ensureParsed()
+			savedCount := 0
+			for _, item := range f.allFiles {
+				err := f.saveFile(item, targetDir, f.overwriteFiles)
+				if err == nil {
+					savedCount++
 				}
 			}
-		}
-		return NewEmpty()
+			return NewInteger(int64(savedCount))
 
-	case "isvalidextension":
-		if len(args) < 1 {
-			return NewBool(false)
+		case "savevirtual":
+			if len(args) < 1 {
+				return NewInteger(0)
+			}
+			virtualDir := args[0].String()
+			_ = f.ensureParsed()
+			physicalDir := f.vm.host.Server().MapPath(virtualDir)
+			savedCount := 0
+			for _, item := range f.allFiles {
+				err := f.saveFile(item, physicalDir, f.overwriteFiles)
+				if err == nil {
+					savedCount++
+				}
+			}
+			return NewInteger(int64(savedCount))
+
+		case "createdirectory":
+			if len(args) < 1 {
+				return NewEmpty()
+			}
+			dir := args[0].String()
+			var physicalPath string
+			if f.allowAbsolutePaths && filepath.IsAbs(dir) {
+				physicalPath = filepath.Clean(dir)
+			} else {
+				physicalPath = f.vm.host.Server().MapPath(dir)
+			}
+			_ = os.MkdirAll(physicalPath, 0755)
+			return NewEmpty()
+
+		case "sendbinary", "transferfile":
+			if len(args) < 1 {
+				return NewEmpty()
+			}
+			path := args[0].String()
+			contentType := ""
+			if len(args) > 1 {
+				contentType = args[1].String()
+			}
+			_ = f.SendBinary(path, contentType)
+			return NewEmpty()
+
+		case "setmaxsize":
+			if len(args) > 0 {
+				f.maxFileSize = int64(f.vm.asInt(args[0]))
+				f.maxBytes = f.maxFileSize
+			}
+			return NewEmpty()
+
+		case "flush":
+			f.parsed = false
+			f.formValues = nil
+			f.files = nil
+			f.allFiles = nil
+			f.allKeys = nil
+			return NewEmpty()
 		}
-		ext := args[0].String()
-		return NewBool(f.isValidExtension(ext))
+
+	case fuKindFormCollection:
+		switch method {
+		case "", "item":
+			if len(args) > 0 {
+				return f.getFormItem(args[0])
+			}
+		}
+
+	case fuKindFilesCollection:
+		switch method {
+		case "", "item":
+			if len(args) > 0 {
+				return f.getFileItem(args[0])
+			}
+		}
+
+	case fuKindFile:
+		if f.fileItem == nil {
+			return NewEmpty()
+		}
+		switch method {
+		case "saveas":
+			if len(args) > 0 {
+				path := args[0].String()
+				var physicalPath string
+				if f.allowAbsolutePaths && filepath.IsAbs(path) {
+					physicalPath = filepath.Clean(path)
+				} else {
+					physicalPath = f.vm.host.Server().MapPath(path)
+				}
+				err := f.writeItemToPath(f.fileItem, physicalPath)
+				if err == nil {
+					f.fileItem.savedPath = physicalPath
+					f.fileItem.saved = true
+				}
+			}
+			return NewEmpty()
+
+		case "saveasvirtual":
+			if len(args) > 0 {
+				virtualPath := args[0].String()
+				physicalPath := f.vm.host.Server().MapPath(virtualPath)
+				err := f.writeItemToPath(f.fileItem, physicalPath)
+				if err == nil {
+					f.fileItem.savedPath = physicalPath
+					f.fileItem.saved = true
+				}
+			}
+			return NewEmpty()
+
+		case "delete":
+			if f.fileItem.saved && f.fileItem.savedPath != "" {
+				_ = os.Remove(f.fileItem.savedPath)
+				f.fileItem.saved = false
+				f.fileItem.savedPath = ""
+			}
+			return NewEmpty()
+
+		case "copy":
+			if len(args) > 0 {
+				path := args[0].String()
+				var physicalPath string
+				if f.allowAbsolutePaths && filepath.IsAbs(path) {
+					physicalPath = filepath.Clean(path)
+				} else {
+					physicalPath = f.vm.host.Server().MapPath(path)
+				}
+				if f.fileItem.saved && f.fileItem.savedPath != "" {
+					src, err := os.Open(f.fileItem.savedPath)
+					if err == nil {
+						defer src.Close()
+						dir := filepath.Dir(physicalPath)
+						_ = os.MkdirAll(dir, 0755)
+						dst, err := os.Create(physicalPath)
+						if err == nil {
+							defer dst.Close()
+							_, _ = io.Copy(dst, src)
+						}
+					}
+				} else {
+					_ = f.writeItemToPath(f.fileItem, physicalPath)
+				}
+			}
+			return NewEmpty()
+		}
 	}
 
 	return NewEmpty()
@@ -685,4 +1159,220 @@ func (f *G3FileUploader) generateUniqueFileName(ext string) string {
 	)
 	randomPart := fmt.Sprintf("%d", os.Getpid())
 	return fmt.Sprintf("upload_%s_%s%s", timestamp, randomPart, ext)
+}
+
+func (f *G3FileUploader) SendBinary(path string, contentType string) error {
+	var physicalPath string
+	if filepath.IsAbs(path) {
+		physicalPath = filepath.Clean(path)
+	} else {
+		physicalPath = f.vm.host.Server().MapPath(path)
+	}
+
+	data, err := os.ReadFile(physicalPath)
+	if err != nil {
+		return err
+	}
+
+	if contentType != "" {
+		f.vm.host.Response().SetContentType(contentType)
+	} else {
+		ext := strings.ToLower(filepath.Ext(physicalPath))
+		mimeType := mime.TypeByExtension(ext)
+		if mimeType != "" {
+			f.vm.host.Response().SetContentType(mimeType)
+		} else {
+			f.vm.host.Response().SetContentType("application/octet-stream")
+		}
+	}
+
+	f.vm.host.Response().BinaryWrite(data)
+	return nil
+}
+
+func (f *G3FileUploader) saveFile(item *G3FileItem, targetDir string, overwrite bool) error {
+	if item.fileHeader == nil {
+		return fmt.Errorf("no file header")
+	}
+
+	var mappedDir string
+	if f.allowAbsolutePaths && (filepath.IsAbs(targetDir) || strings.HasPrefix(targetDir, "\\\\")) {
+		mappedDir = filepath.Clean(targetDir)
+	} else {
+		mappedDir = f.vm.host.Server().MapPath(targetDir)
+	}
+
+	if mappedDir == "" {
+		return fmt.Errorf("invalid target directory")
+	}
+
+	err := os.MkdirAll(mappedDir, 0755)
+	if err != nil {
+		return err
+	}
+
+	fileName := item.fileName
+	finalPath := filepath.Join(mappedDir, fileName)
+
+	if _, err := os.Stat(finalPath); err == nil && !overwrite {
+		ext := filepath.Ext(fileName)
+		base := strings.TrimSuffix(fileName, ext)
+		counter := 1
+		for {
+			newName := fmt.Sprintf("%s(%d)%s", base, counter, ext)
+			newPath := filepath.Join(mappedDir, newName)
+			if _, err := os.Stat(newPath); os.IsNotExist(err) {
+				finalPath = newPath
+				item.fileName = newName
+				break
+			}
+			counter++
+		}
+	}
+
+	srcFile, err := item.fileHeader.Open()
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(finalPath)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	if err != nil {
+		return err
+	}
+
+	item.savedPath = finalPath
+	item.saved = true
+	return nil
+}
+
+func (f *G3FileUploader) writeItemToPath(item *G3FileItem, destPath string) error {
+	if item.fileHeader == nil {
+		return fmt.Errorf("no file data")
+	}
+	dir := filepath.Dir(destPath)
+	err := os.MkdirAll(dir, 0755)
+	if err != nil {
+		return err
+	}
+
+	src, err := item.fileHeader.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, src)
+	return err
+}
+
+func (f *G3FileUploader) getFormItem(key Value) Value {
+	_ = f.ensureParsed()
+	target := f
+	if f.parent != nil {
+		target = f.parent
+	}
+
+	if key.Type == VTInteger || key.Type == VTDouble {
+		idx := int(f.vm.asInt(key)) - 1
+		if idx >= 0 && idx < len(target.allKeys) {
+			fieldName := target.allKeys[idx]
+			return f.getFormItemByName(fieldName)
+		}
+		return NewEmpty()
+	}
+	return f.getFormItemByName(key.String())
+}
+
+func (f *G3FileUploader) getFormItemByName(name string) Value {
+	_ = f.ensureParsed()
+	target := f
+	if f.parent != nil {
+		target = f.parent
+	}
+
+	nameLower := strings.ToLower(name)
+	if target.mode == ModeSAFileUp {
+		if items, exists := target.files[nameLower]; exists && len(items) > 0 {
+			return target.newSubObject(fuKindFile, items[0])
+		}
+	}
+	if vals, exists := target.formValues[nameLower]; exists && len(vals) > 0 {
+		return NewString(vals[0])
+	}
+	return NewEmpty()
+}
+
+func (f *G3FileUploader) getFileItem(key Value) Value {
+	_ = f.ensureParsed()
+	target := f
+	if f.parent != nil {
+		target = f.parent
+	}
+
+	if key.Type == VTInteger || key.Type == VTDouble {
+		idx := int(f.vm.asInt(key)) - 1
+		if idx >= 0 && idx < len(target.allFiles) {
+			return target.newSubObject(fuKindFile, target.allFiles[idx])
+		}
+		return NewEmpty()
+	}
+	nameLower := strings.ToLower(key.String())
+	if items, exists := target.files[nameLower]; exists && len(items) > 0 {
+		return target.newSubObject(fuKindFile, items[0])
+	}
+	return NewEmpty()
+}
+
+func (item *G3FileItem) getBinary(vm *VM) Value {
+	if item.fileHeader == nil {
+		return Value{Type: VTArray, Arr: NewVBArrayFromValues(0, []Value{})}
+	}
+	f, err := item.fileHeader.Open()
+	if err != nil {
+		return Value{Type: VTArray, Arr: NewVBArrayFromValues(0, []Value{})}
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return Value{Type: VTArray, Arr: NewVBArrayFromValues(0, []Value{})}
+	}
+
+	values := make([]Value, len(data))
+	for i, b := range data {
+		values[i] = NewInteger(int64(b))
+	}
+	return Value{Type: VTArray, Arr: NewVBArrayFromValues(0, values)}
+}
+
+func (item *G3FileItem) ensureImageDimensions() {
+	if item.imageWidth > 0 || item.imageHeight > 0 {
+		return
+	}
+	if item.fileHeader == nil {
+		return
+	}
+	f, err := item.fileHeader.Open()
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	cfg, _, err := image.DecodeConfig(f)
+	if err == nil {
+		item.imageWidth = cfg.Width
+		item.imageHeight = cfg.Height
+	}
 }
