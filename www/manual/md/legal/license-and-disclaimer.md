@@ -8,6 +8,11 @@ Copyright (C) 2026 G3pix Ltda. All rights reserved.
 - **Contact:** https://g3pix.com.br/
 - **Project URL:** https://g3pix.com.br/axonasp
 
+**Contributing to AxonASP**
+While not mandatory, we warmly encourage you to contribute to the AxonASP project. If you develop new components or libraries, please consider sharing your implementation with the community; your contributions help maintain, improve, and expand our ecosystem.
+
+As an open-source project, AxonASP relies on community support to remain active. Maintenance and infrastructure costs are currently funded personally by the lead developer. Your support—whether through code contributions, bug reports, security patches, or financial donations—is vital to our continued growth. Thank you for being part of our journey.
+
 ---
 
 ## 1. Software License
@@ -401,6 +406,8 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 AxonASP is an independent software project developed by G3pix Ltda and is **not affiliated with, endorsed by, or sponsored by Microsoft Corporation** in any way.
 
 The names "Microsoft," "Active Server Pages," "ASP," "VBScript," "Windows," "Office," "Access," "ActiveX," "JScript," as well as any related names, marks, emblems, and images relative to ASP, are registered trademarks of Microsoft Corporation. The use of these trademarks within this project is purely for descriptive, identification, and reference purposes to indicate technical compatibility, and does not imply any association with the trademark holder.
+
+The names and aliases of other third-party libraries, software, products, and services mentioned in this project are the property of their respective owners. The use of these names is solely for descriptive purposes/compatibility and does not imply any endorsement or affiliation with the trademark holders or use of their original source code.
 
 ## 4. Disclaimer of Warranty
 Covered Software is provided under this License on an "as is" basis, without warranty of any kind, either expressed, implied, or statutory, including, without limitation, warranties that the Covered Software is free of defects, merchantable, fit for a particular purpose or non-infringing. The entire risk as to the quality and performance of the Covered Software is with You. Should any Covered Software prove defective in any respect, You (not any Contributor) assume the cost of any necessary servicing, repair, or correction. This disclaimer of warranty constitutes an essential part of this License. No use of any Covered Software is authorized under this License except under this disclaimer.

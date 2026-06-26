@@ -96,16 +96,11 @@ This project is licensed under the MPL License - see the [LICENSE.txt](LICENSE.t
 
 ---
 
-<p align="center">
-  <strong>Built with ❤️ by G3Pix</strong>
-  <br>
-  Making Classic ASP modern, fast, and cross-platform
-</p>
+## Contributing to AxonASP ✨
 
-#### Legal Disclaimer
-AxonASP is an independent software project developed by G3pix and is **not affiliated with, endorsed by, or sponsored by Microsoft Corporation**. Trademarks such as "Microsoft," "Active Server Pages," "ASP," "VBScript," "JScript" are registered trademarks of Microsoft Corporation.
+While not mandatory, we warmly encourage you to contribute to the AxonASP project. If you develop new components or libraries, please consider sharing your implementation with the community; your contributions help maintain, improve, and expand our ecosystem.
 
-## Contributors ✨
+As an open-source project, AxonASP relies on community support to remain active. Maintenance and infrastructure costs are currently funded personally by the lead developer. Your support—whether through code contributions, bug reports, security patches, or financial donations—is vital to our continued growth. 
 
 Thanks goes to these wonderful people:
 
@@ -127,4 +122,16 @@ Thanks goes to these wonderful people:
 
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
-Contributions of any kind welcome!
+---
+
+<p align="center">
+  <strong>Built with ❤️ by G3Pix</strong>
+  <br>
+  Making Classic ASP modern, fast, and cross-platform
+</p>
+
+#### Legal Disclaimer
+
+AxonASP is an independent software project developed by G3pix and is **not affiliated with, endorsed by, or sponsored by Microsoft Corporation**. Trademarks such as "Microsoft," "Active Server Pages," "ASP," "VBScript," "JScript" are registered trademarks of Microsoft Corporation. The names and aliases of other third-party libraries, software, products, and services mentioned in this project are the property of their respective owners. The use of these names is solely for descriptive purposes/compatibility and does not imply any endorsement or affiliation with the trademark holders or use of their original source code.
+
+The names and aliases of other third-party libraries, software, products, and services mentioned in this project are the property of their respective owners. The use of these names is solely for descriptive purposes/compatibility and does not imply any endorsement or affiliation with the trademark holders or use of their original source code.
