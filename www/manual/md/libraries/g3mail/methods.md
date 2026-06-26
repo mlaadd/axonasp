@@ -9,13 +9,25 @@ This page summarizes every method exposed by `G3MAIL` in G3Pix AxonASP.
 | Method | Returns | Description |
 |---|---|---|
 | `AddAddress(address)` | Boolean | Adds one recipient address to the To list. Returns `True`. |
-| `AddCC(address)` | Boolean | Adds one recipient address to the CC list. Returns `True`. |
-| `AddBCC(address)` | Boolean | Adds one recipient address to the BCC list. Returns `True`. |
-| `Clear()` | Boolean | Clears To/CC/BCC/Subject/Body context and resets HTML mode. Returns `True`. |
-| `AddAttachment(filepath)` | Boolean | Attaches a file to the email. Returns `True` on success. |
-| `AddRelatedBodyPart(filepath, cid)` | Object | Embeds a related resource (e.g. an image) with the specified Content-ID (CID). Returns a body part object. |
-| `Send()` | Boolean or String | Sends using configured properties and returns `True` on success; returns an error String when SMTP configuration is incomplete or send fails. |
-| `Send(to, subject, body)` | Boolean or String | CDONTS-style overload that first sets To/Subject/Body, then sends. Returns `True` on success; returns an error String on failure. |
+| `AddAddress(email, [name])` | Boolean | Adds one recipient address to the To list. Supports email-only or email + name parameters. |
+| `AddAttachment(filepath)` | Boolean | Attaches a file to the email. |
+| `AddBcc(email, [name])` | Boolean | Adds one recipient address to the BCC list. |
+| `AddBCC(name, email)` | Boolean | ASPMail alias for `AddBcc` with reversed parameters. |
+| `AddCC(email, [name])` | Boolean | Adds one recipient address to the CC list. |
+| `AddCC(name, email)` | Boolean | ASPMail alias for `AddCC` with reversed parameters. |
+| `AddRecipient(name, email)` | Boolean | ASPMail alias for `AddAddress` with reversed parameters. |
+| `AddReplyTo(email)` | Boolean | Adds a Reply-To address to the email headers. |
+| `AddRelatedBodyPart(filepath, cid)` | Object | Embeds a related resource (e.g. an image) with Content-ID. |
+| `Clear()` | Boolean | Clears all recipients, subject, body, attachments, and related parts. |
+| `ClearAddresses()` | Boolean | ASPEmail method to clear the To recipient list. |
+| `ClearAttachments()` | Boolean | ASPEmail method to clear all attached files. |
+| `ClearBcc()` | Boolean | ASPEmail method to clear the BCC recipient list. |
+| `ClearBCCs()` | Boolean | ASPMail method to clear the BCC recipient list. |
+| `ClearCC()` | Boolean | ASPEmail method to clear the CC recipient list. |
+| `ClearCCs()` | Boolean | ASPMail method to clear the CC recipient list. |
+| `ClearRecipients()` | Boolean | ASPMail method to clear the To recipient list. |
+| `Send()` | Boolean or String | Sends using configured properties. |
+| `SendMail()` | Boolean or String | ASPMail alias for `Send()`. |
 
 ## Remarks
 

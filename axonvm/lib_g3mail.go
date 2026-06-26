@@ -40,6 +40,7 @@ type G3MailRelatedPart struct {
 
 type G3Mail struct {
 	vm           *VM
+	progID       string
 	kind         int // 0 = message, 1 = body part, 2 = fields collection
 	host         string
 	port         int
@@ -60,12 +61,21 @@ type G3Mail struct {
 	cid          string
 	fields       map[string]string
 	bpRef        *G3Mail
+	charSet      string
+	contentType  string
+	replyTo      []string
 }
 
 // newG3MailObject instantiates the G3Mail custom functions library.
 func (vm *VM) newG3MailObject() Value {
+	return vm.newG3MailObjectWithProgID("g3mail")
+}
+
+// newG3MailObjectWithProgID instantiates the G3Mail custom functions library with a specific ProgID.
+func (vm *VM) newG3MailObjectWithProgID(progID string) Value {
 	obj := &G3Mail{
 		vm:           vm,
+		progID:       progID,
 		kind:         0,
 		to:           make([]string, 0),
 		cc:           make([]string, 0),
@@ -73,6 +83,7 @@ func (vm *VM) newG3MailObject() Value {
 		attachments:  make([]string, 0),
 		relatedParts: make([]*G3MailRelatedPart, 0),
 		fields:       make(map[string]string),
+		replyTo:      make([]string, 0),
 	}
 	id := vm.nextDynamicNativeID
 	vm.nextDynamicNativeID++
@@ -120,7 +131,7 @@ func (m *G3Mail) DispatchPropertyGet(propertyName string) Value {
 			return NewString(m.body)
 		}
 		return NewString("")
-	case "host", "mailhost", "smtpserver":
+	case "host", "mailhost", "smtpserver", "remotehost":
 		return NewString(m.host)
 	case "port", "smtpserverport":
 		return NewInteger(int64(m.port))
@@ -140,7 +151,7 @@ func (m *G3Mail) DispatchPropertyGet(propertyName string) Value {
 		return NewString(strings.Join(m.bcc, ","))
 	case "subject":
 		return NewString(m.subject)
-	case "body", "textbody", "message":
+	case "body", "textbody", "message", "bodytext":
 		return NewString(m.body)
 	case "ishtml":
 		return NewBool(m.isHTML)
@@ -149,6 +160,16 @@ func (m *G3Mail) DispatchPropertyGet(propertyName string) Value {
 			return NewInteger(0)
 		}
 		return NewInteger(1)
+	case "charset":
+		return NewString(m.charSet)
+	case "contenttype":
+		if m.contentType != "" {
+			return NewString(m.contentType)
+		}
+		if m.isHTML {
+			return NewString("text/html")
+		}
+		return NewString("text/plain")
 	}
 	return m.DispatchMethod(propertyName, nil)
 }
@@ -171,7 +192,7 @@ func (m *G3Mail) DispatchPropertySet(propertyName string, args []Value) bool {
 		m.htmlBody = valueStr
 		m.isHTML = true
 		return true
-	case "host", "mailhost", "smtpserver":
+	case "host", "mailhost", "smtpserver", "remotehost":
 		m.host = strings.TrimSpace(valueStr)
 		return true
 	case "port", "smtpserverport":
@@ -201,7 +222,7 @@ func (m *G3Mail) DispatchPropertySet(propertyName string, args []Value) bool {
 	case "subject":
 		m.subject = valueStr
 		return true
-	case "body", "message", "textbody":
+	case "body", "message", "textbody", "bodytext":
 		m.body = valueStr
 		m.isHTML = false
 		return true
@@ -210,6 +231,17 @@ func (m *G3Mail) DispatchPropertySet(propertyName string, args []Value) bool {
 		return true
 	case "bodyformat", "mailformat":
 		m.isHTML = m.vm.asInt(value) == 0
+		return true
+	case "charset":
+		m.charSet = valueStr
+		return true
+	case "contenttype":
+		m.contentType = valueStr
+		if strings.Contains(strings.ToLower(valueStr), "html") {
+			m.isHTML = true
+		} else {
+			m.isHTML = false
+		}
 		return true
 	}
 	return false
@@ -257,28 +289,115 @@ func (m *G3Mail) DispatchMethod(methodName string, args []Value) Value {
 
 	switch lowerMethod {
 	case "addaddress", "addrecipient", "addto":
-		if len(args) > 0 {
-			addr := strings.TrimSpace(args[0].String())
-			if addr != "" {
-				m.to = append(m.to, addr)
+		if len(args) == 0 {
+			return NewBool(false)
+		}
+		var email, name string
+		if len(args) == 1 {
+			email = args[0].String()
+		} else {
+			arg0 := args[0].String()
+			arg1 := args[1].String()
+			if strings.EqualFold(lowerMethod, "addrecipient") || m.progID == "smtpsvg.mailer" {
+				name = arg0
+				email = arg1
+			} else if m.progID == "persits.mailsender" {
+				email = arg0
+				name = arg1
+			} else {
+				if strings.Contains(arg0, "@") && !strings.Contains(arg1, "@") {
+					email = arg0
+					name = arg1
+				} else if strings.Contains(arg1, "@") && !strings.Contains(arg0, "@") {
+					email = arg1
+					name = arg0
+				} else {
+					email = arg0
+					name = arg1
+				}
 			}
+		}
+		addr := formatAddress(email, name)
+		if addr != "" {
+			m.to = append(m.to, addr)
 		}
 		return NewBool(true)
 
 	case "addcc":
-		if len(args) > 0 {
-			addr := strings.TrimSpace(args[0].String())
-			if addr != "" {
-				m.cc = append(m.cc, addr)
+		if len(args) == 0 {
+			return NewBool(false)
+		}
+		var email, name string
+		if len(args) == 1 {
+			email = args[0].String()
+		} else {
+			arg0 := args[0].String()
+			arg1 := args[1].String()
+			if m.progID == "smtpsvg.mailer" {
+				name = arg0
+				email = arg1
+			} else if m.progID == "persits.mailsender" {
+				email = arg0
+				name = arg1
+			} else {
+				if strings.Contains(arg0, "@") && !strings.Contains(arg1, "@") {
+					email = arg0
+					name = arg1
+				} else if strings.Contains(arg1, "@") && !strings.Contains(arg0, "@") {
+					email = arg1
+					name = arg0
+				} else {
+					email = arg0
+					name = arg1
+				}
 			}
+		}
+		addr := formatAddress(email, name)
+		if addr != "" {
+			m.cc = append(m.cc, addr)
 		}
 		return NewBool(true)
 
 	case "addbcc":
+		if len(args) == 0 {
+			return NewBool(false)
+		}
+		var email, name string
+		if len(args) == 1 {
+			email = args[0].String()
+		} else {
+			arg0 := args[0].String()
+			arg1 := args[1].String()
+			if m.progID == "smtpsvg.mailer" {
+				name = arg0
+				email = arg1
+			} else if m.progID == "persits.mailsender" {
+				email = arg0
+				name = arg1
+			} else {
+				if strings.Contains(arg0, "@") && !strings.Contains(arg1, "@") {
+					email = arg0
+					name = arg1
+				} else if strings.Contains(arg1, "@") && !strings.Contains(arg0, "@") {
+					email = arg1
+					name = arg0
+				} else {
+					email = arg0
+					name = arg1
+				}
+			}
+		}
+		addr := formatAddress(email, name)
+		if addr != "" {
+			m.bcc = append(m.bcc, addr)
+		}
+		return NewBool(true)
+
+	case "addreplyto":
 		if len(args) > 0 {
 			addr := strings.TrimSpace(args[0].String())
 			if addr != "" {
-				m.bcc = append(m.bcc, addr)
+				m.replyTo = append(m.replyTo, addr)
 			}
 		}
 		return NewBool(true)
@@ -326,7 +445,7 @@ func (m *G3Mail) DispatchMethod(methodName string, args []Value) Value {
 		}
 		return NewEmpty()
 
-	case "send":
+	case "send", "sendmail":
 		if len(args) >= 3 {
 			// CDONTS.NewMail style args: To, Subject, Body
 			m.to = m.parseAddressList(args[0].String())
@@ -346,6 +465,23 @@ func (m *G3Mail) DispatchMethod(methodName string, args []Value) Value {
 		m.isHTML = false
 		m.attachments = []string{}
 		m.relatedParts = []*G3MailRelatedPart{}
+		m.replyTo = []string{}
+		return NewBool(true)
+
+	case "clearaddresses", "clearrecipients":
+		m.to = []string{}
+		return NewBool(true)
+
+	case "clearcc", "clearccs":
+		m.cc = []string{}
+		return NewBool(true)
+
+	case "clearbcc", "clearbccs":
+		m.bcc = []string{}
+		return NewBool(true)
+
+	case "clearattachments":
+		m.attachments = []string{}
 		return NewBool(true)
 	}
 
@@ -395,17 +531,28 @@ func (m *G3Mail) sendInternal() Value {
 	msg.SetHeader("To", to)
 	msg.SetHeader("Subject", m.subject)
 
+	if len(m.replyTo) > 0 {
+		msg.SetHeader("Reply-To", strings.Join(m.replyTo, ","))
+	}
+
+	textContentType := "text/plain"
+	htmlContentType := "text/html"
+	if m.charSet != "" {
+		textContentType = "text/plain; charset=" + m.charSet
+		htmlContentType = "text/html; charset=" + m.charSet
+	}
+
 	if m.htmlBody != "" {
 		if m.body != "" {
-			msg.SetBody("text/plain", m.body)
-			msg.AddAlternative("text/html", m.htmlBody)
+			msg.SetBody(textContentType, m.body)
+			msg.AddAlternative(htmlContentType, m.htmlBody)
 		} else {
-			msg.SetBody("text/html", m.htmlBody)
+			msg.SetBody(htmlContentType, m.htmlBody)
 		}
 	} else if m.isHTML {
-		msg.SetBody("text/html", m.body)
+		msg.SetBody(htmlContentType, m.body)
 	} else {
-		msg.SetBody("text/plain", m.body)
+		msg.SetBody(textContentType, m.body)
 	}
 
 	for _, filepath := range m.attachments {
@@ -465,4 +612,16 @@ func (m *G3Mail) getSMTPConfigFromEnv() (host string, port int, username, passwo
 	}
 
 	return host, parsedPort, username, password, from, nil
+}
+
+func formatAddress(email, name string) string {
+	name = strings.TrimSpace(name)
+	email = strings.TrimSpace(email)
+	if name == "" {
+		return email
+	}
+	if strings.ContainsAny(name, `",@<>`) || strings.Contains(name, " ") {
+		return fmt.Sprintf("%q <%s>", name, email)
+	}
+	return fmt.Sprintf("%s <%s>", name, email)
 }

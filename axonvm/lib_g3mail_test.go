@@ -131,3 +131,91 @@ func TestG3Mail(t *testing.T) {
 		t.Errorf("Fields.Update failed")
 	}
 }
+
+func TestG3MailCompatibility(t *testing.T) {
+	vm := NewVM(nil, nil, 0)
+
+	// 1. Test ASPEmail (persits.mailsender) alias
+	mailSenderVal := vm.newG3MailObjectWithProgID("persits.mailsender")
+	mSenderObj := vm.g3mailItems[mailSenderVal.Num]
+
+	mSenderObj.DispatchPropertySet("CharSet", []Value{NewString("utf-8")})
+	charSet := mSenderObj.DispatchPropertyGet("CharSet")
+	if charSet.String() != "utf-8" {
+		t.Errorf("expected CharSet to be utf-8, got %s", charSet.String())
+	}
+
+	// ASPEmail: AddAddress(email, name)
+	mSenderObj.DispatchMethod("AddAddress", []Value{NewString("john@example.com"), NewString("John Doe")})
+	if len(mSenderObj.to) != 1 || mSenderObj.to[0] != "\"John Doe\" <john@example.com>" {
+		t.Errorf("AddAddress(email, name) failed, got: %v", mSenderObj.to)
+	}
+
+	// AddCC(email, name)
+	mSenderObj.DispatchMethod("AddCC", []Value{NewString("cc@example.com"), NewString("CC Person")})
+	if len(mSenderObj.cc) != 1 || mSenderObj.cc[0] != "\"CC Person\" <cc@example.com>" {
+		t.Errorf("AddCC(email, name) failed, got: %v", mSenderObj.cc)
+	}
+
+	// AddBcc(email, name)
+	mSenderObj.DispatchMethod("AddBcc", []Value{NewString("bcc@example.com"), NewString("Bcc Person")})
+	if len(mSenderObj.bcc) != 1 || mSenderObj.bcc[0] != "\"Bcc Person\" <bcc@example.com>" {
+		t.Errorf("AddBcc(email, name) failed, got: %v", mSenderObj.bcc)
+	}
+
+	// AddReplyTo
+	mSenderObj.DispatchMethod("AddReplyTo", []Value{NewString("reply@example.com")})
+	if len(mSenderObj.replyTo) != 1 || mSenderObj.replyTo[0] != "reply@example.com" {
+		t.Errorf("AddReplyTo failed")
+	}
+
+	// State Clearers
+	mSenderObj.DispatchMethod("ClearCC", nil)
+	if len(mSenderObj.cc) != 0 {
+		t.Errorf("ClearCC failed")
+	}
+	mSenderObj.DispatchMethod("ClearBcc", nil)
+	if len(mSenderObj.bcc) != 0 {
+		t.Errorf("ClearBcc failed")
+	}
+
+	// 2. Test ASPMail (smtpsvg.mailer) alias
+	mailerVal := vm.newG3MailObjectWithProgID("smtpsvg.mailer")
+	mailerObj := vm.g3mailItems[mailerVal.Num]
+
+	mailerObj.DispatchPropertySet("RemoteHost", []Value{NewString("smtp.myhost.com")})
+	mailerObj.DispatchPropertySet("FromAddress", []Value{NewString("sender@myhost.com")})
+	mailerObj.DispatchPropertySet("BodyText", []Value{NewString("My Body Text")})
+	mailerObj.DispatchPropertySet("ContentType", []Value{NewString("text/html")})
+
+	if mailerObj.host != "smtp.myhost.com" {
+		t.Errorf("RemoteHost alias failed")
+	}
+	if mailerObj.from != "sender@myhost.com" {
+		t.Errorf("FromAddress alias failed")
+	}
+	if mailerObj.body != "My Body Text" {
+		t.Errorf("BodyText alias failed")
+	}
+	if !mailerObj.isHTML {
+		t.Errorf("ContentType text/html setting isHTML to true failed")
+	}
+
+	// ASPMail: AddRecipient(name, email) -> note reversed parameters
+	mailerObj.DispatchMethod("AddRecipient", []Value{NewString("Alice Smith"), NewString("alice@example.com")})
+	if len(mailerObj.to) != 1 || mailerObj.to[0] != "\"Alice Smith\" <alice@example.com>" {
+		t.Errorf("AddRecipient(name, email) failed, got: %v", mailerObj.to)
+	}
+
+	// AddCC(name, email)
+	mailerObj.DispatchMethod("AddCC", []Value{NewString("Bob"), NewString("bob@example.com")})
+	if len(mailerObj.cc) != 1 || mailerObj.cc[0] != "Bob <bob@example.com>" {
+		t.Errorf("AddCC(name, email) failed, got: %v", mailerObj.cc)
+	}
+
+	// Clearrecipients
+	mailerObj.DispatchMethod("ClearRecipients", nil)
+	if len(mailerObj.to) != 0 {
+		t.Errorf("ClearRecipients failed")
+	}
+}

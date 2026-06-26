@@ -6596,8 +6596,8 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 				if progIDKey == "g3http" || progIDKey == "g3http.functions" {
 					return vm.newG3HTTPObject()
 				}
-				if progIDKey == "g3mail" || progIDKey == "cdonts.newmail" || progIDKey == "cdo.message" || progIDKey == "persits.mailsender" {
-					return vm.newG3MailObject()
+				if progIDKey == "g3mail" || progIDKey == "cdonts.newmail" || progIDKey == "cdo.message" || progIDKey == "persits.mailsender" || progIDKey == "smtpsvg.mailer" {
+					return vm.newG3MailObjectWithProgID(progIDKey)
 				}
 				if progIDKey == "g3image" {
 					return vm.newG3ImageObject()

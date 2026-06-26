@@ -34,9 +34,14 @@ func (vm *VM) newG3MailObject() Value {
 	return Value{Type: VTEmpty}
 }
 
+func (vm *VM) newG3MailObjectWithProgID(progID string) Value {
+	panicLibraryDisabled("g3mail", "G3Mail library")
+	return Value{Type: VTEmpty}
+}
+
 func (m *G3Mail) DispatchPropertyGet(propertyName string) Value {
 	switch strings.ToLower(propertyName) {
-	case "htmlbody":
+	case "htmlbody", "remotehost", "fromaddress", "bodytext", "contenttype", "charset":
 		return Value{Type: VTEmpty}
 	}
 	return Value{Type: VTEmpty}
@@ -44,7 +49,7 @@ func (m *G3Mail) DispatchPropertyGet(propertyName string) Value {
 
 func (m *G3Mail) DispatchPropertySet(propertyName string, args []Value) bool {
 	switch strings.ToLower(propertyName) {
-	case "htmlbody":
+	case "htmlbody", "remotehost", "fromaddress", "bodytext", "contenttype", "charset":
 		return false
 	}
 	return false
@@ -52,9 +57,7 @@ func (m *G3Mail) DispatchPropertySet(propertyName string, args []Value) bool {
 
 func (m *G3Mail) DispatchMethod(methodName string, args []Value) Value {
 	switch strings.ToLower(methodName) {
-	case "addrelatedbodypart":
-		return Value{Type: VTEmpty}
-	case "addattachment":
+	case "addrelatedbodypart", "addattachment", "addrecipient", "addreplyto", "sendmail", "clearaddresses", "clearrecipients", "clearcc", "clearccs", "clearbcc", "clearbccs", "clearattachments":
 		return Value{Type: VTEmpty}
 	}
 	return Value{Type: VTEmpty}
