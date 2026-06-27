@@ -62,6 +62,21 @@ func legacyValueToInterface(v Value, vm *VM) any {
 		if obj, ok := vm.pdfItems[v.Num]; ok {
 			return obj
 		}
+		if obj, ok := vm.pdfDocItems[v.Num]; ok {
+			return obj
+		}
+		if obj, ok := vm.pdfPageItems[v.Num]; ok {
+			return obj
+		}
+		if obj, ok := vm.pdfCanvasItems[v.Num]; ok {
+			return obj
+		}
+		if obj, ok := vm.pdfFontItems[v.Num]; ok {
+			return obj
+		}
+		if obj, ok := vm.pdfPagesItems[v.Num]; ok {
+			return obj
+		}
 	}
 	return nil
 }

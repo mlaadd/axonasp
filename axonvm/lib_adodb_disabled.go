@@ -179,6 +179,7 @@ func (vm *VM) CleanupRequestResources() {
 	}
 	vm.cleanupG3ImageResources()
 	vm.cleanupG3ZSTDResources()
+	vm.cleanupG3PDFResources()
 	clear(vm.nativeObjectProxies)
 	vm.nextDynamicNativeID = 20000
 }

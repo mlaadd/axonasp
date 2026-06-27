@@ -389,6 +389,11 @@ type VM struct {
 	msxmlParseErrorItems           map[int64]*ParseError
 	msxmlElementItems              map[int64]*XMLElement
 	pdfItems                       map[int64]*G3PDF
+	pdfDocItems                    map[int64]*PdfDocument
+	pdfPageItems                   map[int64]*PdfPage
+	pdfCanvasItems                 map[int64]*PdfCanvas
+	pdfFontItems                   map[int64]*PdfFont
+	pdfPagesItems                  map[int64]*PdfPagesCollection
 	fileUploaderItems              map[int64]*G3FileUploader
 	axonItems                      map[int64]*AxonLibrary
 	fsoItems                       map[int64]*fsoNativeObject
@@ -727,6 +732,11 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		msxmlParseErrorItems:           make(map[int64]*ParseError),
 		msxmlElementItems:              make(map[int64]*XMLElement),
 		pdfItems:                       make(map[int64]*G3PDF),
+		pdfDocItems:                    make(map[int64]*PdfDocument),
+		pdfPageItems:                   make(map[int64]*PdfPage),
+		pdfCanvasItems:                 make(map[int64]*PdfCanvas),
+		pdfFontItems:                   make(map[int64]*PdfFont),
+		pdfPagesItems:                  make(map[int64]*PdfPagesCollection),
 		fileUploaderItems:              make(map[int64]*G3FileUploader),
 		axonItems:                      make(map[int64]*AxonLibrary),
 		fsoItems:                       make(map[int64]*fsoNativeObject),
@@ -1712,6 +1722,11 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.msxmlParseErrorItems = child.msxmlParseErrorItems
 	vm.msxmlElementItems = child.msxmlElementItems
 	vm.pdfItems = child.pdfItems
+	vm.pdfDocItems = child.pdfDocItems
+	vm.pdfPageItems = child.pdfPageItems
+	vm.pdfCanvasItems = child.pdfCanvasItems
+	vm.pdfFontItems = child.pdfFontItems
+	vm.pdfPagesItems = child.pdfPagesItems
 	vm.fileUploaderItems = child.fileUploaderItems
 	vm.axonItems = child.axonItems
 	vm.fsoItems = child.fsoItems
@@ -6004,6 +6019,21 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 	if pdfObj, exists := vm.pdfItems[objID]; exists {
 		return pdfObj.DispatchMethod(member, args)
 	}
+	if pdfDoc, exists := vm.pdfDocItems[objID]; exists {
+		return pdfDoc.DispatchMethod(member, args)
+	}
+	if pdfPage, exists := vm.pdfPageItems[objID]; exists {
+		return pdfPage.DispatchMethod(member, args)
+	}
+	if pdfCanvas, exists := vm.pdfCanvasItems[objID]; exists {
+		return pdfCanvas.DispatchMethod(member, args)
+	}
+	if pdfFont, exists := vm.pdfFontItems[objID]; exists {
+		return pdfFont.DispatchMethod(member, args)
+	}
+	if pdfPages, exists := vm.pdfPagesItems[objID]; exists {
+		return pdfPages.DispatchMethod(member, args)
+	}
 	if wscriptShellObject, exists := vm.wscriptShellItems[objID]; exists {
 		return wscriptShellObject.DispatchMethod(member, args)
 	}
@@ -6714,8 +6744,11 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 					vm.msxmlDOMItems[id] = obj
 					return Value{Type: VTNativeObject, Num: id}
 				}
-				if progIDKey == "g3pdf" {
+				if progIDKey == "g3pdf" || progIDKey == "persits.pdf" || progIDKey == "asp.pdf" {
 					obj := NewG3PDF(vm)
+					if progIDKey == "persits.pdf" || progIDKey == "asp.pdf" {
+						obj.isPersitsMode = true
+					}
 					id := vm.nextDynamicNativeID
 					vm.nextDynamicNativeID++
 					vm.pdfItems[id] = obj
@@ -7273,6 +7306,21 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 	if pdfObj, exists := vm.pdfItems[target.Num]; exists {
 		return pdfObj.DispatchPropertyGet(member)
 	}
+	if pdfDoc, exists := vm.pdfDocItems[target.Num]; exists {
+		return vm.dispatchPdfDocumentPropertyGet(pdfDoc, member)
+	}
+	if pdfPage, exists := vm.pdfPageItems[target.Num]; exists {
+		return vm.dispatchPdfPagePropertyGet(pdfPage, member)
+	}
+	if pdfCanvas, exists := vm.pdfCanvasItems[target.Num]; exists {
+		return vm.dispatchPdfCanvasPropertyGet(pdfCanvas, member)
+	}
+	if pdfFont, exists := vm.pdfFontItems[target.Num]; exists {
+		return vm.dispatchPdfFontPropertyGet(pdfFont, member)
+	}
+	if pdfPages, exists := vm.pdfPagesItems[target.Num]; exists {
+		return vm.dispatchPdfPagesPropertyGet(pdfPages, member)
+	}
 	if wscriptShellObject, exists := vm.wscriptShellItems[target.Num]; exists {
 		return wscriptShellObject.DispatchPropertyGet(member)
 	}
@@ -7751,6 +7799,22 @@ func (vm *VM) dispatchMemberSet(objID int64, member string, val Value) {
 	}
 	if pdf, exists := vm.pdfItems[objID]; exists {
 		pdf.DispatchPropertySet(member, []Value{val})
+		return
+	}
+	if pdfDoc, exists := vm.pdfDocItems[objID]; exists {
+		vm.dispatchPdfDocumentPropertySet(pdfDoc, member, val)
+		return
+	}
+	if pdfPage, exists := vm.pdfPageItems[objID]; exists {
+		vm.dispatchPdfPagePropertySet(pdfPage, member, val)
+		return
+	}
+	if pdfCanvas, exists := vm.pdfCanvasItems[objID]; exists {
+		vm.dispatchPdfCanvasPropertySet(pdfCanvas, member, val)
+		return
+	}
+	if pdfFont, exists := vm.pdfFontItems[objID]; exists {
+		vm.dispatchPdfFontPropertySet(pdfFont, member, val)
 		return
 	}
 	if fileUploader, exists := vm.fileUploaderItems[objID]; exists {

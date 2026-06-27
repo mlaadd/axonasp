@@ -55,7 +55,69 @@ This page summarizes methods exposed by the G3PDF library in G3Pix AxonASP.
 | GetPageWidth | Double | Returns current page width in the active unit. |
 | GetPageHeight | Double | Returns current page height in the active unit. |
 | GetStringWidth | Double | Measures rendered width for a text string in the active font settings. |
+| CreateDocument | Object (PdfDocument) | **[Persits.Pdf]** Creates a new PDF document and returns a PdfDocument sub-object. |
+| OpenDocument | Object (PdfDocument) | **[Persits.Pdf]** Opens an existing PDF file and returns a PdfDocument sub-object. |
+| Fonts | Object (PdfFont) | **[Persits.Pdf]** Loads a font by name and returns a PdfFont sub-object. |
+
+## Persits.Pdf Sub-Object Methods
+
+The following methods are available on sub-objects returned by Persits.Pdf methods.
+
+### PdfDocument Methods
+
+| Method | Returns | Description |
+|---|---|---|
+| Save | Boolean | **[Persits.Pdf]** Saves the PDF document to a file path. |
+| SendBinary | String (binary) | **[Persits.Pdf]** Returns the PDF as a binary string for Response.BinaryWrite. |
+| SendBinaryData | String (binary) | **[Persits.Pdf]** Alias of SendBinary. |
+| ImportFromUrl | Boolean | **[Persits.Pdf]** Fetches a URL and renders its HTML content into the PDF. Routes to the existing WriteHTML engine. |
+| Close | Boolean | **[Persits.Pdf]** Closes the document. |
+
+### PdfDocument Properties
+
+| Property | Type | Description |
+|---|---|---|
+| Pages | Object (Pages collection) | **[Persits.Pdf]** Returns a Pages collection object. Call `.Add()` to create a new PdfPage. |
+| Open | Boolean | **[Persits.Pdf]** Indicates whether the document is currently open. |
+
+### Pages Collection Methods
+
+| Method | Returns | Description |
+|---|---|---|
+| Add | Object (PdfPage) | **[Persits.Pdf]** Adds a new page to the document and returns a PdfPage object. |
+
+### PdfPage Properties
+
+| Property | Type | Description |
+|---|---|---|
+| Canvas | Object (PdfCanvas) | **[Persits.Pdf]** Returns a PdfCanvas drawing surface for this page. |
+| Width | Double | **[Persits.Pdf]** Returns page width in the current unit. |
+| Height | Double | **[Persits.Pdf]** Returns page height in the current unit. |
+| W | Double | **[Persits.Pdf]** Alias of Width. |
+| H | Double | **[Persits.Pdf]** Alias of Height. |
+| Rotation | Integer | **[Persits.Pdf]** Returns page rotation in degrees (always 0). |
+| PageNumber | Integer | **[Persits.Pdf]** Returns the 1-based page number. |
+
+### PdfCanvas Methods
+
+| Method | Returns | Description |
+|---|---|---|
+| DrawText | Boolean | **[Persits.Pdf]** Draws text on the canvas using a param string. Supports `x`, `y`, `width`, `alignment`, `size`, `color` keys. |
+| DrawLine | Boolean | **[Persits.Pdf]** Draws a line using a param string. Supports `x`, `y`, `x1`, `y1`, `color`, `width` keys. |
+| DrawBox | Boolean | **[Persits.Pdf]** Draws a rectangle using a param string. Supports `left`, `top`, `right`, `bottom`, `color`, `width` keys. |
+
+### PdfFont Properties
+
+| Property | Type | Description |
+|---|---|---|
+| Name | String | **[Persits.Pdf]** Returns the original font name used for loading. |
+| Family | String | **[Persits.Pdf]** Returns the resolved fpdf font family. |
+| Size | Double | **[Persits.Pdf]** Gets or sets the font size in points. |
+| Bold | Boolean | **[Persits.Pdf]** Gets or sets bold style flag. |
+| Italic | Boolean | **[Persits.Pdf]** Gets or sets italic style flag. |
+| Embedded | Boolean | **[Persits.Pdf]** Indicates whether the font is embedded (always true for built-in fonts). |
 
 ## Remarks
 - Method names are case-insensitive.
 - Alias methods resolve to the same behavior and return contract as their canonical methods.
+- Items marked with **[Persits.Pdf]** are part of the Persits.Pdf / AspPDF compatibility layer. They are only active when the object was instantiated via `Server.CreateObject("Persits.Pdf")` or `Server.CreateObject("ASP.Pdf")`.

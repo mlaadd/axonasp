@@ -24,6 +24,20 @@ Returns a native `G3PDF` object that can be used to construct PDF documents.
 - Ensure that memory and binary output streams are managed correctly.
 - Call `Close` when finished applying content to the PDF object.
 
+## Persits.Pdf Compatibility
+The G3PDF library includes a **Persits.Pdf (AspPDF) compatibility layer**. When the object is instantiated via `Server.CreateObject("Persits.Pdf")` or `Server.CreateObject("ASP.Pdf")`, it provides an object model compatible with the AspPDF API:
+
+- `CreateDocument()` returns a `PdfDocument` sub-object.
+- `OpenDocument(Path)` opens an existing PDF file.
+- `Fonts("FontName")` loads a font and returns a `PdfFont` sub-object.
+- `PdfDocument.Pages.Add()` adds a page and returns a `PdfPage`.
+- `PdfPage.Canvas` returns a `PdfCanvas` for drawing.
+- `PdfCanvas.DrawText`, `DrawLine`, `DrawBox` use parameter strings for flexible positioning.
+- `PdfDocument.Save`, `SendBinary`, and `ImportFromUrl` provide output and import.
+- `ImportFromUrl` routes to the existing HTML-to-PDF engine.
+
+See the Methods page for complete details on all Persits.Pdf sub-object methods and properties.
+
 ## Code Example
 ```asp
 <%

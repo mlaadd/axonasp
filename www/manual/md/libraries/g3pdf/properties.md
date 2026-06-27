@@ -18,3 +18,4 @@ This page summarizes properties exposed by the G3PDF library in G3Pix AxonASP.
 ## Remarks
 - Property names are case-insensitive.
 - PageWidth and PageHeight are accepted aliases for W and H.
+- For Persits.Pdf compatibility properties (Canvas, Width, Height, etc.), refer to the Methods page which documents sub-object properties of PdfPage, PdfDocument, PdfFont, and PdfCanvas.

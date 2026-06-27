@@ -62,6 +62,11 @@ type G3PDF struct {
 
 	// HTML rendering state (used during WriteHTML execution only)
 	htmlState *g3PDFHTMLState
+
+	// Persits.Pdf compatibility layer
+	isPersitsMode bool                // true when instantiated as "Persits.Pdf"
+	docCache      *PdfDocument        // cached PdfDocument for Persits mode
+	fontCache     map[string]*PdfFont // cached PdfFont objects
 }
 
 // g3PDFHTMLState manages state during HTML parsing
@@ -1534,6 +1539,14 @@ func (p *G3PDF) DispatchMethod(name string, args []Value) Value {
 			p.setError(fmt.Sprintf("pdf error: %v", r))
 		}
 	}()
+
+	// Persits.Pdf compatibility layer methods
+	// These are routed first when the object was created via "Persits.Pdf" PROGID
+	// or when a Persits-specific method name is detected.
+	switch methodName {
+	case "createdocument", "opendocument", "fonts", "set", "get", "setparam", "getparam":
+		return p.dispatchPersitsMethod(methodName, args)
+	}
 
 	// Document methods
 	switch methodName {

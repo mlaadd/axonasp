@@ -208,6 +208,17 @@ const (
 	ErrG3ImageLoadFailed       AxonASPErrorCode = 11002
 	ErrG3ImageSaveFailed       AxonASPErrorCode = 11003
 	ErrG3ImageNotInitialized   AxonASPErrorCode = 11004
+
+	// G3PDF / Persits.Pdf compatibility errors (11100-11199).
+	ErrG3PDFInvalidArgCount     AxonASPErrorCode = 11100
+	ErrG3PDFInvalidParam        AxonASPErrorCode = 11101
+	ErrG3PDFFontNotFound        AxonASPErrorCode = 11102
+	ErrG3PDFPageNotFound        AxonASPErrorCode = 11103
+	ErrG3PDFDocumentNotOpen     AxonASPErrorCode = 11104
+	ErrG3PDFImportFailed        AxonASPErrorCode = 11105
+	ErrG3PDFSaveFailed          AxonASPErrorCode = 11106
+	ErrG3PDFAlreadyInitialized  AxonASPErrorCode = 11107
+	ErrG3PDFSubObjectNotCreated AxonASPErrorCode = 11108
 )
 
 var AxonASPErrorMessages = map[AxonASPErrorCode]string{
@@ -398,6 +409,17 @@ var AxonASPErrorMessages = map[AxonASPErrorCode]string{
 	ErrG3ImageLoadFailed:       "G3IMAGE: failed to load image from path",
 	ErrG3ImageSaveFailed:       "G3IMAGE: failed to save image to path",
 	ErrG3ImageNotInitialized:   "G3IMAGE: image context not initialized",
+
+	// G3PDF / Persits.Pdf compatibility
+	ErrG3PDFInvalidArgCount:     "G3PDF: invalid number of arguments",
+	ErrG3PDFInvalidParam:        "G3PDF: invalid or missing parameter in param string",
+	ErrG3PDFFontNotFound:        "G3PDF: requested font was not found",
+	ErrG3PDFPageNotFound:        "G3PDF: page not found or no pages added",
+	ErrG3PDFDocumentNotOpen:     "G3PDF: no active document; call CreateDocument first",
+	ErrG3PDFImportFailed:        "G3PDF: ImportFromUrl failed",
+	ErrG3PDFSaveFailed:          "G3PDF: failed to save document",
+	ErrG3PDFAlreadyInitialized:  "G3PDF: document is already initialized",
+	ErrG3PDFSubObjectNotCreated: "G3PDF: internal sub-object was not created",
 }
 
 func (e AxonASPErrorCode) String() string {

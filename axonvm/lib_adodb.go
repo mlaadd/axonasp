@@ -554,6 +554,7 @@ func (vm *VM) CleanupRequestResources() {
 	//This is here as a shortcut, or also know as terrible coding, should be moved in the future to a specific implementation outside lib_adodb.go
 	vm.cleanupG3ImageResources()
 	vm.cleanupG3ZSTDResources()
+	vm.cleanupG3PDFResources()
 
 	// Close recordsets first so any provider cursors are released before connection shutdown.
 	for _, rs := range vm.adodbRecordsetItems {
