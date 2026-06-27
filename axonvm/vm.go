@@ -3768,7 +3768,7 @@ aspExecLoop:
 				vm.push(NewDouble(math.Ceil(vm.jsToNumber(vm.pop()).Flt)))
 
 			case ExtOpJSMathRound:
-				vm.push(NewDouble(math.Round(vm.jsToNumber(vm.pop()).Flt)))
+				vm.push(NewDouble(vm.jsMathRound(vm.jsToNumber(vm.pop()).Flt)))
 
 			case ExtOpJSMathSqrt:
 				vm.push(NewDouble(math.Sqrt(vm.jsToNumber(vm.pop()).Flt)))
@@ -4990,6 +4990,10 @@ aspExecLoop:
 			val := vm.pop()
 			result := vm.jsNegate(val)
 			vm.push(result)
+
+		case OpJSUnaryPlus:
+			val := vm.pop()
+			vm.push(vm.jsToNumber(val))
 
 		// Bitwise operators
 		case OpJSBitwiseAnd:

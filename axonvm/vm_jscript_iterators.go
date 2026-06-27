@@ -162,6 +162,10 @@ func (vm *VM) jsPopulatePrototypes(bindings map[string]Value) {
 	// Array.prototype[Symbol.iterator] = Array.prototype.values
 	if arrayCtor, ok := bindings["Array"]; ok {
 		if proto, deferred := vm.jsMemberGet(arrayCtor, "prototype"); !deferred && proto.Type == VTJSObject {
+			// Array.prototype.toString overwrites Object.prototype.toString
+			toStringFn := vm.jsCreateNativeFunction("toString", "ArrayPrototypeToString")
+			vm.jsSetDescriptor(proto.Num, "toString", jsBuiltinMethodDescriptor(toStringFn))
+
 			valuesFn := vm.jsCreateNativeFunction("values", "ArrayValues")
 			keysFn := vm.jsCreateNativeFunction("keys", "ArrayKeys")
 			entriesFn := vm.jsCreateNativeFunction("entries", "ArrayEntries")

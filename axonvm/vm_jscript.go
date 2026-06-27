@@ -1584,6 +1584,9 @@ func (vm *VM) jsGetPrototypeValue(v Value) Value {
 	if v.Type == VTArray {
 		return vm.jsGetIntrinsicPrototype("Array")
 	}
+	if v.Type == VTDate {
+		return vm.jsGetIntrinsicPrototype("Date")
+	}
 	if v.Type == VTJSProxy {
 		if proxy, ok := vm.jsProxyItems[v.Num]; ok && proxy != nil && !proxy.Revoked {
 			return vm.jsGetPrototypeValue(proxy.Target)
@@ -1947,6 +1950,50 @@ func (vm *VM) ensureJSRootEnv() {
 	vm.jsThisValue = Value{Type: VTJSUndefined}
 	vm.jsPopulatePrototypes(bindings)
 
+	// Link built-in prototype chains: every constructor prototype's __js_proto
+	// points to Object.prototype, enabling instanceof traversal.
+	if objCtor, ok := bindings["Object"]; ok {
+		if objProto, deferred := vm.jsMemberGet(objCtor, "prototype"); !deferred && objProto.Type == VTJSObject {
+			for _, name := range []string{"Array", "String", "Date", "RegExp", "Boolean", "Number",
+				"Error", "TypeError", "ReferenceError", "SyntaxError", "RangeError", "EvalError", "URIError",
+				"Set", "Map", "WeakMap", "WeakSet", "Promise",
+				"WeakRef", "FinalizationRegistry",
+				"Enumerator", "VBArray",
+				"ArrayBuffer", "DataView",
+				"Int8Array", "Uint8Array", "Uint8ClampedArray",
+				"Int16Array", "Uint16Array",
+				"Int32Array", "Uint32Array",
+				"Float32Array", "Float64Array",
+				"BigInt64Array", "BigUint64Array",
+				"SharedArrayBuffer"} {
+				if ctor, ok := bindings[name]; ok {
+					if proto, deferred2 := vm.jsMemberGet(ctor, "prototype"); !deferred2 && proto.Type == VTJSObject {
+						if _, hasProto := vm.jsObjectItems[proto.Num]["__js_proto"]; !hasProto {
+							vm.jsObjectItems[proto.Num]["__js_proto"] = objProto
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Link constructor objects' __js_proto to Object.prototype so that
+	// instanceof Object works for built-in constructors (e.g. Date instanceof Object).
+	if objCtor, ok := bindings["Object"]; ok && objCtor.Type == VTJSObject {
+		if objProto, deferred := vm.jsMemberGet(objCtor, "prototype"); !deferred && objProto.Type == VTJSObject {
+			for _, ctor := range bindings {
+				if (ctor.Type == VTJSObject || ctor.Type == VTJSFunction) && ctor.Num != objCtor.Num {
+					id := ctor.Num
+					if _, hasProto := vm.jsObjectItems[id]["__js_proto"]; !hasProto {
+						if _, hasCtor := vm.jsObjectItems[id]["__js_ctor"]; hasCtor {
+							vm.jsObjectItems[id]["__js_proto"] = objProto
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Add global and globalThis aliases pointing to the root object
 	// These must be added to the environment after jsEnvItems is populated
 	rootObj := Value{Type: VTJSObject, Num: rootID}
@@ -1980,8 +2027,30 @@ func (vm *VM) jsCreateMathObject() Value {
 	obj["LOG10E"] = NewDouble(math.Log10E)
 	obj["SQRT2"] = NewDouble(math.Sqrt2)
 	obj["SQRT1_2"] = NewDouble(1 / math.Sqrt2)
+
+	// Add Math method functions as properties so typeof, member access, and
+	// detachment (var m = Math.max) all work. Actual invocation is dispatched
+	// through jsCallMember by __js_type == "Math".
+	addMathMethod := func(name string) {
+		methodID := vm.allocJSID()
+		methodObj := make(map[string]Value, 4)
+		methodObj["__js_type"] = NewString("Function")
+		methodObj["__js_ctor"] = NewString("MathMethod")
+		methodObj["name"] = NewString(name)
+		methodObj["length"] = NewInteger(1)
+		vm.jsObjectItems[methodID] = methodObj
+		vm.jsPropertyItems[methodID] = make(map[string]jsPropertyDescriptor, 4)
+		obj[name] = Value{Type: VTJSFunction, Num: methodID}
+	}
+	for _, name := range []string{"abs", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+		"ceil", "floor", "trunc", "round", "sqrt", "cbrt", "exp", "log", "pow",
+		"max", "min", "random", "sign", "clz32", "imul", "fround", "hypot",
+		"acosh", "asinh", "atanh", "expm1", "log1p", "log10", "log2"} {
+		addMathMethod(name)
+	}
+
 	vm.jsObjectItems[objID] = obj
-	vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 10)
+	vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 60)
 	return Value{Type: VTJSObject, Num: objID}
 }
 
@@ -2812,6 +2881,10 @@ func (vm *VM) jsTypeOf(v Value) string {
 			return "function"
 		}
 		return "object"
+	case VTDate:
+		return "object"
+	case VTBuiltin:
+		return "function"
 	case VTJSObject:
 		if vm.jsIsCallable(v) {
 			return "function"
@@ -2872,6 +2945,9 @@ func (vm *VM) jsDecrementNumberValue(v Value) Value {
 func (vm *VM) jsAddValues(a Value, b Value) Value {
 	a = resolveCallable(vm, a)
 	b = resolveCallable(vm, b)
+
+	// ES5 §11.6.1: if either operand is already a string, do string concatenation.
+	// jsConcatString handles special types (VBArray, etc.) via jsAsConcatArray.
 	if a.Type == VTString || b.Type == VTString {
 		sa := vm.jsConcatString(a)
 		sb := vm.jsConcatString(b)
@@ -2881,13 +2957,37 @@ func (vm *VM) jsAddValues(a Value, b Value) Value {
 		}
 		return NewString(sa + sb)
 	}
-	if a.Type == VTInteger && b.Type == VTInteger {
-		if sum, ok := jsAddIntegersNoOverflow(a.Num, b.Num); ok {
+
+	// Convert objects/arrays to primitives (ES5 §11.6.1).
+	// Non-VBArray objects use ToPrimitive with "number" hint.
+	aPrim := a
+	bPrim := b
+	if (a.Type == VTJSObject || a.Type == VTJSFunction || a.Type == VTJSProxy || a.Type == VTArray) &&
+		vm.jsObjectStringProperty(a, "__js_type") != "VBArray" {
+		aPrim = vm.jsToPrimitive(a, "number")
+	}
+	if (b.Type == VTJSObject || b.Type == VTJSFunction || b.Type == VTJSProxy || b.Type == VTArray) &&
+		vm.jsObjectStringProperty(b, "__js_type") != "VBArray" {
+		bPrim = vm.jsToPrimitive(b, "number")
+	}
+
+	// After primitive conversion, check again for string concatenation.
+	if aPrim.Type == VTString || bPrim.Type == VTString {
+		sa := vm.jsConcatString(aPrim)
+		sb := vm.jsConcatString(bPrim)
+		total := len(sa) + len(sb)
+		if !vm.jsEnsureStringSize(total) || !vm.jsChargeStringWork(total) {
+			return Value{Type: VTJSUndefined}
+		}
+		return NewString(sa + sb)
+	}
+	if aPrim.Type == VTInteger && bPrim.Type == VTInteger {
+		if sum, ok := jsAddIntegersNoOverflow(aPrim.Num, bPrim.Num); ok {
 			return NewInteger(sum)
 		}
-		return NewDouble(float64(a.Num) + float64(b.Num))
+		return NewDouble(float64(aPrim.Num) + float64(bPrim.Num))
 	}
-	return NewDouble(vm.jsToNumber(a).Flt + vm.jsToNumber(b).Flt)
+	return NewDouble(vm.jsToNumber(aPrim).Flt + vm.jsToNumber(bPrim).Flt)
 }
 
 // jsConcatString converts one value to the JScript string form used by '+' concatenation.
@@ -6380,7 +6480,13 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			parts := make([]string, len(target.Arr.Values))
 			totalSize := 0
 			for i := range target.Arr.Values {
-				parts[i] = vm.jsConcatString(target.Arr.Values[i])
+				// Per ECMAScript, null and undefined convert to empty string in join.
+				switch target.Arr.Values[i].Type {
+				case VTNull, VTJSUndefined, VTEmpty:
+					parts[i] = ""
+				default:
+					parts[i] = vm.jsConcatString(target.Arr.Values[i])
+				}
 				totalSize += len(parts[i])
 				if i > 0 {
 					totalSize += len(sep)
@@ -7208,8 +7314,12 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 				return NewInteger(0), true
 			case strings.EqualFold(member, "cbrt"):
 				return NewDouble(math.Cbrt(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)), true
+			case strings.EqualFold(member, "exp"):
+				return NewDouble(math.Exp(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)), true
 			case strings.EqualFold(member, "expm1"):
 				return NewDouble(math.Expm1(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)), true
+			case strings.EqualFold(member, "log"):
+				return NewDouble(math.Log(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)), true
 			case strings.EqualFold(member, "log1p"):
 				return NewDouble(math.Log1p(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)), true
 			case strings.EqualFold(member, "log10"):
@@ -7217,7 +7327,7 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			case strings.EqualFold(member, "log2"):
 				return NewDouble(math.Log2(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)), true
 			case strings.EqualFold(member, "round"):
-				return NewDouble(math.Round(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)), true
+				return NewDouble(vm.jsMathRound(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)), true
 			case strings.EqualFold(member, "sqrt"):
 				return NewDouble(math.Sqrt(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)), true
 			case strings.EqualFold(member, "fround"):
@@ -9425,6 +9535,11 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			return vm.jsIntlRelativeTimeFormatFormatToParts(callee, thisVal, args)
 		case "ObjectPrototype":
 			return vm.jsCallObjectPrototypeMethod(thisVal, vm.jsObjectStringProperty(callee, "name"), args)
+		case "ArrayPrototypeToString":
+			if thisVal.Type == VTArray {
+				return NewString(vm.jsArrayToString(thisVal))
+			}
+			return NewString(vm.jsObjectToStringTag(thisVal))
 		case "Set":
 			return vm.jsCallKeyedCollectionMethod(thisVal, "Set", vm.jsObjectStringProperty(callee, "name"), args)
 		case "Map":
@@ -9494,6 +9609,8 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			"BigInt64Array", "BigUint64Array":
 			vm.jsThrowTypeError(fmt.Sprintf("Constructor %s requires 'new'", ctorName))
 			return Value{Type: VTJSUndefined}
+		case "Date":
+			return NewString(time.Now().In(builtinCurrentLocation(vm)).Format("Mon Jan 2 2006 15:04:05 GMT-0700 (MST)"))
 		case "isNaN":
 			if len(args) == 0 {
 				return NewBool(true)
@@ -9786,6 +9903,9 @@ func (vm *VM) jsToString(v Value) string {
 			return "-Infinity"
 		}
 		if v.Flt == 0 {
+			if math.Copysign(1, v.Flt) < 0 {
+				return "-0"
+			}
 			return "0"
 		}
 		return strconv.FormatFloat(v.Flt, 'g', -1, 64)
@@ -9961,10 +10081,17 @@ func (vm *VM) jsDivide(a Value, b Value) Value {
 		return NewDouble(math.NaN())
 	}
 	if bNum == 0 {
+		isNegZero := math.Copysign(1, bNum) < 0
 		if aNum == 0 {
 			return NewDouble(math.NaN())
 		}
 		if aNum > 0 {
+			if isNegZero {
+				return NewDouble(math.Inf(-1))
+			}
+			return NewDouble(math.Inf(1))
+		}
+		if isNegZero {
 			return NewDouble(math.Inf(1))
 		}
 		return NewDouble(math.Inf(-1))
@@ -10018,6 +10145,22 @@ func (vm *VM) jsExponent(a Value, b Value) Value {
 }
 
 // jsNegate implements JScript unary '-' operator.
+// jsMathRound implements ECMAScript Math.round semantics.
+// For x >= 0: floor(x + 0.5). For -0.5 <= x < 0: -0. For x < -0.5: floor(x + 0.5).
+func (vm *VM) jsMathRound(x float64) float64 {
+	if math.IsNaN(x) || math.IsInf(x, 0) || x == 0 {
+		return x // preserve NaN, Inf, ±0
+	}
+	if x > 0 {
+		return math.Floor(x + 0.5)
+	}
+	// x < 0
+	if x >= -0.5 {
+		return math.Copysign(0, -1) // -0
+	}
+	return math.Floor(x + 0.5)
+}
+
 func (vm *VM) jsNegate(v Value) Value {
 	if v.Type == VTJSBigInt {
 		res := new(big.Int).Neg(v.Big)
@@ -10441,6 +10584,52 @@ func (vm *VM) jsConstruct(constructor Value, args []Value, newTarget Value, isSu
 			loc := builtinCurrentLocation(vm)
 			t := time.Date(year, time.Month(month+1), day, hour, minute, second, millisecond*int(time.Millisecond), loc)
 			return NewDate(t)
+		case "String":
+			str := ""
+			if len(args) > 0 && args[0].Type != VTJSUndefined {
+				str = vm.valueToString(args[0])
+			}
+			objID := vm.allocJSID()
+			obj := make(map[string]Value, 4)
+			obj["__js_type"] = NewString("String")
+			obj["__js_primitive_value"] = NewString(str)
+			obj["length"] = NewInteger(int64(len(str)))
+			if proto := vm.jsGetIntrinsicPrototype("String"); proto.Type == VTJSObject {
+				obj["__js_proto"] = proto
+			}
+			vm.jsObjectItems[objID] = obj
+			vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 8)
+			return Value{Type: VTJSObject, Num: objID}
+		case "Number":
+			num := NewDouble(0)
+			if len(args) > 0 && args[0].Type != VTJSUndefined {
+				num = vm.jsToNumber(args[0])
+			}
+			objID := vm.allocJSID()
+			obj := make(map[string]Value, 3)
+			obj["__js_type"] = NewString("Number")
+			obj["__js_primitive_value"] = num
+			if proto := vm.jsGetIntrinsicPrototype("Number"); proto.Type == VTJSObject {
+				obj["__js_proto"] = proto
+			}
+			vm.jsObjectItems[objID] = obj
+			vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 4)
+			return Value{Type: VTJSObject, Num: objID}
+		case "Boolean":
+			b := NewBool(false)
+			if len(args) > 0 && args[0].Type != VTJSUndefined {
+				b = NewBool(vm.jsTruthy(args[0]))
+			}
+			objID := vm.allocJSID()
+			obj := make(map[string]Value, 2)
+			obj["__js_type"] = NewString("Boolean")
+			obj["__js_primitive_value"] = b
+			if proto := vm.jsGetIntrinsicPrototype("Boolean"); proto.Type == VTJSObject {
+				obj["__js_proto"] = proto
+			}
+			vm.jsObjectItems[objID] = obj
+			vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 4)
+			return Value{Type: VTJSObject, Num: objID}
 		case "URL":
 			return vm.jsConstructURL(args)
 		case "URLSearchParams":

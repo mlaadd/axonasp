@@ -259,6 +259,7 @@ const (
 	OpJSDivide                  // [OpCode] - JScript binary division
 	OpJSModulo                  // [OpCode] - JScript binary modulo
 	OpJSNegate                  // [OpCode] - JScript unary negation
+	OpJSUnaryPlus               // [OpCode] - JScript unary + (ToNumber coercion)
 	OpJSBitwiseAnd              // [OpCode] - JScript bitwise AND
 	OpJSBitwiseOr               // [OpCode] - JScript bitwise OR
 	OpJSBitwiseXor              // [OpCode] - JScript bitwise XOR
@@ -847,6 +848,8 @@ func (op OpCode) String() string {
 		return "OpJSModulo"
 	case OpJSNegate:
 		return "OpJSNegate"
+	case OpJSUnaryPlus:
+		return "OpJSUnaryPlus"
 	case OpJSBitwiseAnd:
 		return "OpJSBitwiseAnd"
 	case OpJSBitwiseOr:

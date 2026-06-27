@@ -2145,6 +2145,9 @@ func (c *Compiler) compileJScriptExpression(expr jsast.Expression) {
 		case jstoken.NOT:
 			c.compileJScriptExpression(node.Operand)
 			c.emit(OpJSLogicalNot)
+		case jstoken.PLUS:
+			c.compileJScriptExpression(node.Operand)
+			c.emit(OpJSUnaryPlus)
 		case jstoken.BITWISE_NOT:
 			c.compileJScriptExpression(node.Operand)
 			c.emit(OpJSBitwiseNot)
