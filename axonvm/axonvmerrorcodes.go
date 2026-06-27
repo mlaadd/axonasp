@@ -180,7 +180,12 @@ const (
 	ErrG3FUTempFileSyncFailed   AxonASPErrorCode = 9109
 	ErrG3FUFinalMoveFailed      AxonASPErrorCode = 9110
 	ErrG3FUOpenFileFailed       AxonASPErrorCode = 9111
-
+	// G3DATE date/time library errors (9200-9210).
+	ErrG3DateInvalidArgCount AxonASPErrorCode = 9200
+	ErrG3DateInvalidTimezone AxonASPErrorCode = 9201
+	ErrG3DateInvalidDate     AxonASPErrorCode = 9202
+	ErrG3DateParseError      AxonASPErrorCode = 9203
+	ErrG3DateInvalidDuration AxonASPErrorCode = 9204
 	// G3AXONLIVE reactive component framework errors (10000-10099).
 	ErrG3ALNotInitialized         AxonASPErrorCode = 10000
 	ErrG3ALInvalidSessionID       AxonASPErrorCode = 10001
@@ -356,6 +361,13 @@ var AxonASPErrorMessages = map[AxonASPErrorCode]string{
 	ErrG3FUTempFileSyncFailed:   "G3FILEUPLOADER: Failed to sync temporary file to disk",
 	ErrG3FUFinalMoveFailed:      "G3FILEUPLOADER: Failed to move uploaded file to its final destination",
 	ErrG3FUOpenFileFailed:       "G3FILEUPLOADER: Failed to open uploaded file for processing",
+
+	// G3DATE date/time library
+	ErrG3DateInvalidArgCount: "G3DATE: invalid number of arguments",
+	ErrG3DateInvalidTimezone: "G3DATE: invalid timezone name",
+	ErrG3DateInvalidDate:     "G3DATE: invalid date value",
+	ErrG3DateParseError:      "G3DATE: failed to parse date string",
+	ErrG3DateInvalidDuration: "G3DATE: invalid duration string",
 
 	// G3AXONLIVE reactive component framework
 	ErrG3ALNotInitialized:         "G3AXONLIVE: InitPage must be called before using AxonLive methods",

@@ -205,6 +205,16 @@ AxonASP error codes are internal to the G3Pix AxonASP platform. They are never r
 | 9023 | G3SEARCH: failed to write index |
 | 9024 | G3SEARCH: search execution failed |
 
+### G3DATE Date/Time Library (9200–9204)
+
+| Code | Description |
+|------|-------------|
+| 9200 | G3DATE: invalid number of arguments |
+| 9201 | G3DATE: invalid timezone name |
+| 9202 | G3DATE: invalid date value |
+| 9203 | G3DATE: failed to parse date string |
+| 9204 | G3DATE: invalid duration string |
+
 ---
 
 ## VBScript Error Codes

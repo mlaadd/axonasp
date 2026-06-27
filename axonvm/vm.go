@@ -336,6 +336,7 @@ type VM struct {
 	requestCollectionValueItems    map[int64]asp.RequestCollectionValue
 	aspErrorItems                  map[int64]*asp.ASPError
 	g3mdItems                      map[int64]*G3MD
+	g3dateItems                    map[int64]*G3Date
 	g3searchItems                  map[int64]*G3Search
 	g3stringBuilderItems           map[int64]*G3StringBuilder
 	g3testItems                    map[int64]*G3Test
@@ -672,6 +673,7 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		requestCollectionValueItems:    make(map[int64]asp.RequestCollectionValue),
 		aspErrorItems:                  make(map[int64]*asp.ASPError),
 		g3mdItems:                      make(map[int64]*G3MD),
+		g3dateItems:                    make(map[int64]*G3Date),
 		g3searchItems:                  make(map[int64]*G3Search),
 		g3stringBuilderItems:           make(map[int64]*G3StringBuilder),
 		g3testItems:                    make(map[int64]*G3Test),
@@ -1655,6 +1657,7 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.requestCollectionValueItems = child.requestCollectionValueItems
 	vm.aspErrorItems = child.aspErrorItems
 	vm.g3mdItems = child.g3mdItems
+	vm.g3dateItems = child.g3dateItems
 	vm.g3searchItems = child.g3searchItems
 	vm.g3stringBuilderItems = child.g3stringBuilderItems
 	vm.g3cryptoItems = child.g3cryptoItems
@@ -5894,6 +5897,10 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 		return Value{Type: VTEmpty}
 	}
 
+	if g3dateObject, exists := vm.g3dateItems[objID]; exists {
+		return g3dateObject.DispatchMethod(member, args)
+	}
+
 	if g3testObject, exists := vm.g3testItems[objID]; exists {
 		return g3testObject.DispatchMethod(member, args)
 	}
@@ -6589,6 +6596,9 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 				if progIDKey == "g3md" {
 					return vm.newG3MDObject()
 				}
+				if progIDKey == "g3date" {
+					return vm.newG3DateObject()
+				}
 				if progIDKey == "g3testsuite" || progIDKey == "g3test" {
 					return vm.newG3TestObject()
 				}
@@ -7143,8 +7153,16 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 	if target.Type != VTNativeObject {
 		return Value{Type: VTEmpty}
 	}
+	if g3dateObject, exists := vm.g3dateItems[target.Num]; exists {
+		return g3dateObject.DispatchPropertyGet(member)
+	}
+
 	if g3mdObject, exists := vm.g3mdItems[target.Num]; exists {
 		return g3mdObject.DispatchPropertyGet(member)
+	}
+
+	if g3dateObject, exists := vm.g3dateItems[target.Num]; exists {
+		return g3dateObject.DispatchPropertyGet(member)
 	}
 
 	if g3searchObject, exists := vm.g3searchItems[target.Num]; exists {
