@@ -2799,6 +2799,12 @@ func (vm *VM) jsTruthy(v Value) bool {
 }
 
 func (vm *VM) jsStrictEquals(a Value, b Value) bool {
+	if a.Type == VTEmpty {
+		a.Type = VTJSUndefined
+	}
+	if b.Type == VTEmpty {
+		b.Type = VTJSUndefined
+	}
 	if a.Type != b.Type {
 		// In JScript, integers and doubles are both "number" type
 		if (a.Type == VTInteger || a.Type == VTDouble) && (b.Type == VTInteger || b.Type == VTDouble) {
@@ -4205,7 +4211,11 @@ func (vm *VM) jsArrayLikeGetIndex(target Value, idx int) (Value, bool) {
 		if target.Arr == nil || idx >= len(target.Arr.Values) {
 			return Value{Type: VTJSUndefined}, false
 		}
-		return target.Arr.Values[idx], true
+		val := target.Arr.Values[idx]
+		if val.Type == VTEmpty {
+			return Value{Type: VTJSUndefined}, true
+		}
+		return val, true
 	}
 	if target.Type != VTJSObject {
 		return Value{Type: VTJSUndefined}, false
@@ -10889,7 +10899,11 @@ func (vm *VM) jsIndexGet(arr Value, index Value) Value {
 			val, _ := vm.jsMemberGet(arr, key)
 			return val
 		}
-		return arr.Arr.Values[adjustedIndex]
+		val := arr.Arr.Values[adjustedIndex]
+		if val.Type == VTEmpty {
+			return Value{Type: VTJSUndefined}
+		}
+		return val
 	case VTJSObject:
 		// First try typed array index access.
 		idxInt := int(vm.jsToNumber(index).Flt)
@@ -10900,7 +10914,11 @@ func (vm *VM) jsIndexGet(arr Value, index Value) Value {
 		if vm.jsObjectStringProperty(arr, "__js_type") == "Array" {
 			if slots, ok := vm.jsObjectSlots[arr.Num]; ok {
 				if idxInt >= 0 && idxInt < len(slots) {
-					return slots[idxInt]
+					val := slots[idxInt]
+					if val.Type == VTEmpty {
+						return Value{Type: VTJSUndefined}
+					}
+					return val
 				}
 			}
 		}

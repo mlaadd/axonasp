@@ -3005,6 +3005,9 @@ func (c *Compiler) compileJScriptFunctionLiteral(fn *jsast.FunctionLiteral, fall
 }
 
 func (c *Compiler) compileJScriptUpdateExpression(node *jsast.UnaryExpression) bool {
+	if node.Operator != jstoken.INCREMENT && node.Operator != jstoken.DECREMENT {
+		return false
+	}
 	switch operand := node.Operand.(type) {
 	case *jsast.Identifier:
 		name := operand.Name.String()
