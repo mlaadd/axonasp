@@ -1,3 +1,4 @@
+//go:build !wasm
 /*
  * AxonASP Server
  * Copyright (C) 2026 G3pix Ltda. All rights reserved.

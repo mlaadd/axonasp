@@ -4036,7 +4036,12 @@ func normalizeJScriptCollectionAssignments(source string) string {
 			name := source[i+loc[2] : i+loc[3]]
 			args := source[i+loc[4] : i+loc[5]]
 			val := source[i+loc[6] : i+loc[7]]
-			result.WriteString(name + "(" + args + ", " + val + ");")
+			result.WriteString(name)
+			result.WriteString("(")
+			result.WriteString(args)
+			result.WriteString(", ")
+			result.WriteString(val)
+			result.WriteString(");")
 			i += loc[1]
 			continue
 		}
