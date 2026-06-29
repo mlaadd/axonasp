@@ -663,6 +663,19 @@ func (c *Compiler) parseStatement() {
 			if c.compileImplicitClassStatementCall(name, false) {
 				return
 			}
+			// Determine BEFORE resolveVar whether the name is a known variable,
+			// because resolveVar will add unknown names to implicitGlobals.
+			lowerName := strings.ToLower(name)
+			isKnownZeroArgSub := c.globalZeroArgSubs[lowerName] || c.globalZeroArgFuncs[lowerName]
+			isKnownVariable := c.declaredGlobals[lowerName] || c.implicitGlobals[lowerName] || c.constGlobals[lowerName]
+			if !isKnownVariable && c.isLocal {
+				if _, lok := c.locals.Get(name); lok {
+					isKnownVariable = true
+				} else if _, sok := c.staticLocals[lowerName]; sok {
+					isKnownVariable = true
+				}
+			}
+
 			op, idx := c.resolveVar(name)
 			loadPos := c.emit(op, idx)
 
@@ -688,6 +701,23 @@ func (c *Compiler) parseStatement() {
 					}
 				}
 				c.emit(OpCall, argCount)
+				if op == OpGetGlobal {
+					c.registerForwardCallPatch(name, loadPos)
+				}
+			} else if isKnownZeroArgSub || (!isKnownVariable && op == OpGetGlobal) {
+				// Zero-argument bare Sub/Function call: the identifier is alone on the
+				// statement line with no "=", "(", or "." following it. In VBScript this
+				// invokes the Sub/Function, discarding any return value.
+				//
+				// Two cases:
+				//   1. Backward reference — the Sub/Function was declared above the call
+				//      site; its name is tracked in globalZeroArgSubs/globalZeroArgFuncs.
+				//   2. Forward reference — the Sub/Function is declared below the call
+				//      site and its name is not yet tracked. We emit OpCall(0)
+				//      optimistically; patchForwardCallSites will rewrite the load when the
+				//      declaration is parsed. If the target is never resolved as a
+				//      Sub/Function, the runtime pushes VTEmpty for non-callable values.
+				c.emit(OpCall, 0)
 				if op == OpGetGlobal {
 					c.registerForwardCallPatch(name, loadPos)
 				}
@@ -3365,6 +3395,8 @@ func (c *Compiler) parseSubFunction(isFunc bool) {
 	paramResult := c.parseProcedureParameterNames()
 	if isFunc && len(paramResult.names) == 0 {
 		c.globalZeroArgFuncs[strings.ToLower(name)] = true
+	} else if !isFunc && len(paramResult.names) == 0 {
+		c.globalZeroArgSubs[strings.ToLower(name)] = true
 	}
 
 	nameIdx, ok := c.Globals.Get(name)

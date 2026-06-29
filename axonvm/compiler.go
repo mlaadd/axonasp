@@ -232,6 +232,7 @@ type Compiler struct {
 	lastToken           vbscript.Token
 	tempCounter         int
 	globalZeroArgFuncs  map[string]bool
+	globalZeroArgSubs   map[string]bool
 	classDecls          []CompiledClassDecl
 	classDeclLookup     map[string]int
 	recordDecls         []CompiledRecordDecl
@@ -703,6 +704,7 @@ func createCompiler(code string, mode vbscript.LexerMode) *Compiler {
 		lastDebugColumn:        -1,
 		tempCounter:            0,
 		globalZeroArgFuncs:     make(map[string]bool),
+		globalZeroArgSubs:      make(map[string]bool),
 		classDecls:             make([]CompiledClassDecl, 0),
 		classDeclLookup:        make(map[string]int),
 		recordDecls:            make([]CompiledRecordDecl, 0),

@@ -268,6 +268,12 @@ func (vm *VM) captureBaseProgramState() {
 		clear(vm.baseGlobalZeroArgFuncs)
 	}
 	maps.Copy(vm.baseGlobalZeroArgFuncs, vm.globalZeroArgFuncs)
+	if vm.baseGlobalZeroArgSubs == nil {
+		vm.baseGlobalZeroArgSubs = make(map[string]bool, len(vm.globalZeroArgSubs))
+	} else {
+		clear(vm.baseGlobalZeroArgSubs)
+	}
+	maps.Copy(vm.baseGlobalZeroArgSubs, vm.globalZeroArgSubs)
 
 	vm.baseRuntimeClassVersion = vm.runtimeClassVersion
 
@@ -319,6 +325,8 @@ func (vm *VM) resetForReuse() {
 
 	clear(vm.globalZeroArgFuncs)
 	maps.Copy(vm.globalZeroArgFuncs, vm.baseGlobalZeroArgFuncs)
+	clear(vm.globalZeroArgSubs)
+	maps.Copy(vm.globalZeroArgSubs, vm.baseGlobalZeroArgSubs)
 
 	clear(vm.dynamicProgramStarts)
 	clear(vm.declaredGlobals)
@@ -437,8 +445,14 @@ func (vm *VM) ensureReusableMaps() {
 	if vm.globalZeroArgFuncs == nil {
 		vm.globalZeroArgFuncs = make(map[string]bool)
 	}
+	if vm.globalZeroArgSubs == nil {
+		vm.globalZeroArgSubs = make(map[string]bool)
+	}
 	if vm.baseGlobalZeroArgFuncs == nil {
 		vm.baseGlobalZeroArgFuncs = make(map[string]bool)
+	}
+	if vm.baseGlobalZeroArgSubs == nil {
+		vm.baseGlobalZeroArgSubs = make(map[string]bool)
 	}
 	if vm.errObject == nil {
 		vm.errObject = asp.NewASPError()

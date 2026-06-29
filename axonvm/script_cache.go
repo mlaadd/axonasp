@@ -45,7 +45,7 @@ import (
 const (
 	scriptCacheDependencyMapLimit = 1000
 	scriptCacheMagicSize          = 6
-	scriptCacheBinaryVersion      = uint16(13)
+	scriptCacheBinaryVersion      = uint16(14)
 	scriptCacheDebounceWindow     = 1000 * time.Millisecond
 )
 
@@ -102,6 +102,7 @@ type CachedProgram struct {
 	UserDeclaredGlobals []string
 	UserConstGlobals    []string
 	GlobalZeroArgFuncs  []string
+	GlobalZeroArgSubs   []string
 	EngineMode          EngineMode
 	ProgramHash         uint64
 	GlobalNamesLower    []string
@@ -239,6 +240,9 @@ func (p *cachedProgramBinaryPayload) Serialize(writer io.Writer) error {
 	if err := writeStringSlice(buffered, p.Program.GlobalZeroArgFuncs); err != nil {
 		return err
 	}
+	if err := writeStringSlice(buffered, p.Program.GlobalZeroArgSubs); err != nil {
+		return err
+	}
 	if err := writeStringSlice(buffered, p.Program.GlobalNamesLower); err != nil {
 		return err
 	}
@@ -279,7 +283,7 @@ func (p *cachedProgramBinaryPayload) Deserialize(reader io.Reader) error {
 	if err := binary.Read(reader, binary.LittleEndian, &version); err != nil {
 		return err
 	}
-	if version != 1 && version != 2 && version != 8 && version != 10 && version != scriptCacheBinaryVersion {
+	if version != 1 && version != 2 && version != 8 && version != 10 && version != scriptCacheBinaryVersion && version != 13 {
 		return NewAxonASPError(ErrInvalidCacheVersion, nil, ErrInvalidCacheVersion.String(), "", 0)
 	}
 
@@ -408,6 +412,13 @@ func (p *cachedProgramBinaryPayload) Deserialize(reader io.Reader) error {
 				p.Program.GlobalZeroArgFuncs = zeroArgFuncs
 			} else {
 				p.Program.GlobalZeroArgFuncs = inferCachedProgramZeroArgFuncs(&p.Program)
+			}
+			if version >= 14 {
+				zeroArgSubs, err := readStringSlice(reader)
+				if err != nil {
+					return err
+				}
+				p.Program.GlobalZeroArgSubs = zeroArgSubs
 			}
 			if version >= 7 {
 				lower, err := readStringSlice(reader)
@@ -1836,6 +1847,7 @@ func cloneCachedProgram(program CachedProgram) CachedProgram {
 		UserDeclaredGlobals: cloneStringSlice(program.UserDeclaredGlobals),
 		UserConstGlobals:    cloneStringSlice(program.UserConstGlobals),
 		GlobalZeroArgFuncs:  cloneStringSlice(program.GlobalZeroArgFuncs),
+		GlobalZeroArgSubs:   cloneStringSlice(program.GlobalZeroArgSubs),
 		GlobalTypeNames:     cloneStringSlice(program.GlobalTypeNames),
 		FuncParamDefaults:   cloneIntSliceMap(program.FuncParamDefaults),
 		ProgramHash:         program.ProgramHash,
@@ -2022,6 +2034,7 @@ func estimateProgramSizeBytes(program CachedProgram) int64 {
 	size += estimateStringSliceSize(program.UserDeclaredGlobals)
 	size += estimateStringSliceSize(program.UserConstGlobals)
 	size += estimateStringSliceSize(program.GlobalZeroArgFuncs)
+	size += estimateStringSliceSize(program.GlobalZeroArgSubs)
 	size += estimateStringSliceSize(program.GlobalTypeNames)
 	size += estimateStringSliceSize(program.IncludeDependencies)
 	size += estimateStringSliceSize(program.GlobalNamesLower)

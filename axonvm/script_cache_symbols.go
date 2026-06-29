@@ -164,6 +164,7 @@ func buildCachedProgramFromCompiler(compiler *Compiler) CachedProgram {
 		UserDeclaredGlobals: filterNamesByFlagSet(compiler.declaredGlobals, users),
 		UserConstGlobals:    filterNamesByFlagSet(compiler.constGlobals, users),
 		GlobalZeroArgFuncs:  sortedTrueKeys(compiler.globalZeroArgFuncs),
+		GlobalZeroArgSubs:   sortedTrueKeys(compiler.globalZeroArgSubs),
 		GlobalTypeNames:     globalTypeNames,
 		GlobalClassNames:    globalClassNames,
 		LocalVarTypes:       compiler.LocalVarTypes(),
@@ -294,6 +295,14 @@ func applyProgramGlobalMetadata(vm *VM, program CachedProgram) {
 			continue
 		}
 		vm.globalZeroArgFuncs[name] = true
+	}
+	clear(vm.globalZeroArgSubs)
+	for i := range program.GlobalZeroArgSubs {
+		name := strings.ToLower(strings.TrimSpace(program.GlobalZeroArgSubs[i]))
+		if name == "" {
+			continue
+		}
+		vm.globalZeroArgSubs[name] = true
 	}
 
 	// Apply VB6 As Type global variable type declarations from cached program.

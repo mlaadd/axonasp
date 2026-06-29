@@ -39,23 +39,24 @@ const (
 
 // dynamicCachedProgram stores one immutable compiled Execute/ExecuteGlobal payload.
 type dynamicCachedProgram struct {
-	keyHash          uint64
-	kind             dynamicExecKind
-	source           string
-	sourceName       string
-	optionCompare    int
-	optionExplicit   bool
-	globalNamesHash  uint64
-	localScopeHash   uint64
-	classVersion     uint64
-	activeClassName  string
-	globalCount      int
-	constants        []Value
-	bytecode         []byte
-	compilerGlobals  []string
-	compilerZeroArg  map[string]bool
-	compilerDeclared map[string]bool
-	compilerConst    map[string]bool
+	keyHash            uint64
+	kind               dynamicExecKind
+	source             string
+	sourceName         string
+	optionCompare      int
+	optionExplicit     bool
+	globalNamesHash    uint64
+	localScopeHash     uint64
+	classVersion       uint64
+	activeClassName    string
+	globalCount        int
+	constants          []Value
+	bytecode           []byte
+	compilerGlobals    []string
+	compilerZeroArg    map[string]bool
+	compilerZeroArgSub map[string]bool
+	compilerDeclared   map[string]bool
+	compilerConst      map[string]bool
 }
 
 var (
@@ -95,6 +96,8 @@ func (vm *VM) applyCompilerSnapshot(compiled *dynamicCachedProgram) {
 	vm.rebuildGlobalNameIndex()
 	clear(vm.globalZeroArgFuncs)
 	maps.Copy(vm.globalZeroArgFuncs, compiled.compilerZeroArg)
+	clear(vm.globalZeroArgSubs)
+	maps.Copy(vm.globalZeroArgSubs, compiled.compilerZeroArgSub)
 	clear(vm.declaredGlobals)
 	maps.Copy(vm.declaredGlobals, compiled.compilerDeclared)
 	clear(vm.constGlobals)
@@ -173,23 +176,24 @@ func (vm *VM) getOrCompileDynamicProgram(source string, localSub Value, kind dyn
 	}
 
 	compiled := &dynamicCachedProgram{
-		keyHash:          key,
-		kind:             kind,
-		source:           source,
-		sourceName:       compiler.sourceName,
-		optionCompare:    compiler.optionCompare,
-		optionExplicit:   compiler.optionExplicit,
-		globalNamesHash:  globalScopeHash,
-		localScopeHash:   localScopeHash,
-		classVersion:     classVersion,
-		activeClassName:  activeClassName,
-		globalCount:      compiler.GlobalsCount(),
-		constants:        append([]Value(nil), compiler.Constants()...),
-		bytecode:         append([]byte(nil), compiler.Bytecode()...),
-		compilerGlobals:  append([]string(nil), compiler.Globals.names...),
-		compilerZeroArg:  cloneBoolMap(compiler.globalZeroArgFuncs),
-		compilerDeclared: cloneBoolMap(compiler.declaredGlobals),
-		compilerConst:    cloneBoolMap(compiler.constGlobals),
+		keyHash:            key,
+		kind:               kind,
+		source:             source,
+		sourceName:         compiler.sourceName,
+		optionCompare:      compiler.optionCompare,
+		optionExplicit:     compiler.optionExplicit,
+		globalNamesHash:    globalScopeHash,
+		localScopeHash:     localScopeHash,
+		classVersion:       classVersion,
+		activeClassName:    activeClassName,
+		globalCount:        compiler.GlobalsCount(),
+		constants:          append([]Value(nil), compiler.Constants()...),
+		bytecode:           append([]byte(nil), compiler.Bytecode()...),
+		compilerGlobals:    append([]string(nil), compiler.Globals.names...),
+		compilerZeroArg:    cloneBoolMap(compiler.globalZeroArgFuncs),
+		compilerZeroArgSub: cloneBoolMap(compiler.globalZeroArgSubs),
+		compilerDeclared:   cloneBoolMap(compiler.declaredGlobals),
+		compilerConst:      cloneBoolMap(compiler.constGlobals),
 	}
 	if !vm.IsInteractiveMode() && cache != nil {
 		cache.Add(key, compiled)

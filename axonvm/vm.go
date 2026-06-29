@@ -551,6 +551,7 @@ type VM struct {
 	globalNames          []string          // Global symbol names aligned with Globals slot order.
 	globalNamesHash      uint64            // Fingerprint of globalNames for fast dynamic-cache scope validation.
 	globalZeroArgFuncs   map[string]bool   // Known zero-arg global Functions for dynamic autocall compatibility.
+	globalZeroArgSubs    map[string]bool   // Known zero-arg global Subs for bare-call compilation.
 	runtimeClassVersion  uint64            // Monotonic version for runtime class metadata invalidation.
 	declaredGlobals      map[string]bool   // Global Dim/Const declaration state for dynamic compilation.
 	constGlobals         map[string]bool   // Global Const protection state for dynamic compilation.
@@ -578,6 +579,7 @@ type VM struct {
 	baseEngineMode       EngineMode
 
 	baseGlobalZeroArgFuncs  map[string]bool
+	baseGlobalZeroArgSubs   map[string]bool
 	baseRuntimeClassVersion uint64
 	globalNameIndex         map[string]int
 	baseDeclared            map[string]bool
@@ -664,8 +666,10 @@ func NewVM(bytecode []byte, constants []Value, globalCount int) *VM {
 		baseDeclared:                   make(map[string]bool),
 		baseConst:                      make(map[string]bool),
 		baseGlobalZeroArgFuncs:         make(map[string]bool),
+		baseGlobalZeroArgSubs:          make(map[string]bool),
 		globalNames:                    make([]string, 0, globalCount),
 		globalZeroArgFuncs:             make(map[string]bool),
+		globalZeroArgSubs:              make(map[string]bool),
 		dynamicProgramStarts:           make(map[uint64]int, 32),
 		globalNameIndex:                make(map[string]int, globalCount),
 		RecordDeclLookup:               make(map[string]int),
@@ -896,6 +900,8 @@ func NewVMFromCompiler(compiler *Compiler) *VM {
 	vm.rebuildGlobalNameIndex()
 	clear(vm.globalZeroArgFuncs)
 	maps.Copy(vm.globalZeroArgFuncs, compiler.globalZeroArgFuncs)
+	clear(vm.globalZeroArgSubs)
+	maps.Copy(vm.globalZeroArgSubs, compiler.globalZeroArgSubs)
 	maps.Copy(vm.declaredGlobals, compiler.declaredGlobals)
 	maps.Copy(vm.constGlobals, compiler.constGlobals)
 	// Apply VB6 As Type declarations for global variables.
@@ -938,6 +944,7 @@ func (vm *VM) newExecuteGlobalCompiler(code string) *Compiler {
 		compiler.Globals.Add(name)
 	}
 	maps.Copy(compiler.globalZeroArgFuncs, vm.globalZeroArgFuncs)
+	maps.Copy(compiler.globalZeroArgSubs, vm.globalZeroArgSubs)
 	maps.Copy(compiler.declaredGlobals, vm.declaredGlobals)
 	maps.Copy(compiler.constGlobals, vm.constGlobals)
 	vm.seedCompilerClassDeclarationsFromRuntime(compiler)
@@ -981,6 +988,7 @@ func (vm *VM) newExecuteLocalCompiler(code string, localSub Value, isEval bool) 
 		compiler.Globals.Add(name)
 	}
 	maps.Copy(compiler.globalZeroArgFuncs, vm.globalZeroArgFuncs)
+	maps.Copy(compiler.globalZeroArgSubs, vm.globalZeroArgSubs)
 	maps.Copy(compiler.declaredGlobals, vm.declaredGlobals)
 	maps.Copy(compiler.constGlobals, vm.constGlobals)
 	vm.seedCompilerClassDeclarationsFromRuntime(compiler)
@@ -1655,6 +1663,7 @@ func (vm *VM) syncExecuteGlobalState(child *VM) {
 	vm.globalNames = child.globalNames
 	vm.globalNamesHash = child.globalNamesHash
 	vm.globalZeroArgFuncs = child.globalZeroArgFuncs
+	vm.globalZeroArgSubs = child.globalZeroArgSubs
 	vm.declaredGlobals = child.declaredGlobals
 	vm.constGlobals = child.constGlobals
 	vm.nextDynamicNativeID = child.nextDynamicNativeID

@@ -120,3 +120,47 @@ Response.Write x
 		t.Fatalf("jump integrity failed, got %q", out)
 	}
 }
+
+// TestCompileZeroArgSubCall verifies that a zero-argument bare sub call (declared before) compiles and runs correctly.
+func TestCompileZeroArgSubCall(t *testing.T) {
+	source := `<%
+	Sub Greet()
+		Response.Write "Hello from Sub"
+	End Sub
+	Greet
+	%>`
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+	if !scanBytecodeForOp(compiler.Bytecode(), OpCall) {
+		t.Fatalf("expected OpCall in compiled zero-arg bare Sub bytecode")
+	}
+
+	out := runVBSAndGetOutput(t, source)
+	if out != "Hello from Sub" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+// TestCompileZeroArgSubForwardRef verifies that a zero-argument bare sub call (declared after) compiles and runs correctly.
+func TestCompileZeroArgSubForwardRef(t *testing.T) {
+	source := `<%
+	Greet
+	Sub Greet()
+		Response.Write "Hello from Sub Forward"
+	End Sub
+	%>`
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+	if !scanBytecodeForOp(compiler.Bytecode(), OpCall) {
+		t.Fatalf("expected OpCall in compiled zero-arg bare Sub forward ref bytecode")
+	}
+
+	out := runVBSAndGetOutput(t, source)
+	if out != "Hello from Sub Forward" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
