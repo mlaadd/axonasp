@@ -107,6 +107,7 @@ if ($Clean) {
     Remove-Item -Path "axonasp-testsuite.exe" -ErrorAction SilentlyContinue
     Remove-Item -Path "axonasp-mcp.exe"     -ErrorAction SilentlyContinue
     Remove-Item -Path "axonasp-service.exe" -ErrorAction SilentlyContinue
+    Remove-Item -Path "axonasp-admin.exe"   -ErrorAction SilentlyContinue
     Remove-Item -Path "build" -Recurse -Force -ErrorAction SilentlyContinue
     Write-Success "Cleaned."
     Write-Host ""
@@ -119,7 +120,8 @@ $Targets = @(
     @{ Label = "CLI"; Output = "axonasp-cli"; Source = "./cli" },
     @{ Label = "Test Suite"; Output = "axonasp-testsuite"; Source = "./testsuite" },
     @{ Label = "MCP"; Output = "axonasp-mcp"; Source = "./mcp" },
-    @{ Label = "Service Wrapper"; Output = "axonasp-service"; Source = "./service" }
+    @{ Label = "Service Wrapper"; Output = "axonasp-service"; Source = "./service" },
+    @{ Label = "Admin Tool"; Output = "axonasp-admin"; Source = "./admin" }
 
 )
 
@@ -245,7 +247,7 @@ if ($BuildSuccess) {
     Write-Host ""
     Write-Host "  Executables:" -ForegroundColor White
 
-    @("axonasp-http.exe", "axonasp-fastcgi.exe", "axonasp-cli.exe", "axonasp-testsuite.exe", "axonasp-mcp.exe", "axonasp-service.exe") | ForEach-Object {
+    @("axonasp-http.exe", "axonasp-fastcgi.exe", "axonasp-cli.exe", "axonasp-testsuite.exe", "axonasp-mcp.exe", "axonasp-service.exe", "axonasp-admin.exe") | ForEach-Object {
         if (Test-Path $_) { Write-Host "    - $_" -ForegroundColor Cyan }
     }
 
@@ -263,6 +265,7 @@ if ($BuildSuccess) {
     Write-Host "    Test Suite  : .\axonasp-testsuite.exe .\www\tests" -ForegroundColor Gray
     Write-Host "    MCP         : .\axonasp-mcp.exe" -ForegroundColor Gray
     Write-Host "    Service     : .\axonasp-service.exe install|start|stop|uninstall" -ForegroundColor Gray
+    Write-Host "    Admin Tool  : .\axonasp-admin.exe" -ForegroundColor Gray
 }
 else {
     Write-Err "  BUILD FAILED!"

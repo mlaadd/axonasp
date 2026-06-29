@@ -5134,7 +5134,7 @@ func (vm *VM) stopSTAWorker() {
 // staTaskResult carries the outcome of a task dispatched to the STA worker.
 // If panicValue is non-nil, the task panicked and the caller must re-raise.
 type staTaskResult struct {
-	panicValue interface{}
+	panicValue any
 }
 
 func (vm *VM) runOnSTA(f func()) {

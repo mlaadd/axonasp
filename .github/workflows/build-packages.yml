@@ -32,7 +32,7 @@ jobs:
           else
             PATCH=$(git rev-list --count HEAD 2>/dev/null || echo "0")
             REVISION=$(git rev-parse --short HEAD 2>/dev/null || echo "0")
-            echo "value=2.0.${PATCH}.${REVISION}" >> "$GITHUB_OUTPUT"
+            echo "value=2.2.${PATCH}.${REVISION}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up Go
@@ -53,6 +53,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-fastcgi ./fastcgi
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-cli ./cli
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-mcp ./mcp
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-admin ./admin
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-service ./service
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-testsuite ./testsuite
 
@@ -69,6 +70,7 @@ jobs:
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-fastcgi.exe ./fastcgi
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-cli.exe ./cli
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-mcp.exe ./mcp
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-admin.exe ./admin
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-service.exe ./service
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.Version=${FULL_VERSION}" -o axonasp-testsuite.exe ./testsuite
 
@@ -104,7 +106,7 @@ jobs:
         run: |
           mkdir -p axonasp-windows
           cp *.exe axonasp-windows/
-          cp -r www config mcp LICENSE.txt global.asa iis-http.cmd install-service.ps1 uninstall-service.ps1 axonasp-windows/
+          cp -r www config mcp LICENSE.txt LEGAL-DISCLAIMER.md global.asa iis-http.cmd install-service.ps1 uninstall-service.ps1 axonasp-windows/
           zip -r "axonasp-windows-${VERSION}-amd64.zip" axonasp-windows/
 
       - name: Upload Packages as Artifacts

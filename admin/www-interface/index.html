@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <title>G3Pix AxonASP Configuration Manager</title>
+        <link rel="stylesheet" href="/axonasp.css">
+        <style>
+            #status-bar a {
+                margin-left: 4px;
+            }
+
+            .form-group {
+                margin-bottom: 24px;
+                padding: 15px;
+            }
+
+            .form-desc {
+                font-size: 12px;
+                color: var(--text-muted);
+                margin-bottom: 10px;
+                line-height: 1.4;
+            }
+
+            .form-meta {
+                font-size: 11px;
+                color: var(--text-muted);
+                margin-bottom: 10px;
+                background: var(--bg-soft);
+                padding: 6px 10px;
+                border-left: 3px solid var(--accent);
+                display: inline-block;
+            }
+
+            .actions-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                border-bottom: 1px solid var(--border);
+                padding-bottom: 15px;
+                margin-bottom: 20px;
+            }
+
+            .toast {
+                position: fixed;
+                bottom: 30px;
+                right: 30px;
+                padding: 12px 24px;
+                background: var(--success);
+                color: #fff;
+                border-radius: 0px;
+                box-shadow: var(--shadow);
+                z-index: 1000;
+                font-weight: 600;
+                display: none;
+                animation: fadeIn 0.2s ease;
+            }
+
+            .toast.toast-error {
+                background: var(--danger);
+            }
+
+
+
+            .home-section .copyright {
+                font-size: 13px;
+                color: var(--text-muted);
+            }
+
+            .home-section .home-url {
+                font-size: 13px;
+                margin-bottom: 24px;
+            }
+
+            .home-section .home-url a {
+                color: var(--accent);
+                text-decoration: none;
+            }
+
+            .home-section .home-url a:hover {
+                text-decoration: underline;
+            }
+
+            .home-section .welcome-text {
+                font-size: 14px;
+                line-height: 1.7;
+                color: var(--text);
+                font-weight: 500;
+            }
+
+            .home-section .cmd-options {
+                margin-bottom: 24px;
+            }
+
+            .home-section .cmd-options h4 {
+                margin: 0 0 10px 0;
+                font-size: 15px;
+            }
+
+
+
+            .home-section .backups-info {
+                margin-bottom: 10px;
+            }
+
+            .home-section .backups-info h4 {
+                margin: 0 0 10px 0;
+                font-size: 15px;
+            }
+
+            .home-section .backups-info p {
+                font-size: 13px;
+                line-height: 1.6;
+                color: var(--text);
+            }
+
+            @keyframes fadeIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(10px);
+                }
+
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        </style>
+    </head>
+
+    <body>
+        <div id="header">
+            <div class="logo">
+                <img src="data:image/svg+xml; charset=utf-8;;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+CjwhLS0gQ3JlYXRlZCB3aXRoIElua3NjYXBlIChodHRwOi8vd3d3Lmlua3NjYXBlLm9yZy8pIC0tPgoKPHN2ZwogICB2ZXJzaW9uPSIxLjEiCiAgIGlkPSJzdmcxIgogICB3aWR0aD0iNjc3LjM4Mzg1MDEiCiAgIGhlaWdodD0iNjc3LjI3NzE2MDYiCiAgIHZpZXdCb3g9IjAgMCA2NzcuMzgzODUwMSA2NzcuMjc3MTYwNiIKICAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogICB4bWxuczpzdmc9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8ZGVmcwogICAgIGlkPSJkZWZzMSIgLz4KICA8ZwogICAgIGlkPSJnMSIKICAgICB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMi42NDE0MjQ2NTYsLTIuNjk0Nzg2MDcyKSI+CiAgICA8ZwogICAgICAgaWQ9ImcxMyIKICAgICAgIHRyYW5zZm9ybT0ibWF0cml4KDIuMjc2NzU2MDQ0LDAsMCwyLjI3Njc1NjA0NCwtNjM0LjQ5NDUyNDQsLTcxOC40MjMyMjI4KSI+CiAgICAgIDxwYXRoCiAgICAgICAgIGQ9Ik0gNTEyLjgwMDc4MTMsNDAwLjk5MjE4NzUgNDQ4LjM3NSw0NjUuNDE3OTY4NyBoIDY0LjQ4ODI4MTMgNjQuMzYzMjgxMiB6IG0gLTY0LjQzMTY0MDcsNjQuNDMxNjQwNiAtMC4wMDM5MSwwLjAwMzkxIDY0LjQzNTU0NjksNjIuNzgzMjAzMSAwLjAzMzIwMywtMC4wMzEyNSAtMzIuMjIwNzAzMiwtMzEuMzY1MjM0NCB6IgogICAgICAgICBzdHlsZT0iZm9udC13ZWlnaHQ6Ym9sZDtmb250LXNpemU6NjE5LjI4NHB4O2ZvbnQtZmFtaWx5OlRhaG9tYTstaW5rc2NhcGUtZm9udC1zcGVjaWZpY2F0aW9uOidUYWhvbWEgQm9sZCc7bGV0dGVyLXNwYWNpbmc6MHB4O2Jhc2VsaW5lLXNoaWZ0OmJhc2VsaW5lO2Rpc3BsYXk6aW5saW5lO292ZXJmbG93OnZpc2libGU7dmVjdG9yLWVmZmVjdDpub25lO2ZpbGw6IzA0OWM0ZDtlbmFibGUtYmFja2dyb3VuZDphY2N1bXVsYXRlO3N0b3AtY29sb3I6IzAwMDAwMDtzdG9wLW9wYWNpdHk6MSIKICAgICAgICAgaWQ9InBhdGg5IiAvPgogICAgICA8cGF0aAogICAgICAgICBkPSJtIDM0NC4yNzkyOTY5LDQwMC45OTIxODc1IC02NC4zODQ3NjU3LDY0LjM4NDc2NTYgaCA2NC40NTUwNzgyIDY0LjMxMjUgeiBtIC02NC40MDYyNSw2NC40MDYyNSAtMC4wMjkyOTcsMC4wMjkyOTcgNjAuNDg0Mzc1LDU4LjkzMzU5MzcgLTI4LjIyODUxNTYsLTI3LjUzMTI1IHoiCiAgICAgICAgIHN0eWxlPSJmb250LXdlaWdodDpib2xkO2ZvbnQtc2l6ZTo2MTkuMjg0cHg7Zm9udC1mYW1pbHk6VGFob21hOy1pbmtzY2FwZS1mb250LXNwZWNpZmljYXRpb246J1RhaG9tYSBCb2xkJztsZXR0ZXItc3BhY2luZzowcHg7YmFzZWxpbmUtc2hpZnQ6YmFzZWxpbmU7ZGlzcGxheTppbmxpbmU7b3ZlcmZsb3c6dmlzaWJsZTt2ZWN0b3ItZWZmZWN0Om5vbmU7ZmlsbDojNjA5NDFhO2VuYWJsZS1iYWNrZ3JvdW5kOmFjY3VtdWxhdGU7c3RvcC1jb2xvcjojMDAwMDAwO3N0b3Atb3BhY2l0eToxIgogICAgICAgICBpZD0icGF0aDExIiAvPgogICAgICA8cGF0aAogICAgICAgICBkPSJtIDQyOC41MzkwNjI1LDQ4NS4yNTM5MDYyIC02Mi42NTYyNSw2NC4zMDI3MzQ0IGggNjIuNjQ4NDM3NSA2Mi42NjQwNjI1IHogbSA2Mi43NjU2MjUsNjQuNDE2MDE1NyAtMTkuNTc0MjE4OCwyMC4xMjUgMTkuNTkxNzk2OSwtMjAuMTA3NDIxOSB6IG0gLTEyNS41MzkwNjI1LDAuMDA3ODEgLTAuMDA5NzcsMC4wMDk3NyAxMC44NjEzMjgxLDExLjE0NjQ4NDQgeiIKICAgICAgICAgc3R5bGU9ImZvbnQtd2VpZ2h0OmJvbGQ7Zm9udC1zaXplOjYxOS4yODRweDtmb250LWZhbWlseTpUYWhvbWE7LWlua3NjYXBlLWZvbnQtc3BlY2lmaWNhdGlvbjonVGFob21hIEJvbGQnO2xldHRlci1zcGFjaW5nOjBweDtiYXNlbGluZS1zaGlmdDpiYXNlbGluZTtkaXNwbGF5OmlubGluZTtvdmVyZmxvdzp2aXNpYmxlO3ZlY3Rvci1lZmZlY3Q6bm9uZTtmaWxsOiNlZGMwMGY7ZW5hYmxlLWJhY2tncm91bmQ6YWNjdW11bGF0ZTtzdG9wLWNvbG9yOiMwMDAwMDA7c3RvcC1vcGFjaXR5OjEiCiAgICAgICAgIGlkPSJwYXRoMTMiIC8+CiAgICAgIDxwYXRoCiAgICAgICAgIGQ9Im0gNDI4LjUzOTA2MjUsMzE2LjczMDQ2ODcgLTYyLjc4MzIwMzEsNjQuNDM1NTQ2OSAwLjA1MjczNCwwLjA1MjczNCBoIDYyLjc1OTc2NTcgNjIuNzAxMTcxOCBsIDAuMDUyNzM0LC0wLjA1MjczNCB6IG0gLTI2Ljc5Njg3NSwxMDAuNDIxODc1IDI2Ljc5Njg3NSwyNi43OTY4NzUgMy44NjEzMjgxLC0zLjg2MTMyODEgLTMuODMyMDMxMiwzLjgyMjI2NTYgeiIKICAgICAgICAgc3R5bGU9ImZvbnQtd2VpZ2h0OmJvbGQ7Zm9udC1zaXplOjYxOS4yODRweDtmb250LWZhbWlseTpUYWhvbWE7LWlua3NjYXBlLWZvbnQtc3BlY2lmaWNhdGlvbjonVGFob21hIEJvbGQnO2xldHRlci1zcGFjaW5nOjBweDtiYXNlbGluZS1zaGlmdDpiYXNlbGluZTtkaXNwbGF5OmlubGluZTtvdmVyZmxvdzp2aXNpYmxlO3ZlY3Rvci1lZmZlY3Q6bm9uZTtmaWxsOiMwMDRhYWQ7ZW5hYmxlLWJhY2tncm91bmQ6YWNjdW11bGF0ZTtzdG9wLWNvbG9yOiMwMDAwMDA7c3RvcC1vcGFjaXR5OjEiCiAgICAgICAgIGlkPSJwYXRoNyIgLz4KICAgICAgPHBhdGgKICAgICAgICAgZD0ibSA0NDguMzYxMzI4MSw0NjUuNDE3OTY4NyAzMi4yNTE5NTMxLDMxLjM5NjQ4NDQgMzIuMjUwMDAwMSwzMS4zOTQ1MzEzIDMyLjI1MTk1MzEsLTMxLjM5NDUzMTMgMzIuMjUsLTMxLjM5NjQ4NDQgaCAtNjQuNTAxOTUzMSB6IgogICAgICAgICBzdHlsZT0iYmFzZWxpbmUtc2hpZnQ6YmFzZWxpbmU7ZGlzcGxheTppbmxpbmU7b3ZlcmZsb3c6dmlzaWJsZTt2ZWN0b3ItZWZmZWN0Om5vbmU7ZmlsbDojMDA0YWFkO2VuYWJsZS1iYWNrZ3JvdW5kOmFjY3VtdWxhdGU7c3RvcC1jb2xvcjojMDAwMDAwO3N0b3Atb3BhY2l0eToxIgogICAgICAgICBpZD0icGF0aDgiIC8+CiAgICAgIDxwYXRoCiAgICAgICAgIGQ9Im0gMjc5Ljg0OTYwOTQsNDY1LjM3Njk1MzEgMzIuMjUsMzEuNDUzMTI1IDMyLjI1LDMxLjQ1MzEyNSAzMi4yNDgwNDY4LC0zMS40NTMxMjUgMzIuMjUsLTMxLjQ1MzEyNSBoIC02NC40OTgwNDY4IHoiCiAgICAgICAgIHN0eWxlPSJiYXNlbGluZS1zaGlmdDpiYXNlbGluZTtkaXNwbGF5OmlubGluZTtvdmVyZmxvdzp2aXNpYmxlO3ZlY3Rvci1lZmZlY3Q6bm9uZTtmaWxsOiNlZGMwMGY7ZW5hYmxlLWJhY2tncm91bmQ6YWNjdW11bGF0ZTtzdG9wLWNvbG9yOiMwMDAwMDA7c3RvcC1vcGFjaXR5OjEiCiAgICAgICAgIGlkPSJwYXRoMTAiIC8+CiAgICAgIDxwYXRoCiAgICAgICAgIGQ9Im0gMzY1LjcxNjc5NjksMzgxLjIxODc1IDMxLjQyNTc4MTIsMzEuMzQ1NzAzMSAzMS40MjU3ODEzLDMxLjM0NTcwMzEgMzEuNDI1NzgxMiwtMzEuMzQ1NzAzMSAzMS40MjM4MjgxLC0zMS4zNDU3MDMxIGggLTYyLjg0OTYwOTMgeiIKICAgICAgICAgc3R5bGU9ImJhc2VsaW5lLXNoaWZ0OmJhc2VsaW5lO2Rpc3BsYXk6aW5saW5lO292ZXJmbG93OnZpc2libGU7dmVjdG9yLWVmZmVjdDpub25lO2ZpbGw6IzYwOTQxYTtlbmFibGUtYmFja2dyb3VuZDphY2N1bXVsYXRlO3N0b3AtY29sb3I6IzAwMDAwMDtzdG9wLW9wYWNpdHk6MSIKICAgICAgICAgaWQ9InBhdGg1IiAvPgogICAgICA8cGF0aAogICAgICAgICBkPSJtIDM2NS42NDY0ODQ0LDU0OS41NTY2NDA2IDMxLjQ0MzM1OTMsMzIuMzI0MjE4OCAzMS40NDE0MDYzLDMyLjMyNDIxODcgMzEuNDQzMzU5NCwtMzIuMzI0MjE4NyAzMS40NDE0MDYyLC0zMi4zMjQyMTg4IEggNDI4LjUzMTI1IFoiCiAgICAgICAgIHN0eWxlPSJiYXNlbGluZS1zaGlmdDpiYXNlbGluZTtkaXNwbGF5OmlubGluZTtvdmVyZmxvdzp2aXNpYmxlO3ZlY3Rvci1lZmZlY3Q6bm9uZTtmaWxsOiMwNDljNGQ7ZW5hYmxlLWJhY2tncm91bmQ6YWNjdW11bGF0ZTtzdG9wLWNvbG9yOiMwMDAwMDA7c3RvcC1vcGFjaXR5OjEiCiAgICAgICAgIGlkPSJwYXRoMTIiIC8+CiAgICA8L2c+CiAgPC9nPgo8L3N2Zz4K"
+                    alt="AxonASP" width="43" />
+            </div>
+            <h1 style="flex-grow: 1;">AxonASP Configuration Manager</h1>
+            <div class="config-path-banner" style="font-size: 12px; color: var(--text-muted); padding-right: 15px;">
+                Target: <strong>{{.ResolvedPath}}</strong>
+            </div>
+        </div>
+
+        <div id="main-container">
+            <div id="sidebar">
+                <div class="section-title">Sections</div>
+                <ul>
+                    <li>
+                        <a href="/" id="homeLink" class="home-link">Home</a>
+                    </li>
+                    {{range .Sections}}
+                    <li>
+                        <a href="?section={{.Name}}" class="{{if eq $.ActiveSection.Name .Name}}active{{end}}">
+                            {{.Name}}
+                        </a>
+                    </li>
+                    {{end}}
+                </ul>
+            </div>
+
+            <div id="content">
+                <!-- Home / Welcome Section -->
+                <div id="homeSection" class="home-section">
+                    <h2>AxonASP Server Configuration Manager</h2>
+                    <div class="copyright">Copyright &copy; 2026 G3pix Ltda. All rights reserved.</div>
+                    <div class="home-url"><a href="https://g3pix.com.br/axonasp"
+                            target="_blank">https://g3pix.com.br/axonasp</a></div>
+
+                    <p class="welcome-text">
+                        Welcome to the AxonASP Configuration Manager. This utility provides an interactive interface to
+                        easily manage and modify the configuration settings for your AxonASP server.
+                    </p>
+
+                    <p>
+                        While this tool manages the configuration file directly, remember
+                        that you can always override these settings dynamically by using environment variables. To do
+                        so, use the same name as the setting you wish to override, formatted in uppercase with dots
+                        replaced by underscores. For example, to override the <code>default_charset</code> setting, you
+                        would set an environment variable named <code>DEFAULT_CHARSET</code>. This flexibility allows
+                        you to easily manage different configurations across development and production environments.
+                        Make sure to restart the AxonASP server after saving changes here or modifying environment
+                        variables for the new settings to take effect.
+                    </p>
+
+                    <p class="info-banner">
+                        <b>Important Saving Instructions:</b> When navigating through this manager, you must
+                        save your changes before leaving each section page. If you navigate to another page without
+                        saving, any edits made within that specific section will be lost.
+                    </p>
+
+                    <div class="cmd-options">
+                        <h4>Command-Line Options:</h4>
+                        <p style="font-size:13px;line-height:1.6;color:var(--text);">
+                            By default, this program will load and work with the standard configuration file. However,
+                            you can modify the utility's behavior by launching <code>axonadmin</code> from your terminal
+                            with the following flags:
+                        </p>
+                        <div><code><strong>-edit</strong> &lt;path&gt;</code> &mdash; Specifies
+                            a custom TOML configuration file to edit. If omitted, the utility mimics the standard loader
+                            path resolution.</div>
+                        <div><code><strong>-create</strong> &lt;path&gt;</code> &mdash;
+                            Generates a new default configuration file at the specified path. If the path is left empty,
+                            it defaults to <code>./config/axonasp.toml</code>.</div>
+                        <div><code><strong>-noui</strong></code> or
+                            <code><strong>-w</strong></code> &mdash; Runs the program in headless mode (note: this must
+                            be used in conjunction with the <code>-create</code> flag).
+                        </div>
+                        <div><code><strong>-h</strong></code> or
+                            <code><strong>-help</strong></code> &mdash; Displays the help menu in your terminal.
+                        </div>
+                    </div>
+
+                    <div class="backups-info">
+                        <h4>Backups and Restoration:</h4>
+                        <p>
+                            To protect against accidental misconfigurations that could affect server stability and
+                            security, this program automatically safeguards your settings. Every time you save a change,
+                            a backup of the previous TOML configuration is generated using the same filename but with a
+                            <code>.bak</code> extension. This allows you to quickly roll back to the previous setup if
+                            necessary. Furthermore, you can always restore the original, factory-default AxonASP
+                            configuration file at any time should you need a clean slate.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Configuration Section Form -->
+                <div id="configSection" style="display:none;">
+                    <div class="actions-header">
+                        <h3>Section: {{.ActiveSection.Name}}</h3>
+                        <div class="actions-row" style="margin-top: 0;">
+                            <button class="btn btn-primary" onclick="saveSection()">Save Section</button>
+                            <button class="btn btn-danger" onclick="recreateConfig()">Recreate axonasp.toml</button>
+                        </div>
+                    </div>
+
+                    <form id="configForm" onsubmit="event.preventDefault();">
+                        <div class="card">
+                            {{range .ActiveSection.Fields}}
+                            <div class="form-group">
+                                <label class="form-label" for="field_{{.Key}}">{{.Key}}</label>
+                                {{if .Description}}
+                                <div class="form-desc">{{.Description}}</div>
+                                {{end}}
+                                <div class="form-meta">
+                                    Default: <code>{{FormatVal .DefaultValue}}</code>
+                                </div>
+                                <div>
+                                    {{if eq .Type "bool"}}
+                                    <select class="form-input" id="field_{{.Key}}"
+                                        name="field_{{$.ActiveSection.Name}}_{{.Key}}">
+                                        <option value="true" {{if eq .CurrentValue true}}selected{{end}}>true</option>
+                                        <option value="false" {{if eq .CurrentValue false}}selected{{end}}>false
+                                        </option>
+                                    </select>
+                                    {{else if eq .Type "int"}}
+                                    <input class="form-input" type="number" id="field_{{.Key}}"
+                                        name="field_{{$.ActiveSection.Name}}_{{.Key}}" value="{{.CurrentValue}}">
+                                    {{else if eq .Type "slice"}}
+                                    <input class="form-input" type="text" id="field_{{.Key}}"
+                                        name="field_{{$.ActiveSection.Name}}_{{.Key}}"
+                                        value="{{FormatSlice .CurrentValue}}">
+                                    {{else}}
+                                    <input class="form-input" type="text" id="field_{{.Key}}"
+                                        name="field_{{$.ActiveSection.Name}}_{{.Key}}" value="{{.CurrentValue}}">
+                                    {{end}}
+                                </div>
+                            </div>
+                            {{end}}
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div id="status-bar">
+            G3pix AxonASP Server Configuration Manager | <a href="https://g3pix.com.br/axonasp/manual/"
+                target="_blank">Open Manual</a>
+        </div>
+
+        <div id="toast" class="toast"></div>
+
+        <script>
+            let formModified = false;
+            let saveInProgress = false;
+
+            function showToast(message, isError = false) {
+                const toast = document.getElementById('toast');
+                toast.textContent = message;
+                if (isError) {
+                    toast.classList.add('toast-error');
+                } else {
+                    toast.classList.remove('toast-error');
+                }
+                toast.style.display = 'block';
+                setTimeout(() => {
+                    toast.style.display = 'none';
+                }, 3000);
+            }
+
+            function showHome() {
+                document.getElementById('homeSection').style.display = 'block';
+                document.getElementById('configSection').style.display = 'none';
+                document.getElementById('homeLink').classList.add('active');
+                document.querySelectorAll('#sidebar a:not(.home-link)').forEach(function (a) {
+                    a.classList.remove('active');
+                });
+            }
+
+            function showConfig() {
+                document.getElementById('homeSection').style.display = 'none';
+                document.getElementById('configSection').style.display = 'block';
+                document.getElementById('homeLink').classList.remove('active');
+            }
+
+            document.addEventListener('DOMContentLoaded', function () {
+                // Determine initial view: if no section param or empty, show home
+                const urlParams = new URLSearchParams(window.location.search);
+                const section = urlParams.get('section');
+                if (!section) {
+                    showHome();
+                } else {
+                    showConfig();
+                }
+
+                const form = document.getElementById('configForm');
+                const inputs = form.querySelectorAll('input, select, textarea');
+                inputs.forEach(function (input) {
+                    input.addEventListener('change', function () {
+                        formModified = true;
+                    });
+                    input.addEventListener('input', function () {
+                        formModified = true;
+                    });
+                });
+
+                const sidebarLinks = document.querySelectorAll('#sidebar a');
+                sidebarLinks.forEach(function (link) {
+                    link.addEventListener('click', function (e) {
+                        if (formModified && !saveInProgress) {
+                            const proceed = confirm('You have unsaved changes. Do you want to save before proceeding?');
+                            if (proceed) {
+                                e.preventDefault();
+                                saveInProgress = true;
+                                const sectionName = '{{.ActiveSection.Name}}';
+                                const formData = new FormData(form);
+                                fetch('/api/save?section=' + sectionName, {
+                                    method: 'POST',
+                                    body: new URLSearchParams(formData)
+                                }).then(function (response) {
+                                    return response.json();
+                                }).then(function (result) {
+                                    saveInProgress = false;
+                                    if (result.status === 'ok') {
+                                        formModified = false;
+                                        window.location.href = link.href;
+                                    } else {
+                                        showToast('Error saving: ' + result.message, true);
+                                    }
+                                }).catch(function (err) {
+                                    saveInProgress = false;
+                                    showToast('Network error while saving: ' + err.message, true);
+                                });
+                            } else {
+                                formModified = false;
+                            }
+                        }
+                    });
+                });
+
+                window.addEventListener('beforeunload', function (e) {
+                    if (formModified) {
+                        e.preventDefault();
+                        e.returnValue = '';
+                    }
+                });
+            });
+
+            async function saveSection() {
+                const form = document.getElementById('configForm');
+                const formData = new FormData(form);
+
+                try {
+                    const response = await fetch('/api/save?section={{.ActiveSection.Name}}', {
+                        method: 'POST',
+                        body: new URLSearchParams(formData)
+                    });
+                    const result = await response.json();
+                    if (result.status === 'ok') {
+                        formModified = false;
+                        showToast('Configuration section saved successfully!');
+                    } else {
+                        showToast('Error saving configuration: ' + result.message, true);
+                    }
+                } catch (err) {
+                    showToast('Network error while saving: ' + err.message, true);
+                }
+            }
+
+            async function recreateConfig() {
+                if (!confirm('Are you sure you want to recreate the axonasp.toml file with default values? This will overwrite your current configuration.')) {
+                    return;
+                }
+                try {
+                    const response = await fetch('/api/recreate', {
+                        method: 'POST'
+                    });
+                    const result = await response.json();
+                    if (result.status === 'ok') {
+                        formModified = false;
+                        showToast('axonasp.toml recreated with default values! Reloading...');
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1500);
+                    } else {
+                        showToast('Error recreating config: ' + result.message, true);
+                    }
+                } catch (err) {
+                    showToast('Network error while recreating config: ' + err.message, true);
+                }
+            }
+        </script>
+    </body>
+
+</html>

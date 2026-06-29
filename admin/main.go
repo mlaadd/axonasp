@@ -1,0 +1,860 @@
+//go:build !wasm
+
+/*
+ * AxonASP Server
+ * Copyright (C) 2026 G3pix Ltda. All rights reserved.
+ *
+ * Developed by Lucas Guimarães - G3pix Ltda
+ * Contact: https://g3pix.com.br
+ * Project URL: https://g3pix.com.br/axonasp
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ *
+ * Attribution Notice:
+ * If this software is used in other projects, the name "AxonASP Server"
+ * must be cited in the documentation or "About" section.
+ *
+ * Contribution Policy:
+ * Modifications to the core source code of AxonASP Server must be
+ * made available under this same license terms.
+ */
+//Use go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+//Then run "go generate" in the project root to embed version info into the executable
+//You need to specify -64=false/-arm=true if you're trying to create an 32-bit or ARM windows binary, this is required by the new version of golang
+//go:generate goversioninfo -icon=icon_admin.ico -64=true
+package main
+
+import (
+	"embed"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"html/template"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/pelletier/go-toml/v2"
+)
+
+//go:embed www-interface/*
+var wwwInterfaceFS embed.FS
+
+var Version = "0.0.0.0"
+
+// GlobalConfig maps the [global] configuration section.
+type GlobalConfig struct {
+	DefaultCharset            string   `toml:"default_charset" comment:"default_charset is the character encoding used by the server/fastcgi when serving content. It ensures that text is displayed correctly in browsers. UTF-8 is a common choice as it supports a wide range of characters from different languages. Our implementation does not support other charsets, but this setting is here for compatibility with existing ASP applications that may convert characters to the specified charset before sending them to the client, so we allow it to be set in the headers of the response, but it will not affect the actual encoding used by the server, which is always UTF-8. CLI will always use UTF-8 encoding regardless of this setting."`
+	DefaultMslcid             int      `toml:"default_mslcid" comment:"default_mslcid is the default locale identifier (LCID) used by the server for ASP applications. LCIDs are used to specify the locale settings for an application, such as date and time formats, number formats, and language. The value 1046 corresponds to Portuguese (Brazil). You can change this value to match the desired locale for your applications. For example, 1033 is English (United States), 1031 is German (Germany), etc. A full list of LCIDs can be found on Microsoft's documentation or in mslcid.go file in our source code. The server will also use this to set the default locale for the ASP scripting engine, which can affect how certain functions behave based on the locale settings."`
+	DefaultScriptTimeout      int      `toml:"default_script_timeout" comment:"The amount of time in seconds that the server will wait for an ASP script to execute before timing out. If a script takes longer than this time to execute,the server will terminate the script and return an error to the client. You can adjust this value based on the expected execution time of your scripts. A common default is 60 seconds, but you may want to increase it for long-running scripts or decrease it for better performance and resource management."`
+	ResponseBufferLimitMB     int      `toml:"response_buffer_limit_mb" comment:"The maximum buffered Response output size in megabytes before AxonASP aborts execution with a runtime error. This protects the server from unbounded in-memory buffering while Response.Buffer is enabled. The limit is applied consistently in HTTP, FastCGI, and CLI execution."`
+	DefaultTimezone           string   `toml:"default_timezone" comment:"The timezone setting specifiesb the default timezone for the server. This can affect how dates and times are displayed and processed in your ASP applications. Setting it to \"UTC\" means that the server will use Coordinated Universal Time as the default timezone. You can change this to a specific timezone if needed, such as \"America/New_York\" or \"Europe/London\". Make sure to use a valid timezone identifier from the IANA Time Zone Database."`
+	EnableASPDebugging        bool     `toml:"enable_asp_debugging" comment:"When enabled, the http/fastcgi server will provide additional debugging information for ASP scripts, which can be helpful during development. However, it may also expose sensitive information about the server and should be disabled in production environments for security reasons. The CLI will always provide detailed error messages regardless of this setting, as it is intended for development and debugging purposes. ATTENTION: This will also enable go pprof endpoints on the proxy server version, which can be accessed at /debug/pprof and can provide detailed information about the server's performance and resource usage, but it can also pose a security risk if exposed to unauthorized users. If for any reason you need to enable ASP debugging in production, make sure to secure the pprof endpoints properly."`
+	EnableLogFiles            bool     `toml:"enable_log_files" comment:"When enabled, the http/fastcgi server will create an error.log/console.log file in ./temp. The CLI will always provide detailed error messages regardless of this setting, as it is intended for development and debugging purposes. This option also enable the loggin of console.log, console.info, console.error and console.warn outputs in the error.log/console.log file, which can be useful for debugging purposes. However, it may also consume disk space over time if there are a lot of errors or console outputs being logged, so it's generally recommended to keep this setting disabled in production environments and only enable it during development or when you need to troubleshoot specific issues with your ASP scripts. Make sure to monitor the size of the error.log file and implement log rotation or cleanup strategies as needed to prevent it from consuming too much disk space."`
+	EnableErrorLogFile        bool     `toml:"enable_error_log_file" comment:"This configuration was deprecated in version 2.1, don't use it anymore, use enable_log_files instead. We keep it here for compatibility with existing configuration files."`
+	DumpPreprocessedSource    bool     `toml:"dump_preprocessed_source" comment:"When enabled, the server will output in ./temp the full file before the engine compiles it, good for error handling and debugging, but it can consume a lot of disk space if you have a lot of traffic or large scripts, so it's generally recommended to keep this setting disabled in production environments and only enable it during development or when you need to troubleshoot specific issues with your ASP scripts."`
+	CleanSessionsOnStartup    bool     `toml:"clean_sessions_on_startup" comment:"When enabled, the server will clear all existing sessions when it starts up. This can help prevent issues with stale or corrupted session data, but it will also log out any users who are currently logged in when the server restarts. You can disable this if you want to preserve sessions across server restarts, but be aware that it may lead to issues if there are problems with the session data and persistense that should not ocurr."`
+	BytecodeCachingEnabled    string   `toml:"bytecode_caching_enabled" comment:"When enabled, the server will cache the compiled bytecode of ASP scripts in memory and disk for faster execution on subsequent requests. This can significantly improve performance for frequently accessed scripts, as it avoids the overhead of recompiling the script on each request. Values can be \"enabled\" (default), \"memory-only\", \"disk-only\" or \"disabled\". \"enabled\" will cache compiled scripts in both memory and disk, \"memory-only\" will cache compiled scripts only in memory (tier 1), \"disk-only\" will cache compiled scripts only on disk (tier 2), and \"disabled\" will not cache compiled scripts at all, which can significantly degrade performance but may be useful for development or troubleshooting purposes."`
+	CacheMaxSizeMB            int      `toml:"cache_max_size_mb" comment:"The size of the compiled ASP scripts cache in megabytes. When an ASP script is requested for the first time, the server compiles it and stores the compiled version in memory for faster execution on subsequent requests. If the number of cached scripts exceeds this limit, the server will remove the least recently used scripts from the cache to free up memory. Setting this value to a reasonable number can help improve performance by keeping frequently accessed scripts in memory, but setting it too high may lead to increased memory usage, while setting it too low may result in more frequent recompilation of scripts, which can degrade performance. Adjust this value based on the size and traffic of your website, as well as the available memory resources on your server."`
+	CleanCacheOnStartup       bool     `toml:"clean_cache_on_startup" comment:"When enabled, the server will clear its cache of compiled ASP scripts when it starts up. This can help ensure that any changes to your ASP files are picked up immediately when the server restarts, but it may also increase the startup time of the server as it needs to recompile all scripts. You can disable this if you want to keep the compiled scripts in cache across restarts for faster startup, but be aware that changes to ASP files may not take effect until the server is restarted again."`
+	VMPoolSize                int      `toml:"vm_pool_size" comment:"The size of the pool of virtual machines (VMs) used to execute ASP scripts. Each VM can execute one script at a time, so having a pool of VMs allows the server to handle multiple requests concurrently faster. Setting this value to a bigger number can help improve performance by allowing more scripts to be executed simultaneously, but setting it too high may lead to increased memory usage and resource contention, while setting it too low may result in slower response times during periods of high traffic. Adjust this value based on the expected traffic to your website and the available resources on your server. You should use a number bigger than 1. A pool size of 10 VMs in a server with 512mb of memory can respond to approximately 2000 simultaneous requests for simple pages."`
+	GolangMemoryLimitMB       int      `toml:"golang_memory_limit_mb" comment:"The maximum amount of memory in megabytes that the Go runtime is allowed to use. This can help prevent the server from consuming too much memory and potentially crashing. Setting it to 0 means no limit, but it's generally recommended to set a reasonable limit to ensure stability. If your server has limited memory resources, you may want to set this to a lower value to prevent out-of-memory errors. Setting this value too low may lead to performance issues or out-of-memory errors, while setting it too high may allow the server to consume more memory than is available, leading to crashes. Also note that this setting may not be strictly enforced by the Go runtime, and actual memory usage may vary based on the workload and garbage collection behavior. If your server is missing requests, low the vm_pool_size and up the memory limit, as this usually means the requests are getting blocked by the Garbage Collector. This directive is more important than  vm_pool_size, and directly influence how some libraries like zstd work."`
+	SessionFlushIntervalSecs  int      `toml:"session_flush_interval_seconds" comment:"Interval in seconds used to asynchronously flush dirty in-memory sessions to disk. A value greater than 0 keeps session writes off the request hot path while still guaranteeing a safe flush on process shutdown."`
+	AdodbPlatformArchitecture string   `toml:"adodb_platform_architecture" comment:"The architecture of the platform for which the ADODB library is called from (just for Access Database and in Windows). This is important for compatibility with the database drivers used by your ASP applications. If you are running a 64-bit operating system, you should set this to \"amd64\". If you are running a 32-bit operating system, you should set this to \"386\". You can use the 386 ADODB on your 64-bit Windows server, but you need to install the 32-bit version. You can also set it to \"auto\" to let the server automatically detect the architecture of the platform it is running on."`
+	ExecuteAsASP              []string `toml:"execute_as_asp" comment:"List of file extensions that will be treated as ASP scripts and executed by the server. You can add or remove extensions from this list based on your needs. For example, if you want to execute .aspx files as ASP scripts, you can add \".aspx\" to the list. Make sure to include the dot before the extension. The server will check the requested file's extension against this list to determine whether to execute it as an ASP script or serve it as a static file."`
+	ExecuteAsVBScript         []string `toml:"execute_as_vbscript" comment:"List of file extensions that will be treated as VBScript and executed by the server. You can add or remove extensions from this list based on your needs. Make sure to include the dot before the extension. The server will check the requested file's extension against this list to determine whether to execute it or serve it as a static file. This will only be used if engine_mode is set to vbscript."`
+	ExecuteAsJavaScript       []string `toml:"execute_as_javascript" comment:"List of file extensions that will be treated as JavaScript and executed by the server. You can add or remove extensions from this list based on your needs. Make sure to include the dot before the extension. The server will check the requested file's extension against this list to determine whether to execute it or serve it as a static file. This will only be used if engine_mode is set to javascript."`
+	ViperWatchConfig          bool     `toml:"viper_watch_config" comment:"When enabled, the server will watch for changes in the configuration file and automatically reload the configuration without needing to restart the server. This can be useful for making changes to the server settings on the fly, but it may also introduce some overhead as the server needs to monitor the file for changes. It's generally recommended to keep this setting disabled in production environments for better performance and stability, and only enable it during development or when you need to make frequent changes to the configuration. This setting isn't full implented yet."`
+	ViperAutomaticEnv         bool     `toml:"viper_automatic_env" comment:"When enabled, the server will automatically read configuration values from environment variables that match the settings in this configuration file. This allows you to easily override settings without modifying the configuration file directly, which can be especially useful in containerized environments or when using a secrets management solution. The environment variables should be in uppercase and use underscores instead of dots. For example, to override the default_charset setting, you would set an environment variable named DEFAULT_CHARSET with the desired value. This provides flexibility in managing configurations across different environments (development, staging, production) without changing the code or configuration files."`
+}
+
+// CliConfig maps the [cli] configuration section.
+type CliConfig struct {
+	EnableCli                   bool   `toml:"enable_cli" comment:"When enabled, the server will allow the TUI interface that can be used to test ASP scripts and VBScript. However, it can also pose a security risk if not used carefully, as it allows any user with access to the CLI to execute scripts in TUI. It's generally recommended to keep this setting disabled unless you have a specific use case that requires it and you trust the scripts that will be using this functionality. This setting need to be enabled for enable_cli_run_from_command_line to work."`
+	EnableCliRunFromCommandLine bool   `toml:"enable_cli_run_from_command_line" comment:"When enabled, you can run ASP scripts directly from the command line using \"axonasp-cli.exe -r/--run script.asp\", which can be useful for running maintenance tasks or scheduled jobs without needing to access them through the web server, but it can also pose a security risk if not used carefully, as it allows any script with access to the CLI to be executed. It's generally recommended to keep this setting disabled unless you have a specific use case that requires it and you trust the scripts that will be using this functionality."`
+	ForceFreshCompile           bool   `toml:"force_fresh_compile" comment:"When true, CLI execution always recompiles scripts as fresh runs and bypasses bytecode caching. Set to false to allow CLI to follow global.bytecode_caching_enabled behavior. When using TUI it's generally recommended to set this to true to ensure that you are always running the latest version of your scripts and to avoid any potential issues with stale bytecode. If you're using the CLI to run scripts (-r) directly from the command line, you can set this to false to take advantage of bytecode caching for improved performance, but be aware that changes to your scripts may not take effect until the bytecode cache is refreshed or cleared."`
+	EngineMode                  string `toml:"engine_mode" comment:"Set the engine mode. Can be set to: default to execute ASP pages/code, vbscript to execute vbscript only or javascript, to execute javascript only. This will also change the way the testsuite works."`
+}
+
+// ServerConfig maps the [server] configuration section.
+type ServerConfig struct {
+	DefaultErrorPagesDirectory string   `toml:"default_error_pages_directory" comment:"The directory where the server will look for default error pages. When an error occurs (e.g., 404 Not Found, 500 Internal Server Error), the server will check this directory for corresponding error page files (e.g., 404.html, 500.asp) and serve them to the client. If no custom error page is found, the server will return a default error message. You can customize this directory and the error pages to provide a better user experience when errors occur on your website. This configuration may be overridden by settings in the web.config file of your ASP application, allowing you to specify different error pages for different applications or directories."`
+	WebRoot                    string   `toml:"web_root" comment:"The root directory for the web server. This is the base directory from which the server will serve files. When a client makes a request, the server will look for the requested file within this directory. For example, if the web_root is set to \"./www\" and a client requests \"/index.html\", the server will look for \"./www/index.html\". Make sure to set this to the correct path where your ASP applications and static files are located. This configuration can't be be overridden by settings in the web.config file of your ASP application."`
+	DefaultPages               []string `toml:"default_pages" comment:"List of default pages to try when a directory is accessed. The server will look for these files in order and serve the first one it finds."`
+	ServerPort                 int      `toml:"server_port" comment:"The port on which the web server will listen and you should redirect your reverse proxy."`
+	BlockedExtensions          []string `toml:"blocked_extensions" comment:"List of file extensions that the server will block from being served. This is a security measure to prevent access to sensitive files that should not be exposed to clients. The server will return a 404 Not found error if a client tries to access a file with one of these extensions. You can customize this list based on the types of files you want to protect. It's important to include any file types that may contain sensitive information or executable code that should not be accessible through the web server."`
+	BlockedFiles               []string `toml:"blocked_files" comment:"List of files that the server will block from being served directly. This is a security measure to prevent access to sensitive files that should not be exposed to clients. The server will return a 404 Not found error if a client tries to access the file. You can customize this list based on the types of files you want to protect. It's important to include any file types that may contain sensitive information or executable code that should not be accessible through the web server."`
+	BlockedDirs                []string `toml:"blocked_dirs" comment:"List of files that the server will block from being served directly. This is a security measure to prevent access to sensitive files that should not be exposed to clients. The server will return a 404 Not found error if a client tries to access the file. You can customize this list based on the types of files you want to protect. It's important to include any file types that may contain sensitive information or executable code that should not be accessible through the web server."`
+	EnableWebConfig            bool     `toml:"enable_webconfig" comment:"Allows web.config files to override certain settings for the web server. When set to true, the server will read web.config files in the directories of the web root and apply some settings specified in those files. This allows for more granular control over the behavior of the server for specific applications. It won't work for directories outside the root. For example, you can use web.config files to specify custom error pages, and implement redirections and virtual directories. If set to false, the server will ignore any web.config file and use only the settings specified in this main configuration file."`
+	EnableDirectoryListing     bool     `toml:"enable_directory_listing" comment:"When enabled, the server will allow directory listing for directories that do not contain a default page. This means that if a client requests a directory and there is no default page (e.g., index.html) in that directory, the server will return a list of the files and subdirectories within that directory. This can be useful for development and debugging purposes, but it can also pose a security risk if sensitive files are exposed. It's generally recommended to keep this setting disabled in production environments to prevent unauthorized access to directory contents."`
+	DirectoryListingTemplate   string   `toml:"directory_listing_template" comment:"The path to the HTML template used for directory listing when enable_directory_listing is set to true. This template should include placeholders (see the default directory listing template) where the server will inject the list of files and directories. You can customize this template to match the design of your website and provide a better user experience when directory listing is enabled. Make sure to set this to the correct path where your custom directory listing template is located."`
+	EngineMode                 string   `toml:"engine_mode" comment:"Set the engine mode. Can be set to: default to execute ASP pages/code, vbscript to execute vbscript only or javascript, to execute javascript only."`
+}
+
+// FastcgiConfig maps the [fastcgi] configuration section.
+type FastcgiConfig struct {
+	DefaultPages []string `toml:"default_pages" comment:"List of default pages to try when a directory is accessed. The server will look for these files in order and serve the first one it finds when requested for a directory. This is similar to the default_pages setting in the [server] section, but it applies specifically to the FastCGI server. You can customize this list based on the default pages you want to serve for directories when using FastCGI."`
+	ServerPort   int      `toml:"server_port" comment:"Set the port number to the fastcgi server. Can also be a path to socket, e.g. \"unix:/tmp/axonasp.sock\" on *nix systems"`
+	EngineMode   string   `toml:"engine_mode" comment:"Set the engine mode. Can be set to: default to execute ASP pages/code, vbscript to execute vbscript only or javascript, to execute javascript only."`
+}
+
+// G3dbConfig maps the [g3db] configuration section.
+type G3dbConfig struct {
+	MysqlDatabase     string `toml:"mysql_database" comment:"MySQL Database Configuration (G3DB)"`
+	MysqlHost         string `toml:"mysql_host"`
+	MysqlPass         string `toml:"mysql_pass"`
+	MysqlPort         int    `toml:"mysql_port"`
+	MysqlUser         string `toml:"mysql_user"`
+	PostgresHost      string `toml:"postgres_host" comment:"PostgreSQL Database Configuration (G3DB)"`
+	PostgresUser      string `toml:"postgres_user"`
+	PostgressDatabase string `toml:"postgress_database"`
+	PostgressPass     string `toml:"postgress_pass"`
+	PostgressPort     int    `toml:"postgress_port"`
+	PostgressSslMode  string `toml:"postgress_ssl_mode"`
+	MssqlDatabase     string `toml:"mssql_database" comment:"MS SQL Server Database Configuration (G3DB)"`
+	MssqlHost         string `toml:"mssql_host"`
+	MssqlPass         string `toml:"mssql_pass"`
+	MssqlPort         int    `toml:"mssql_port"`
+	MssqlUser         string `toml:"mssql_user"`
+	SqliteBusyTimeout int    `toml:"sqlite_busy_timeout" comment:"SQLite Database Configuration (G3DB)"`
+	SqlitePath        string `toml:"sqlite_path"`
+	OracleDsn         string `toml:"oracle_dsn" comment:"Oracle Database Configuration (G3DB)\nProvide either oracle_dsn (a full go-ora/v2 URL) or individual host/port/user/pass/service keys.\nDSN format: oracle://user:password@host:port/service_name"`
+	OracleHost        string `toml:"oracle_host"`
+	OraclePass        string `toml:"oracle_pass"`
+	OraclePort        int    `toml:"oracle_port"`
+	OracleService     string `toml:"oracle_service"`
+	OracleUser        string `toml:"oracle_user"`
+}
+
+// G3mailConfig maps the [g3mail] configuration section.
+type G3mailConfig struct {
+	SmptHost string `toml:"smpt_host" comment:"Mail configuration for AxonASP Server. This section contains settings related to sending emails from your ASP applications, such as SMTP server details and authentication credentials. Properly configuring these settings is essential for ensuring that your applications can send emails successfully, whether it's for user notifications, password resets, or other email functionalities. Adjust these settings according to your email service provider's requirements and the needs of your applications. This configuration is used by the built-in mail functionality in the ASP scripting engine, which allows you to send emails using any of the g3mail object in your ASP scripts. For better security, it's recommended to use environment variables or a secure secrets management solution to store sensitive information like email credentials instead of hardcoding them in the configuration file, especially in production environments. You can set a .env file in the root of the server executable with the same variables defined here, and the server will load them and override the values in this configuration file, allowing you to keep sensitive information out of your version control system and easily manage different configurations for development and production environments."`
+	SmtpFrom string `toml:"smtp_from"`
+	SmtpPass string `toml:"smtp_pass"`
+	SmtpPort int    `toml:"smtp_port"`
+	SmtpUser string `toml:"smtp_user"`
+}
+
+// G3axonliveConfig maps the [g3axonlive] configuration section.
+type G3axonliveConfig struct {
+	G3axonliveActive                 bool `toml:"g3axonlive_active" comment:"G3AXONLIVE Configuration - Reactive Component Framework\nThe G3AXONLIVE library provides a native reactive component framework for building stateful ASP pages\nwhere components update asynchronously without full page reloads. All business logic stays on the server.\nWhen g3axonlive_active is set to false, the library is completely disabled and no resources are allocated.\n\nEnable/Disable the G3AXONLIVE reactive component library. When disabled, the /g3al/ endpoint is not registered\nand the G3AXONLIVE object cannot be created via Server.CreateObject(\"G3AXONLIVE\")."`
+	G3axonliveCleanupIntervalMinutes int  `toml:"g3axonlive_cleanup_interval_minutes" comment:"Cleanup interval in minutes for orphaned component states. When a component state has not been accessed\nfor this duration, it will be automatically removed from memory by the background cleanup goroutine.\nThis prevents memory leaks from users who close their browser without properly closing the connection.\nMinimum recommended value is 5 minutes."`
+	G3axonliveAutoCleanup            bool `toml:"g3axonlive_auto_cleanup" comment:"Enable automatic background cleanup goroutine for orphaned component states.\nWhen enabled, the G3AXONLIVE library will spawn a background goroutine on first instantiation\nthat periodically removes stale component states. Set to false to disable automatic cleanup and\nmanage cleanup manually via StopCleanup()/StartCleanup() methods."`
+	MaxComponentsPerResponse         int  `toml:"max_components_per_response" comment:"Maximum number of component patches allowed per EndAsyncResponse() call.\nIf the server tries to register more patches than this limit, an error is raised.\nIncrease this value if your page renders many independently-updated components at once."`
+}
+
+// AxfunctionsConfig maps the [axfunctions] configuration section.
+type AxfunctionsConfig struct {
+	EnableGlobalAx                 bool   `toml:"enable_global_ax" comment:"When enabled, the Ax functions will be avaliable on the global context, without the need to call Server.Object(). This will break compatibility with Classic ASP default"`
+	EnableAxServerShutdownFunction bool   `toml:"enable_axservershutdown_function" comment:"When enabled, the server will allow the use of the axshutdownaxonaspserver() function in ASP scripts, which can be used to programmatically shut down the server. This can be useful for maintenance or when you want to allow certain scripts to trigger a server shutdown, but it can also pose a severe security risk if not used carefully, as it allows any script with access to this function to shut down the server. It's generally recommended to keep this setting disabled unless you have a specific use case that requires it and you trust the scripts that will be using this function."`
+	AxDefaultCssPath               string `toml:"ax_default_css_path" comment:"The path to the CSS file used by the built-in AxonASP pages (e.g., error pages). This allows you to customize the appearance of these pages by providing your own CSS file."`
+	AxDefaultLogoPath              string `toml:"ax_default_logo_path" comment:"The path to the logo used by the built-in AxonASP pages (e.g., error pages). This allows you to customize the appearance of these pages by providing your own logo file. It will be returned as an inline base64 image, so you can use any image format supported by browsers (e.g., PNG, JPEG, SVG) and it will be displayed correctly on the pages."`
+}
+
+// McpConfig maps the [mcp] configuration section.
+type McpConfig struct {
+	McpMode    string `toml:"mcp_mode" comment:"You can set it to \"stdio\" or \"sse\", if sse, set mcp_sse_port to the desired port. The SSE will be served at http://localhost:{mcp_sse_port}/sse, and you can send commands to http://localhost:{mcp_sse_port}/command. This setting determines the mode of communication for the MCP (Management Control Panel) tool. When set to \"stdio\", the MCP will communicate through standard input and output, which is suitable for local management and debugging. When set to \"sse\", the MCP will use Server-Sent Events (SSE) to provide a real-time interface for managing the server, which can be accessed remotely through a web browser or other SSE-compatible client. The SSE mode allows for more interactive and dynamic management of the server, but it may require additional configuration and security considerations if exposed to remote clients. If you opt for the SSE mode, make sure to secure the endpoint properly using a reverse proxy like nginx."`
+	McpSsePort int    `toml:"mcp_sse_port" comment:"The port on which the MCP SSE server will listen if mcp_mode is set to \"sse\". This allows you to use the MCP functionality over SSE, which can be useful for remote management and integration with other tools. If mcp_mode is set to \"stdio\", this setting will be ignored and the MCP will communicate through standard input and output instead."`
+	McpDocs    string `toml:"mcp_docs" comment:"The path to the markdown file that contains the documentation for the MCP tool. This file should be formatted in a very specific way that allows the MCP to parse it and extract relevant information based on user queries. The documentation should include details about the available functions, objects, libraries, and other resources in the AxonASP server, along with examples and usage instructions. Properly maintaining this documentation is crucial for ensuring that users can effectively utilize the MCP tool to get accurate information about the server's capabilities and how to use them in their ASP applications. You can customize this path based on where you store your documentation file, but make sure it is accessible by the server and properly formatted for parsing."`
+}
+
+// MswcConfig maps the [mswc] configuration section.
+type MswcConfig struct {
+	PagecounterEnabled             bool   `toml:"pagecounter_enabled" comment:"When enabled, the MSWC.PageCounter component will be available for use in ASP scripts. This component allows you to easily track and display the number of hits or visits to a page. When enabled, the server will read and update the hit count from the file specified in pagecounter_file whenever the MSWC.PageCounter component is used in an ASP script. This can be useful for tracking page popularity and visitor engagement on your website. However, it may also introduce some overhead due to file I/O operations, especially on high-traffic websites. It will start a goroutine to save the hit count to the file at regular intervals defined by pagecounter_save_interval_seconds, which can help mitigate performance issues by reducing the frequency of file writes and only if memory values changed. It's generally recommended to enable this setting only if you need the page hit counting functionality provided by the MSWC.PageCounter component, and to monitor the performance impact on your server if you have a high-traffic website."`
+	PagecounterFile                string `toml:"pagecounter_file" comment:"The path to the file used by the MSWC.PageCounter component to store the hit count. This file will be created if it does not exist, and the server will read and update the hit count in this file whenever the MSWC.PageCounter component is used in an ASP script. Make sure that the server has write permissions to this file and its directory, as it needs to update the hit count each time the component is used. You can customize this path based on your preferences, but it's generally recommended to keep it within a directory that is not publicly accessible through the web server for security reasons. This is a Go-specific binary (gob) file that is used to efficiently store the hit count data, and it is not meant to be edited manually."`
+	PagecounterSaveIntervalSeconds int    `toml:"pagecounter_save_interval_seconds" comment:"The interval in seconds at which the MSWC.PageCounter component will save the hit count to the file specified in pagecounter_file. This setting helps to reduce the frequency of file writes, which can improve performance, especially on high-traffic websites. The server will keep the hit count in memory and only write it to the file at the specified intervals. You can adjust this interval based on your needs and the expected traffic to your website. A shorter interval will provide more up-to-date hit counts but may increase disk I/O, while a longer interval will reduce disk I/O but may result in less accurate hit counts if the server is restarted or crashes before the next save."`
+}
+
+// ServiceConfig maps the [service] configuration section.
+type ServiceConfig struct {
+	ServiceName                 string   `toml:"service_name" comment:"These settings are only relevant when running the server in service mode using the service wrapper, and it will be ignored when running in normal mode. \n\nThe name of the service when running in service mode. This is used to identify the service in the operating system's service manager (e.g., Windows Services). You can set this to a descriptive name that reflects the purpose of the service, such as \"AxonASP Server\". Make sure to choose a unique name if you have multiple services running on the same machine to avoid conflicts."`
+	ServiceDisplayName          string   `toml:"service_display_name" comment:"The display name of the service when running in service mode. This is used to provide a more user-friendly name for the service in the operating system's service manager. You can set this to a descriptive name that reflects the purpose of the service, such as \"AxonASP Server\". This is the name that will be shown in the list of services, so it can be more descriptive than the actual service name used for identification."`
+	ServiceDescription          string   `toml:"service_description" comment:"The description of the service when running in service mode. This is used to provide additional information about the service in the operating system's service manager. You can set this to a brief description that explains what the service does, such as \"AxonASP Service running AxonASP Server. This is a wrapper to our server.\""`
+	ServiceExecutablePath       string   `toml:"service_executable_path" comment:"Path to the executable that will be run when the service starts, it can be the same as the main server executable or the fast-cgi version. Make sure to set this to the correct path of the executable you want to run when the service starts. Don't append the file extension, the service wrapper will automatically add .exe on Windows."`
+	ServiceEnvironmentVariables []string `toml:"service_environment_variables" comment:"List of environment variables to set for the service, in the format \"KEY=VALUE\". These environment variables will be available to the service process when it runs, allowing you to configure the behavior of the server or your ASP applications without modifying the configuration file directly. You can add as many environment variables as needed, and they will be set in the service's environment when it starts. This is especially useful for setting sensitive information like database credentials or API keys in a secure way, such as using a secrets management solution or environment variable management in your deployment platform."`
+}
+
+// JavascriptConfig maps the [javascript] configuration section.
+type JavascriptConfig struct {
+	EnableNodeCompatibility bool `toml:"enable_node_compatibility" comment:"Enable the compatibility mode with Node.js, this is a experimental feature."`
+}
+
+// Config is the canonical schema for axonasp.toml.
+type Config struct {
+	Global      GlobalConfig      `toml:"global"`
+	Cli         CliConfig         `toml:"cli"`
+	Server      ServerConfig      `toml:"server"`
+	Fastcgi     FastcgiConfig     `toml:"fastcgi"`
+	G3db        G3dbConfig        `toml:"g3db"`
+	G3mail      G3mailConfig      `toml:"g3mail"`
+	G3axonlive  G3axonliveConfig  `toml:"g3axonlive"`
+	Axfunctions AxfunctionsConfig `toml:"axfunctions"`
+	Mcp         McpConfig         `toml:"mcp"`
+	Mswc        MswcConfig        `toml:"mswc"`
+	Service     ServiceConfig     `toml:"service"`
+	Javascript  JavascriptConfig  `toml:"javascript"`
+}
+
+// SectionField describes a single configuration field within a section.
+type SectionField struct {
+	Key          string
+	Type         string
+	Description  string
+	DefaultValue any
+	CurrentValue any
+}
+
+// Section describes a configuration section.
+type Section struct {
+	Name   string
+	Fields []SectionField
+}
+
+// PageData represents the structure passed to the dashboard template.
+type PageData struct {
+	Sections      []Section
+	ActiveSection Section
+	ResolvedPath  string
+}
+
+// NewDefaultConfig instantiates a Config populated with baseline default values.
+func NewDefaultConfig() Config {
+	return Config{
+		Global: GlobalConfig{
+			DefaultCharset:            "UTF-8",
+			DefaultMslcid:             1033,
+			DefaultScriptTimeout:      60,
+			ResponseBufferLimitMB:     4,
+			DefaultTimezone:           "UTC",
+			EnableASPDebugging:        true,
+			EnableLogFiles:            true,
+			EnableErrorLogFile:        true,
+			DumpPreprocessedSource:    false,
+			CleanSessionsOnStartup:    true,
+			BytecodeCachingEnabled:    "enabled",
+			CacheMaxSizeMB:            100,
+			CleanCacheOnStartup:       true,
+			VMPoolSize:                10,
+			GolangMemoryLimitMB:       256,
+			SessionFlushIntervalSecs:  120,
+			AdodbPlatformArchitecture: "auto",
+			ExecuteAsASP:              []string{".asp"},
+			ExecuteAsVBScript:         []string{".vbs"},
+			ExecuteAsJavaScript:       []string{".js", ".mjs"},
+			ViperWatchConfig:          false,
+			ViperAutomaticEnv:         true,
+		},
+		Cli: CliConfig{
+			EnableCli:                   true,
+			EnableCliRunFromCommandLine: true,
+			ForceFreshCompile:           true,
+			EngineMode:                  "default",
+		},
+		Server: ServerConfig{
+			DefaultErrorPagesDirectory: "./www/error-pages",
+			WebRoot:                    "./www/",
+			DefaultPages: []string{
+				"index.asp",
+				"default.asp",
+				"index.html",
+				"default.html",
+				"default.htm",
+				"index.htm",
+				"home.asp",
+				"home.html",
+				"home.htm",
+				"main.asp",
+				"main.html",
+				"main.htm",
+				"index.txt",
+			},
+			ServerPort: 8801,
+			BlockedExtensions: []string{
+				".asax", ".ascx", ".master", ".skin", ".browser", ".sitemap", ".config", ".cs", ".csproj", ".vb", ".vbproj", ".webinfo", ".licx", ".resx", ".resources", ".mdb", ".vjsproj", ".java", ".jsl", ".ldb", ".dsdgm", ".ssdgm", ".lsad", ".ssmap", ".cd", ".dsprototype", ".lsaprototype", ".sdm", ".sdmDocument", ".mdf", ".ldf", ".ad", ".dd", ".ldd", ".sd", ".adprototype", ".lddprototype", ".exclude", ".refresh", ".compiled", ".msgx", ".vsdisco", ".rules", ".asa", ".inc", ".exe", ".dll", ".env", ".htaccess", ".git", ".gitignore", ".seg", ".snp", ".log",
+			},
+			BlockedFiles: []string{
+				"MyInfo.xml",
+			},
+			BlockedDirs: []string{
+				"./www/error-pages",
+				"./www/axonasp-pages",
+			},
+			EnableWebConfig:          true,
+			EnableDirectoryListing:   true,
+			DirectoryListingTemplate: "./www/axonasp-pages/directory-listing.html",
+			EngineMode:               "default",
+		},
+		Fastcgi: FastcgiConfig{
+			DefaultPages: []string{
+				"index.asp",
+				"default.asp",
+				"index.html",
+				"default.html",
+				"default.htm",
+				"index.htm",
+				"home.asp",
+				"home.html",
+				"home.htm",
+				"main.asp",
+				"main.html",
+				"main.htm",
+				"index.txt",
+			},
+			ServerPort: 9000,
+			EngineMode: "default",
+		},
+		G3db: G3dbConfig{
+			MysqlDatabase:     "test",
+			MysqlHost:         "localhost",
+			MysqlPass:         "password",
+			MysqlPort:         3306,
+			MysqlUser:         "root",
+			PostgresHost:      "localhost",
+			PostgresUser:      "postgres",
+			PostgressDatabase: "test",
+			PostgressPass:     "password",
+			PostgressPort:     5432,
+			PostgressSslMode:  "disable",
+			MssqlDatabase:     "test",
+			MssqlHost:         "localhost",
+			MssqlPass:         "password",
+			MssqlPort:         1433,
+			MssqlUser:         "sa",
+			SqliteBusyTimeout: 5000,
+			SqlitePath:        "./database.db",
+			OracleDsn:         "",
+			OracleHost:        "localhost",
+			OraclePass:        "password",
+			OraclePort:        1521,
+			OracleService:     "ORCLCDB",
+			OracleUser:        "system",
+		},
+		G3mail: G3mailConfig{
+			SmptHost: "smtp.example.com",
+			SmtpFrom: "sender@example.com",
+			SmtpPass: "your_password",
+			SmtpPort: 587,
+			SmtpUser: "your_email@example.com",
+		},
+		G3axonlive: G3axonliveConfig{
+			G3axonliveActive:                 true,
+			G3axonliveCleanupIntervalMinutes: 5,
+			G3axonliveAutoCleanup:            true,
+			MaxComponentsPerResponse:         200,
+		},
+		Axfunctions: AxfunctionsConfig{
+			EnableGlobalAx:                 true,
+			EnableAxServerShutdownFunction: false,
+			AxDefaultCssPath:               "./www/axonasp-pages/css/axonasp.css",
+			AxDefaultLogoPath:              "./www/axonasp-pages/images/logo.svg",
+		},
+		Mcp: McpConfig{
+			McpMode:    "stdio",
+			McpSsePort: 8000,
+			McpDocs:    "./www/manual/md/",
+		},
+		Mswc: MswcConfig{
+			PagecounterEnabled:             false,
+			PagecounterFile:                "./temp/hitcnt.gob",
+			PagecounterSaveIntervalSeconds: 120,
+		},
+		Service: ServiceConfig{
+			ServiceName:                 "AxonASPServer",
+			ServiceDisplayName:          "G3pix AxonASP Server",
+			ServiceDescription:          "AxonASP Service running AxonASP Server. This is a wrapper used by axonasp-http or axonasp-fastcgi.",
+			ServiceExecutablePath:       "./axonasp-http",
+			ServiceEnvironmentVariables: []string{},
+		},
+		Javascript: JavascriptConfig{
+			EnableNodeCompatibility: true,
+		},
+	}
+}
+
+// resolveConfigPath mimics axonconfig/loader.go path candidate resolution logic.
+func resolveConfigPath() string {
+	configCandidates := []string{
+		filepath.Join("config", "axonasp.toml"),
+		filepath.Join("..", "config", "axonasp.toml"),
+		filepath.Join("..", "..", "config", "axonasp.toml"),
+	}
+	if executablePath, err := os.Executable(); err == nil {
+		configCandidates = append(configCandidates, filepath.Join(filepath.Dir(executablePath), "config", "axonasp.toml"))
+	}
+
+	for _, candidate := range configCandidates {
+		if _, err := os.Stat(candidate); err == nil {
+			if abs, err := filepath.Abs(candidate); err == nil {
+				return abs
+			}
+			return candidate
+		}
+	}
+
+	abs, _ := filepath.Abs(filepath.Join("config", "axonasp.toml"))
+	return abs
+}
+
+// createNewConfig writes default values with native comments to target path.
+func createNewConfig(target string) error {
+	dir := filepath.Dir(target)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	defaultCfg := NewDefaultConfig()
+	data, err := toml.Marshal(defaultCfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(target, data, 0644)
+}
+
+// getSections reflects over current and default configuration to produce structured schemas.
+func getSections(current Config, def Config) []Section {
+	valCurrent := reflect.ValueOf(current)
+	valDefault := reflect.ValueOf(def)
+	typ := reflect.TypeFor[Config]()
+
+	sections := make([]Section, 0, typ.NumField())
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		sectionName := field.Tag.Get("toml")
+		if sectionName == "" {
+			sectionName = strings.ToLower(field.Name)
+		}
+
+		secValCurrent := valCurrent.Field(i)
+		secValDefault := valDefault.Field(i)
+		secTyp := field.Type
+
+		var fields []SectionField
+		for j := 0; j < secTyp.NumField(); j++ {
+			subField := secTyp.Field(j)
+			key := subField.Tag.Get("toml")
+			if key == "" {
+				key = strings.ToLower(subField.Name)
+			}
+			desc := subField.Tag.Get("comment")
+
+			currentSubVal := secValCurrent.Field(j).Interface()
+			defaultSubVal := secValDefault.Field(j).Interface()
+
+			fieldType := "string"
+			switch subField.Type.Kind() {
+			case reflect.Bool:
+				fieldType = "bool"
+			case reflect.Int:
+				fieldType = "int"
+			case reflect.Slice:
+				fieldType = "slice"
+			}
+
+			fields = append(fields, SectionField{
+				Key:          key,
+				Type:         fieldType,
+				Description:  desc,
+				DefaultValue: defaultSubVal,
+				CurrentValue: currentSubVal,
+			})
+		}
+
+		sections = append(sections, Section{
+			Name:   sectionName,
+			Fields: fields,
+		})
+	}
+	return sections
+}
+
+// updateField mutates configuration settings based on string form payloads.
+func updateField(cfg *Config, sectionName, fieldTomlName, strVal string) {
+	val := reflect.ValueOf(cfg).Elem()
+	typ := val.Type()
+	for i := 0; i < val.NumField(); i++ {
+		field := typ.Field(i)
+		secName := field.Tag.Get("toml")
+		if secName == "" {
+			secName = strings.ToLower(field.Name)
+		}
+		if strings.EqualFold(secName, sectionName) {
+			secVal := val.Field(i)
+			secTyp := secVal.Type()
+			for j := 0; j < secVal.NumField(); j++ {
+				subField := secTyp.Field(j)
+				subKey := subField.Tag.Get("toml")
+				if subKey == "" {
+					subKey = strings.ToLower(subField.Name)
+				}
+				if strings.EqualFold(subKey, fieldTomlName) {
+					subVal := secVal.Field(j)
+					switch subVal.Kind() {
+					case reflect.String:
+						subVal.SetString(strVal)
+					case reflect.Int:
+						if intVal, err := strconv.Atoi(strVal); err == nil {
+							subVal.SetInt(int64(intVal))
+						}
+					case reflect.Bool:
+						subVal.SetBool(strVal == "true" || strVal == "on")
+					case reflect.Slice:
+						parts := strings.Split(strVal, ",")
+						var cleanParts []string
+						for _, p := range parts {
+							p = strings.TrimSpace(p)
+							if p != "" {
+								cleanParts = append(cleanParts, p)
+							}
+						}
+						subVal.Set(reflect.ValueOf(cleanParts))
+					}
+					return
+				}
+			}
+		}
+	}
+}
+
+// openBrowser initiates a platform-appropriate command to spawn the target URL.
+func openBrowser(url string) error {
+	var cmd string
+	var args []string
+
+	switch runtime.GOOS {
+	case "windows":
+		cmd = "rundll32"
+		args = []string{"url.dll,FileProtocolHandler", url}
+	case "darwin":
+		cmd = "open"
+		args = []string{url}
+	default:
+		cmd = "xdg-open"
+		args = []string{url}
+	}
+	return exec.Command(cmd, args...).Start()
+}
+
+// backupConfigFile creates a .bak copy of the configuration file if it exists.
+func backupConfigFile(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	}
+	src, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	backupPath := path + ".bak"
+	dst, err := os.Create(backupPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, src)
+	return err
+}
+
+// printHelp displays the standard command-line help usage menu.
+func printHelp() {
+	fmt.Println("\033[1mG3pix ❖ AxonASP Configuration Management Usage:\n\033[0m")
+	fmt.Println(`    axonadmin
+      Starts the interactive web interface.
+    axonadmin -edit  <path>    
+      Specify TOML configuration file to edit (mimics loader path resolution 
+      if omitted)
+    axonadmin -create <path>  
+      Generate a new default configuration file at specified path
+    axonadmin -noui           
+      Run in headless mode (must be used with -create)
+    axonadmin -h, --help
+      Shows this help message.
+
+ ABOUT:
+  G3pix ❖ AxonASP
+  is a high-performance, cross-platform Classic ASP engine,
+  with support to VBScript and JavaScript for Web, FastCGI, and CLI, 
+  bridging legacy compatibility with modern APIs.
+  
+  Copyright (C) 2026 G3pix Ltda. All rights reserved.
+  Website: https://g3pix.com.br/axonasp
+  
+  License: MPL 2.0
+  `)
+	fmt.Println("\033[0m")
+}
+
+// sendJSONError writes a HTTP JSON error payload.
+func sendJSONError(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":  "error",
+		"message": msg,
+	})
+}
+
+// sendJSONOK writes a HTTP JSON success payload.
+func sendJSONOK(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+	})
+}
+
+func main() {
+	var editPath string
+	var createPath string
+	var noUI bool
+	var helpFlag bool
+
+	flag.StringVar(&editPath, "edit", "", "TOML target to edit")
+	flag.StringVar(&createPath, "create", "", "TOML target to create")
+	flag.BoolVar(&noUI, "noui", false, "headless creation mode")
+	flag.BoolVar(&helpFlag, "h", false, "show help menu")
+
+	flag.Usage = func() {
+		printHelp()
+	}
+
+	flag.Parse()
+
+	// Handle extra non-flag arguments as unrecognized.
+	if helpFlag || flag.NArg() > 0 {
+		printHelp()
+		os.Exit(0)
+	}
+
+	// Headless validation
+	if (noUI) && createPath == "" && editPath == "" {
+		printHelp()
+		os.Exit(0)
+	}
+
+	// If create path is set (with or without headless), generate configuration
+	if createPath != "" || (noUI && createPath == "") {
+		target := createPath
+		if target == "" {
+			target = filepath.Join("config", "axonasp.toml")
+		}
+		err := createNewConfig(target)
+		if err != nil {
+			fmt.Printf("Error creating config file: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Successfully created configuration file: %s\n", target)
+		os.Exit(0)
+	}
+
+	// Resolve the target TOML file for editing
+	resolvedPath := editPath
+	if resolvedPath == "" {
+		resolvedPath = resolveConfigPath()
+	} else {
+		if abs, err := filepath.Abs(resolvedPath); err == nil {
+			resolvedPath = abs
+		}
+	}
+
+	// Ensure the parent directory exists
+	if err := os.MkdirAll(filepath.Dir(resolvedPath), 0755); err != nil {
+		log.Fatalf("Error ensuring parent directory: %v", err)
+	}
+
+	// Launch local web server
+	mux := http.NewServeMux()
+
+	// API Endpoint: Save Section
+	mux.HandleFunc("/api/save", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			sendJSONError(w, "Failed to parse form: "+err.Error())
+			return
+		}
+
+		var currentCfg Config
+		if data, err := os.ReadFile(resolvedPath); err == nil {
+			_ = toml.Unmarshal(data, &currentCfg)
+		} else {
+			currentCfg = NewDefaultConfig()
+		}
+
+		for k, vs := range r.Form {
+			if strings.HasPrefix(k, "field_") && len(vs) > 0 {
+				parts := strings.SplitN(k, "_", 3)
+				if len(parts) == 3 {
+					section := parts[1]
+					key := parts[2]
+					strVal := vs[0]
+					updateField(&currentCfg, section, key, strVal)
+				}
+			}
+		}
+
+		// Backup existing configuration before saving
+		if err := backupConfigFile(resolvedPath); err != nil {
+			sendJSONError(w, "Failed to backup config: "+err.Error())
+			return
+		}
+
+		data, err := toml.Marshal(currentCfg)
+		if err != nil {
+			sendJSONError(w, "Failed to marshal TOML: "+err.Error())
+			return
+		}
+
+		if err := os.WriteFile(resolvedPath, data, 0644); err != nil {
+			sendJSONError(w, "Failed to write file: "+err.Error())
+			return
+		}
+
+		sendJSONOK(w)
+	})
+
+	// API Endpoint: Recreate configuration file
+	mux.HandleFunc("/api/recreate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Backup existing configuration before recreating
+		if err := backupConfigFile(resolvedPath); err != nil {
+			sendJSONError(w, "Failed to backup config: "+err.Error())
+			return
+		}
+
+		defaultCfg := NewDefaultConfig()
+		data, err := toml.Marshal(defaultCfg)
+		if err != nil {
+			sendJSONError(w, "Failed to marshal TOML: "+err.Error())
+			return
+		}
+
+		if err := os.WriteFile(resolvedPath, data, 0644); err != nil {
+			sendJSONError(w, "Failed to write file: "+err.Error())
+			return
+		}
+
+		sendJSONOK(w)
+	})
+
+	// Root Handler: serves the static files and templated dashboard UI
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			filePath := strings.TrimPrefix(r.URL.Path, "/")
+			data, err := wwwInterfaceFS.ReadFile(filepath.Join("www-interface", filePath))
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			contentType := "text/plain"
+			if strings.HasSuffix(filePath, ".html") {
+				contentType = "text/html; charset=utf-8"
+			} else if strings.HasSuffix(filePath, ".css") {
+				contentType = "text/css; charset=utf-8"
+			} else if strings.HasSuffix(filePath, ".js") {
+				contentType = "application/javascript; charset=utf-8"
+			}
+			w.Header().Set("Content-Type", contentType)
+			w.Write(data)
+			return
+		}
+
+		sectionName := r.URL.Query().Get("section")
+		if sectionName == "" {
+			sectionName = "global"
+		}
+
+		var currentCfg Config
+		if data, err := os.ReadFile(resolvedPath); err == nil {
+			_ = toml.Unmarshal(data, &currentCfg)
+		} else {
+			currentCfg = NewDefaultConfig()
+		}
+
+		defaultCfg := NewDefaultConfig()
+		sections := getSections(currentCfg, defaultCfg)
+
+		var activeSection Section
+		found := false
+		for _, sec := range sections {
+			if strings.EqualFold(sec.Name, sectionName) {
+				activeSection = sec
+				found = true
+				break
+			}
+		}
+		if !found && len(sections) > 0 {
+			activeSection = sections[0]
+		}
+
+		tmplData, err := wwwInterfaceFS.ReadFile("www-interface/index.html")
+		if err != nil {
+			http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		tmpl, err := template.New("index.html").Funcs(template.FuncMap{
+			"FormatVal": func(val any) string {
+				if slice, ok := val.([]string); ok {
+					return strings.Join(slice, ", ")
+				}
+				return fmt.Sprintf("%v", val)
+			},
+			"FormatSlice": func(val any) string {
+				if slice, ok := val.([]string); ok {
+					return strings.Join(slice, ", ")
+				}
+				return ""
+			},
+		}).Parse(string(tmplData))
+		if err != nil {
+			http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		pageData := PageData{
+			Sections:      sections,
+			ActiveSection: activeSection,
+			ResolvedPath:  resolvedPath,
+		}
+
+		if err := tmpl.Execute(w, pageData); err != nil {
+			log.Printf("Template execution error: %v", err)
+		}
+	})
+
+	// Format console startup title and port output to match server/main.go
+	fmt.Printf("\033[H\033[2J\033[1mG3pix ❖ AxonASP Server %s \033[0m\n", Version)
+	fmt.Printf("Configuration manager started on: %s\n", "8088")
+	fmt.Print("\033]0;G3pix ❖ AxonASP Configuration Manager\007\033]11;#0d7423\007\033[1;37m")
+
+	// Trigger async cross-platform browser launch
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		_ = openBrowser("http://localhost:8088")
+	}()
+
+	listener, err := net.Listen("tcp", ":8088")
+	if err != nil {
+		log.Fatalf("Error listening on port 8088: %v", err)
+	}
+
+	if err := http.Serve(listener, mux); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("Error serving AxonASP Configuration Manager server: %v", err)
+	}
+}

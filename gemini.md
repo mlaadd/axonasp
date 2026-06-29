@@ -70,7 +70,7 @@ All work occurs within the `axonasp2` directory structure:
 
 ### 2. State & Configuration
 * **State Management:** Sessions are stored in `temp/session` (Cookie: `ASPSESSIONID`) using a binary format. Application state is stored in memory.
-* **Configuration:** Use `viper` for config files (`./config/axonasp.toml`) and enable `.env` support. If you add a new configuration, add it to the documentation and provide a default value in `config/axonasp.toml`, following the file conventions and explanation. Always use the axonconfig/loader.go to load the viper configuration and never create a new viper instance or load the configuration in a different way.
+* **Configuration:** Use `viper` for config files (`./config/axonasp.toml`) and enable `.env` support. Always use `axonconfig/loader.go` to load the viper configuration and never create a new viper instance or load the configuration in a different way. If a new configuration key or section is created, you must provide a default value in `config/axonasp.toml` and also add it, along with its description, to `admin/main.go`. The `admin/main.go` file contains the TOML definitions and uses the `github.com/pelletier/go-toml/v2` library to read and generate the `axonasp.toml` file. You must always include the `comment` struct tag in these definitions to ensure the configuration information and explanations are properly documented in the programmatically generated file.
 
 ### 3. Error Handling
 * **VBScript/ASP Errors:** MUST use and return errors from `/vbscript/vberrorcodes.go`. Maintain Microsoft standard numbering and messages. Implement line, column, and filename tracking.

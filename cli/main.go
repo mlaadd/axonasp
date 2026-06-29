@@ -916,7 +916,7 @@ func printHelp() {
  ABOUT:
   G3pix ❖ AxonASP
   is a high-performance, cross-platform Classic ASP engine,
-  with support to VBScript and JScript for Web, FastCGI, and CLI, 
+  with support to VBScript and JavaScript for Web, FastCGI, and CLI, 
   bridging legacy compatibility with modern APIs.
   
   Copyright (C) 2026 G3pix Ltda. All rights reserved.

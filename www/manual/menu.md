@@ -27,6 +27,7 @@
     * [AxonASP Error Code Reference](md/runtime/axonasp-error-codes.md)
 * Configuration
     * [axonasp.toml](md/config/axonasp-toml.md)
+    * [axonadmin Config Tool](md/config/axonadmin.md)
 * AxonLive
     * [Ecosystem Overview](md/axonlive/index.md)
     * [Basic Page Creation](md/axonlive/getting_started.md)

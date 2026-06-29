@@ -114,16 +114,16 @@ cd "$SCRIPT_DIR" || exit 1
 # Clean previous builds
 if [ "$CLEAN" -eq 1 ]; then
     write_info "Cleaning previous builds..."
-    rm -f axonasp-http.exe axonasp-fastcgi.exe axonasp-cli.exe axonasp-testsuite.exe axonasp-mcp.exe axonasp-service.exe axonasp-http axonasp-fastcgi axonasp-cli axonasp-testsuite axonasp-mcp axonasp-service
+    rm -f axonasp-http.exe axonasp-fastcgi.exe axonasp-cli.exe axonasp-testsuite.exe axonasp-mcp.exe axonasp-service.exe axonasp-admin.exe axonasp-http axonasp-fastcgi axonasp-cli axonasp-testsuite axonasp-mcp axonasp-service axonasp-admin
     rm -rf build
     write_success "Cleaned."
     echo ""
 fi
 
 # Targets
-TARGET_LABELS=("HTTP Server" "FastCGI Server" "CLI" "Test Suite" "MCP" "Service Wrapper")
-TARGET_OUTPUTS=("axonasp-http" "axonasp-fastcgi" "axonasp-cli" "axonasp-testsuite" "axonasp-mcp" "axonasp-service")
-TARGET_SOURCES=("./server" "./fastcgi" "./cli" "./testsuite" "./mcp" "./service")
+TARGET_LABELS=("HTTP Server" "FastCGI Server" "CLI" "Test Suite" "MCP" "Service Wrapper" "Admin Tool")
+TARGET_OUTPUTS=("axonasp-http" "axonasp-fastcgi" "axonasp-cli" "axonasp-testsuite" "axonasp-mcp" "axonasp-service" "axonasp-admin")
+TARGET_SOURCES=("./server" "./fastcgi" "./cli" "./testsuite" "./mcp" "./service" "./admin")
 
 BUILD_SUCCESS=true
 
@@ -260,7 +260,7 @@ if [ "$BUILD_SUCCESS" = true ]; then
     echo -e " ${WHITE} Executables:${NC}"
 
     # List root executables
-    for file in axonasp-http axonasp-fastcgi axonasp-cli axonasp-testsuite axonasp-mcp axonasp-service; do
+    for file in axonasp-http axonasp-fastcgi axonasp-cli axonasp-testsuite axonasp-mcp axonasp-service axonasp-admin; do
         if [ -f "$file" ]; then echo -e "    - ${CYAN}$file${NC}"; fi
     done
 
@@ -279,6 +279,7 @@ if [ "$BUILD_SUCCESS" = true ]; then
     echo -e "    ${DARKGRAY}Test Suite  : ./axonasp-testsuite ./www/tests${NC}"
     echo -e "    ${DARKGRAY}MCP         : ./axonasp-mcp${NC}"
     echo -e "    ${DARKGRAY}Service     : ./axonasp-service install|start|stop|uninstall${NC}"
+    echo -e "    ${DARKGRAY}Admin Tool  : ./axonasp-admin${NC}"
     
     echo -e "${MAGENTA}=======================================================${NC}"
     echo ""

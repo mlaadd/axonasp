@@ -44,20 +44,22 @@ COPY . .
 RUN if [ -z "$VERSION" ]; then \
     PATCH=$(git rev-list --count HEAD 2>/dev/null || echo "0"); \
     REVISION=$(git rev-parse --short HEAD 2>/dev/null || echo "0"); \
-    VERSION="2.0.${PATCH}.${REVISION}"; \
+    VERSION="2.2.${PATCH}.${REVISION}"; \
     fi && \
     echo "Building with version: ${VERSION}" && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o axonasp-http ./server && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o axonasp-fastcgi ./fastcgi && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o axonasp-cli ./cli && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o axonasp-mcp ./mcp && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o axonasp-admin ./admin && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o axonasp-testsuite ./testsuite
+
 
 # ─── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM alpine:3.21
 
 LABEL org.opencontainers.image.title="AxonASP Server"
-LABEL org.opencontainers.image.description="AxonASP Server - ASP Classic web server with Proxy, FastCGI, CLI, TestSuite and MCP support. VBScript and Javascript support. Small, fast and secure alternative to IIS for hosting ASP applications on modern platforms."
+LABEL org.opencontainers.image.description="AxonASP Server - ASP Classic web server with Proxy, FastCGI, CLI, TestSuite and MCP support. VBScript and JavaScript support. Small, fast and secure alternative to IIS for hosting ASP applications on modern platforms."
 LABEL org.opencontainers.image.url="https://g3pix.com.br/axonasp"
 LABEL org.opencontainers.image.source="https://github.com/guimaraeslucas/axonasp"
 LABEL org.opencontainers.image.licenses="MPL-2.0"
@@ -75,6 +77,8 @@ COPY --from=builder /build/axonasp-fastcgi ./axonasp-fastcgi
 COPY --from=builder /build/axonasp-cli ./axonasp-cli
 COPY --from=builder /build/axonasp-mcp ./axonasp-mcp
 COPY --from=builder /build/axonasp-testsuite ./axonasp-testsuite
+COPY --from=builder /build/axonasp-admin ./axonasp-admin
+
 
 COPY --from=builder /build/config/ ./config/
 COPY --from=builder /build/mcp/ ./mcp/
