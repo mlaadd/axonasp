@@ -53,7 +53,8 @@ $Revision = "0"
 
 try {
     # Procura uma tag APENAS se ela estiver exatamente no commit atual (HEAD)
-    $GitTag = git describe --tags --exact-match HEAD 2>$null
+    
+    $GitTag = git describe --tags --abbrev=0 2>$null
     
     # Se encontrou a tag no commit atual e ela segue o padrão
     if ($LASTEXITCODE -eq 0 -and $GitTag -match '^v?(\d+)\.(\d+)\.(\d+)$') {

@@ -62,7 +62,7 @@ PATCH="0"
 REVISION="0"
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    GIT_TAG=$(git describe --tags --exact-match HEAD 2>/dev/null)
+    GIT_TAG=$(git describe --tags --abbrev=0 2>/dev/null)
     
     REGEX="^v?([0-9]+)\.([0-9]+)\.([0-9]+)$"
     
