@@ -47,6 +47,7 @@ import (
 	"g3pix.com.br/axonasp/jscript/ftoa"
 	"g3pix.com.br/axonasp/vbscript"
 	"github.com/dlclark/regexp2"
+	"github.com/goodsign/monday"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -5110,6 +5111,9 @@ func (vm *VM) jsMemberGet(target Value, member string) (Value, bool) {
 		}
 		return Value{Type: VTJSUndefined}, false
 	case VTDate:
+		if isDateMethodName(member) {
+			return vm.jsCreateIntrinsicFunction(member, "DatePrototype"), false
+		}
 		proto := vm.jsGetIntrinsicPrototype("Date")
 		if proto.Type == VTJSObject {
 			desc, hasDesc := vm.jsResolveObjectMember(proto.Num, member, make(map[int64]struct{}, 4))
@@ -5128,6 +5132,11 @@ func (vm *VM) jsMemberGet(target Value, member string) (Value, bool) {
 		}
 		return Value{Type: VTJSUndefined}, false
 	case VTJSObject:
+		if vm.jsObjectStringProperty(target, "__js_type") == "Date" {
+			if isDateMethodName(member) {
+				return vm.jsCreateIntrinsicFunction(member, "DatePrototype"), false
+			}
+		}
 		// Handle global/globalThis object - access properties from root environment bindings first
 		if target.Num == vm.jsRootEnvID && vm.jsRootEnvID != 0 {
 			if rootEnv, ok := vm.jsEnvItems[vm.jsRootEnvID]; ok {
@@ -6719,57 +6728,8 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			return acc, true
 		}
 	case VTDate:
-		switch {
-		case strings.EqualFold(member, "getFullYear"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			return NewInteger(int64(t.Year())), true
-		case strings.EqualFold(member, "getMonth"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			return NewInteger(int64(int(t.Month()) - 1)), true
-		case strings.EqualFold(member, "getDate"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			return NewInteger(int64(t.Day())), true
-		case strings.EqualFold(member, "getDay"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			return NewInteger(int64(t.Weekday())), true
-		case strings.EqualFold(member, "getHours"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			return NewInteger(int64(t.Hour())), true
-		case strings.EqualFold(member, "getMinutes"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			return NewInteger(int64(t.Minute())), true
-		case strings.EqualFold(member, "getSeconds"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			return NewInteger(int64(t.Second())), true
-		case strings.EqualFold(member, "getMilliseconds"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			return NewInteger(int64(t.Nanosecond() / int(time.Millisecond))), true
-		case strings.EqualFold(member, "getTimezoneOffset"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			_, offsetSeconds := t.Zone()
-			return NewInteger(int64(-(offsetSeconds / 60))), true
-		case strings.EqualFold(member, "getTime"):
-			t := valueToTimeInLocale(vm, target)
-			return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
-		case strings.EqualFold(member, "now"):
-			return NewInteger(time.Now().UnixNano() / int64(time.Millisecond)), true
-		case strings.EqualFold(member, "toString"):
-			t := valueToTimeInLocale(vm, target).In(builtinCurrentLocation(vm))
-			return NewString(t.Format("Mon Jan 02 2006 15:04:05 GMT-0700")), true
-		case strings.EqualFold(member, "toLocaleString"):
-			return NewString(vm.dateToLocalizedString(target)), true
-		case strings.EqualFold(member, "toUTCString"):
-			t := valueToTimeInLocale(vm, target).UTC()
-			return NewString(t.Format(time.RFC1123)), true
-		case strings.EqualFold(member, "toISOString"):
-			t := valueToTimeInLocale(vm, target).UTC()
-			return NewString(t.Format(time.RFC3339)), true
-		case strings.EqualFold(member, "toJSON"):
-			result, _ := vm.jsCallMember(target, "toISOString", nil)
-			return result, true
-		case strings.EqualFold(member, "valueOf"):
-			t := valueToTimeInLocale(vm, target)
-			return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+		if res, ok := vm.jsCallDateMethod(target, member, args); ok {
+			return res, true
 		}
 	case VTJSPromise:
 		switch {
@@ -6781,63 +6741,81 @@ func (vm *VM) jsCallMember(target Value, member string, args []Value) (Value, bo
 			return vm.jsPromiseFinally(target, args), true
 		}
 	case VTJSObject:
-		switch {
-		case strings.EqualFold(member, "hasOwnProperty"):
-			return NewBool(vm.jsObjectHasOwnProperty(target, vm.valueToString(jsArgOrUndefined(args, 0)))), true
-		case strings.EqualFold(member, "propertyIsEnumerable"):
-			return NewBool(vm.jsObjectPropertyIsEnumerable(target, vm.valueToString(jsArgOrUndefined(args, 0)))), true
-		case strings.EqualFold(member, "isPrototypeOf"):
-			return NewBool(vm.jsObjectIsPrototypeOf(target, jsArgOrUndefined(args, 0))), true
-		case strings.EqualFold(member, "toString"):
-			return NewString(vm.jsObjectToStringTag(target)), true
-		case strings.EqualFold(member, "toLocaleString"):
-			return NewString(vm.jsObjectToStringTag(target)), true
-		case strings.EqualFold(member, "valueOf"):
-			return target, true
-		}
 		objType := vm.jsObjectStringProperty(target, "__js_type")
+		isDateInstance := objType == "Date"
 		if objType == "" {
 			objType = vm.jsObjectStringProperty(target, "__js_ctor")
 		}
+		if !isDateInstance {
+			switch {
+			case strings.EqualFold(member, "hasOwnProperty"):
+				return NewBool(vm.jsObjectHasOwnProperty(target, vm.valueToString(jsArgOrUndefined(args, 0)))), true
+			case strings.EqualFold(member, "propertyIsEnumerable"):
+				return NewBool(vm.jsObjectPropertyIsEnumerable(target, vm.valueToString(jsArgOrUndefined(args, 0)))), true
+			case strings.EqualFold(member, "isPrototypeOf"):
+				return NewBool(vm.jsObjectIsPrototypeOf(target, jsArgOrUndefined(args, 0))), true
+			case strings.EqualFold(member, "toString"):
+				return NewString(vm.jsObjectToStringTag(target)), true
+			case strings.EqualFold(member, "toLocaleString"):
+				return NewString(vm.jsObjectToStringTag(target)), true
+			case strings.EqualFold(member, "valueOf"):
+				return target, true
+			}
+		} else {
+			switch {
+			case strings.EqualFold(member, "hasOwnProperty"):
+				return NewBool(vm.jsObjectHasOwnProperty(target, vm.valueToString(jsArgOrUndefined(args, 0)))), true
+			case strings.EqualFold(member, "propertyIsEnumerable"):
+				return NewBool(vm.jsObjectPropertyIsEnumerable(target, vm.valueToString(jsArgOrUndefined(args, 0)))), true
+			case strings.EqualFold(member, "isPrototypeOf"):
+				return NewBool(vm.jsObjectIsPrototypeOf(target, jsArgOrUndefined(args, 0))), true
+			}
+		}
 		switch objType {
 		case "Date":
-			switch {
-			case strings.EqualFold(member, "now"):
-				return NewInteger(time.Now().UnixNano() / int64(time.Millisecond)), true
-			case strings.EqualFold(member, "parse"):
-				if len(args) == 0 {
-					return NewDouble(math.NaN()), true
+			if !isDateInstance {
+				switch {
+				case strings.EqualFold(member, "now"):
+					return NewInteger(time.Now().UnixNano() / int64(time.Millisecond)), true
+				case strings.EqualFold(member, "parse"):
+					if len(args) == 0 {
+						return NewDouble(math.NaN()), true
+					}
+					t := valueToTimeInLocale(vm, args[0])
+					if t.IsZero() {
+						return NewDouble(math.NaN()), true
+					}
+					return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+				case strings.EqualFold(member, "UTC"):
+					year := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+					month := int(vm.jsToNumber(jsArgOrUndefined(args, 1)).Flt)
+					day := 1
+					hour := 0
+					minute := 0
+					second := 0
+					millisecond := 0
+					if len(args) > 2 {
+						day = int(vm.jsToNumber(args[2]).Flt)
+					}
+					if len(args) > 3 {
+						hour = int(vm.jsToNumber(args[3]).Flt)
+					}
+					if len(args) > 4 {
+						minute = int(vm.jsToNumber(args[4]).Flt)
+					}
+					if len(args) > 5 {
+						second = int(vm.jsToNumber(args[5]).Flt)
+					}
+					if len(args) > 6 {
+						millisecond = int(vm.jsToNumber(args[6]).Flt)
+					}
+					t := time.Date(year, time.Month(month+1), day, hour, minute, second, millisecond*int(time.Millisecond), time.UTC)
+					return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
 				}
-				t := valueToTimeInLocale(vm, args[0])
-				if t.IsZero() {
-					return NewDouble(math.NaN()), true
+			} else {
+				if res, ok := vm.jsCallDateMethod(target, member, args); ok {
+					return res, true
 				}
-				return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
-			case strings.EqualFold(member, "UTC"):
-				year := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
-				month := int(vm.jsToNumber(jsArgOrUndefined(args, 1)).Flt)
-				day := 1
-				hour := 0
-				minute := 0
-				second := 0
-				millisecond := 0
-				if len(args) > 2 {
-					day = int(vm.jsToNumber(args[2]).Flt)
-				}
-				if len(args) > 3 {
-					hour = int(vm.jsToNumber(args[3]).Flt)
-				}
-				if len(args) > 4 {
-					minute = int(vm.jsToNumber(args[4]).Flt)
-				}
-				if len(args) > 5 {
-					second = int(vm.jsToNumber(args[5]).Flt)
-				}
-				if len(args) > 6 {
-					millisecond = int(vm.jsToNumber(args[6]).Flt)
-				}
-				t := time.Date(year, time.Month(month+1), day, hour, minute, second, millisecond*int(time.Millisecond), time.UTC)
-				return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
 			}
 		case "Array":
 			switch {
@@ -9648,6 +9626,12 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			return vm.jsIntlRelativeTimeFormatFormatToParts(callee, thisVal, args)
 		case "ObjectPrototype":
 			return vm.jsCallObjectPrototypeMethod(thisVal, vm.jsObjectStringProperty(callee, "name"), args)
+		case "DatePrototype":
+			methodName := vm.jsObjectStringProperty(callee, "name")
+			if res, ok := vm.jsCallDateMethod(thisVal, methodName, args); ok {
+				return res
+			}
+			return Value{Type: VTJSUndefined}
 		case "ArrayPrototypeToString":
 			if thisVal.Type == VTArray {
 				return NewString(vm.jsArrayToString(thisVal))
@@ -10707,48 +10691,51 @@ func (vm *VM) jsConstruct(constructor Value, args []Value, newTarget Value, isSu
 		case "Proxy":
 			return vm.jsCreateProxy(args)
 		case "Date":
+			var t time.Time
 			if len(args) == 0 {
-				return NewDate(time.Now().In(builtinCurrentLocation(vm)))
-			}
-			if len(args) == 1 {
+				t = time.Now().In(builtinCurrentLocation(vm))
+			} else if len(args) == 1 {
 				if args[0].Type == VTString {
 					parsed := valueToTimeInLocale(vm, args[0])
 					if parsed.IsZero() {
-						return NewDate(time.Time{})
+						t = time.Time{}
+					} else {
+						t = parsed
 					}
-					return NewDate(parsed)
+				} else {
+					millis := int64(vm.jsToNumber(args[0]).Flt)
+					t = time.Unix(0, millis*int64(time.Millisecond)).In(builtinCurrentLocation(vm))
 				}
-				millis := int64(vm.jsToNumber(args[0]).Flt)
-				return NewDate(time.Unix(0, millis*int64(time.Millisecond)).In(builtinCurrentLocation(vm)))
+			} else {
+				year := int(vm.jsToNumber(args[0]).Flt)
+				month := 0
+				day := 1
+				hour := 0
+				minute := 0
+				second := 0
+				millisecond := 0
+				if len(args) > 1 {
+					month = int(vm.jsToNumber(args[1]).Flt)
+				}
+				if len(args) > 2 {
+					day = int(vm.jsToNumber(args[2]).Flt)
+				}
+				if len(args) > 3 {
+					hour = int(vm.jsToNumber(args[3]).Flt)
+				}
+				if len(args) > 4 {
+					minute = int(vm.jsToNumber(args[4]).Flt)
+				}
+				if len(args) > 5 {
+					second = int(vm.jsToNumber(args[5]).Flt)
+				}
+				if len(args) > 6 {
+					millisecond = int(vm.jsToNumber(args[6]).Flt)
+				}
+				loc := builtinCurrentLocation(vm)
+				t = time.Date(year, time.Month(month+1), day, hour, minute, second, millisecond*int(time.Millisecond), loc)
 			}
-			year := int(vm.jsToNumber(args[0]).Flt)
-			month := 0
-			day := 1
-			hour := 0
-			minute := 0
-			second := 0
-			millisecond := 0
-			if len(args) > 1 {
-				month = int(vm.jsToNumber(args[1]).Flt)
-			}
-			if len(args) > 2 {
-				day = int(vm.jsToNumber(args[2]).Flt)
-			}
-			if len(args) > 3 {
-				hour = int(vm.jsToNumber(args[3]).Flt)
-			}
-			if len(args) > 4 {
-				minute = int(vm.jsToNumber(args[4]).Flt)
-			}
-			if len(args) > 5 {
-				second = int(vm.jsToNumber(args[5]).Flt)
-			}
-			if len(args) > 6 {
-				millisecond = int(vm.jsToNumber(args[6]).Flt)
-			}
-			loc := builtinCurrentLocation(vm)
-			t := time.Date(year, time.Month(month+1), day, hour, minute, second, millisecond*int(time.Millisecond), loc)
-			return NewDate(t)
+			return vm.jsCreateDateObject(t)
 		case "String":
 			str := ""
 			if len(args) > 0 && args[0].Type != VTJSUndefined {
@@ -11649,4 +11636,399 @@ func (vm *VM) dispatchJSPrimitiveWrapperMethod(thisVal Value, ctorName string, a
 		return prim
 	}
 	return Value{Type: VTJSUndefined}
+}
+
+func (vm *VM) jsCreateDateObject(t time.Time) Value {
+	objID := vm.allocJSID()
+	obj := make(map[string]Value, 4)
+	obj["__js_type"] = NewString("Date")
+	obj["__date_value"] = NewInteger(t.UnixNano())
+	if proto := vm.jsGetIntrinsicPrototype("Date"); proto.Type == VTJSObject {
+		obj["__js_proto"] = proto
+	}
+	vm.jsObjectItems[objID] = obj
+	vm.jsPropertyItems[objID] = make(map[string]jsPropertyDescriptor, 8)
+	return Value{Type: VTJSObject, Num: objID}
+}
+
+func (vm *VM) jsUpdateDateObject(target Value, t time.Time) {
+	if target.Type == VTJSObject {
+		if obj, ok := vm.jsObjectItems[target.Num]; ok {
+			obj["__date_value"] = NewInteger(t.UnixNano())
+		}
+	}
+}
+
+func (vm *VM) jsDateToLocaleDateString(t time.Time) string {
+	profile := builtinLocaleProfileForVM(vm)
+	loc := builtinCurrentLocation(vm)
+	value := t.In(loc)
+	var dateLayout string
+	if strings.HasPrefix(profile.shortDateLayout, "2006") {
+		dateLayout = "2006 January 2"
+	} else if strings.Index(profile.shortDateLayout, "2006") > strings.Index(profile.shortDateLayout, "02") && strings.Index(profile.shortDateLayout, "2006") > strings.Index(profile.shortDateLayout, "2") {
+		firstChar := ""
+		for _, c := range profile.shortDateLayout {
+			if c == '0' || c == '1' || c == '2' {
+				firstChar = string(c)
+				break
+			}
+		}
+		if firstChar == "0" || firstChar == "2" {
+			dateLayout = "2 January 2006"
+		} else {
+			dateLayout = "January 2, 2006"
+		}
+	} else {
+		dateLayout = "2 January 2006"
+	}
+	return monday.Format(value, dateLayout, profile.mondayLocale)
+}
+
+func (vm *VM) jsDateToLocaleTimeString(t time.Time) string {
+	profile := builtinLocaleProfileForVM(vm)
+	loc := builtinCurrentLocation(vm)
+	value := t.In(loc)
+	return monday.Format(value, profile.longTimeLayout, profile.mondayLocale)
+}
+
+func formatJScriptTimezoneOffset(t time.Time) string {
+	_, offsetSeconds := t.Zone()
+	sign := "+"
+	if offsetSeconds < 0 {
+		sign = "-"
+		offsetSeconds = -offsetSeconds
+	}
+	hours := offsetSeconds / 3600
+	minutes := (offsetSeconds % 3600) / 60
+	return fmt.Sprintf("UTC%s%02d%02d", sign, hours, minutes)
+}
+
+func (vm *VM) jsCallDateMethod(target Value, member string, args []Value) (Value, bool) {
+	loc := builtinCurrentLocation(vm)
+	var t time.Time
+	if target.Type == VTDate {
+		if target.Num == vbsCompatZeroDateSentinelNum() {
+			t = time.Time{}
+		} else {
+			t = time.Unix(0, target.Num).In(loc)
+		}
+	} else if target.Type == VTJSObject && vm.jsObjectStringProperty(target, "__js_type") == "Date" {
+		if obj, ok := vm.jsObjectItems[target.Num]; ok {
+			if val, exists := obj["__date_value"]; exists && val.Type == VTInteger {
+				if val.Num == vbsCompatZeroDateSentinelNum() {
+					t = time.Time{}
+				} else {
+					t = time.Unix(0, val.Num).In(loc)
+				}
+			}
+		}
+	} else {
+		return Value{Type: VTJSUndefined}, false
+	}
+
+	if t.IsZero() {
+		switch {
+		case strings.EqualFold(member, "getTime"), strings.EqualFold(member, "valueOf"):
+			return NewDouble(math.NaN()), true
+		case strings.EqualFold(member, "toString"), strings.EqualFold(member, "toTimeString"),
+			strings.EqualFold(member, "toDateString"), strings.EqualFold(member, "toUTCString"),
+			strings.EqualFold(member, "toGMTString"), strings.EqualFold(member, "toISOString"),
+			strings.EqualFold(member, "toJSON"), strings.EqualFold(member, "toLocaleString"),
+			strings.EqualFold(member, "toLocaleDateString"), strings.EqualFold(member, "toLocaleTimeString"):
+			return NewString("NaN"), true
+		default:
+			if strings.HasPrefix(strings.ToLower(member), "get") {
+				return NewDouble(math.NaN()), true
+			}
+		}
+	}
+
+	switch {
+	case strings.EqualFold(member, "getFullYear"):
+		return NewInteger(int64(t.In(loc).Year())), true
+	case strings.EqualFold(member, "getMonth"):
+		return NewInteger(int64(int(t.In(loc).Month()) - 1)), true
+	case strings.EqualFold(member, "getDate"):
+		return NewInteger(int64(t.In(loc).Day())), true
+	case strings.EqualFold(member, "getDay"):
+		return NewInteger(int64(t.In(loc).Weekday())), true
+	case strings.EqualFold(member, "getHours"):
+		return NewInteger(int64(t.In(loc).Hour())), true
+	case strings.EqualFold(member, "getMinutes"):
+		return NewInteger(int64(t.In(loc).Minute())), true
+	case strings.EqualFold(member, "getSeconds"):
+		return NewInteger(int64(t.In(loc).Second())), true
+	case strings.EqualFold(member, "getMilliseconds"):
+		return NewInteger(int64(t.In(loc).Nanosecond() / int(time.Millisecond))), true
+	case strings.EqualFold(member, "getTimezoneOffset"):
+		_, offsetSeconds := t.In(loc).Zone()
+		return NewInteger(int64(-(offsetSeconds / 60))), true
+	case strings.EqualFold(member, "getTime"):
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+	case strings.EqualFold(member, "getYear"):
+		y := t.In(loc).Year()
+		if y >= 1900 && y <= 1999 {
+			return NewInteger(int64(y - 1900)), true
+		}
+		return NewInteger(int64(y)), true
+
+	case strings.EqualFold(member, "getUTCFullYear"):
+		return NewInteger(int64(t.UTC().Year())), true
+	case strings.EqualFold(member, "getUTCMonth"):
+		return NewInteger(int64(int(t.UTC().Month()) - 1)), true
+	case strings.EqualFold(member, "getUTCDate"):
+		return NewInteger(int64(t.UTC().Day())), true
+	case strings.EqualFold(member, "getUTCDay"):
+		return NewInteger(int64(t.UTC().Weekday())), true
+	case strings.EqualFold(member, "getUTCHours"):
+		return NewInteger(int64(t.UTC().Hour())), true
+	case strings.EqualFold(member, "getUTCMinutes"):
+		return NewInteger(int64(t.UTC().Minute())), true
+	case strings.EqualFold(member, "getUTCSeconds"):
+		return NewInteger(int64(t.UTC().Second())), true
+	case strings.EqualFold(member, "getUTCMilliseconds"):
+		return NewInteger(int64(t.UTC().Nanosecond() / int(time.Millisecond))), true
+
+	case strings.EqualFold(member, "setDate"):
+		tIn := t.In(loc)
+		day := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		t = time.Date(tIn.Year(), tIn.Month(), day, tIn.Hour(), tIn.Minute(), tIn.Second(), tIn.Nanosecond(), loc)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setFullYear"):
+		tIn := t.In(loc)
+		year := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		month := tIn.Month()
+		if len(args) > 1 {
+			month = time.Month(int(vm.jsToNumber(args[1]).Flt) + 1)
+		}
+		day := tIn.Day()
+		if len(args) > 2 {
+			day = int(vm.jsToNumber(args[2]).Flt)
+		}
+		t = time.Date(year, month, day, tIn.Hour(), tIn.Minute(), tIn.Second(), tIn.Nanosecond(), loc)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setHours"):
+		tIn := t.In(loc)
+		hour := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		min := tIn.Minute()
+		if len(args) > 1 {
+			min = int(vm.jsToNumber(args[1]).Flt)
+		}
+		sec := tIn.Second()
+		if len(args) > 2 {
+			sec = int(vm.jsToNumber(args[2]).Flt)
+		}
+		ms := tIn.Nanosecond() / int(time.Millisecond)
+		if len(args) > 3 {
+			ms = int(vm.jsToNumber(args[3]).Flt)
+		}
+		t = time.Date(tIn.Year(), tIn.Month(), tIn.Day(), hour, min, sec, ms*int(time.Millisecond), loc)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setMilliseconds"):
+		tIn := t.In(loc)
+		ms := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		t = time.Date(tIn.Year(), tIn.Month(), tIn.Day(), tIn.Hour(), tIn.Minute(), tIn.Second(), ms*int(time.Millisecond), loc)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setMinutes"):
+		tIn := t.In(loc)
+		min := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		sec := tIn.Second()
+		if len(args) > 1 {
+			sec = int(vm.jsToNumber(args[1]).Flt)
+		}
+		ms := tIn.Nanosecond() / int(time.Millisecond)
+		if len(args) > 2 {
+			ms = int(vm.jsToNumber(args[2]).Flt)
+		}
+		t = time.Date(tIn.Year(), tIn.Month(), tIn.Day(), tIn.Hour(), min, sec, ms*int(time.Millisecond), loc)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setMonth"):
+		tIn := t.In(loc)
+		monthVal := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		day := tIn.Day()
+		if len(args) > 1 {
+			day = int(vm.jsToNumber(args[1]).Flt)
+		}
+		t = time.Date(tIn.Year(), time.Month(monthVal+1), day, tIn.Hour(), tIn.Minute(), tIn.Second(), tIn.Nanosecond(), loc)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setSeconds"):
+		tIn := t.In(loc)
+		sec := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		ms := tIn.Nanosecond() / int(time.Millisecond)
+		if len(args) > 1 {
+			ms = int(vm.jsToNumber(args[1]).Flt)
+		}
+		t = time.Date(tIn.Year(), tIn.Month(), tIn.Day(), tIn.Hour(), tIn.Minute(), sec, ms*int(time.Millisecond), loc)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setTime"):
+		millis := int64(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		t = time.Unix(0, millis*int64(time.Millisecond)).In(loc)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setYear"):
+		tIn := t.In(loc)
+		yearVal := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		if yearVal >= 0 && yearVal <= 99 {
+			yearVal += 1900
+		}
+		t = time.Date(yearVal, tIn.Month(), tIn.Day(), tIn.Hour(), tIn.Minute(), tIn.Second(), tIn.Nanosecond(), loc)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setUTCDate"):
+		tUTC := t.UTC()
+		day := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		t = time.Date(tUTC.Year(), tUTC.Month(), day, tUTC.Hour(), tUTC.Minute(), tUTC.Second(), tUTC.Nanosecond(), time.UTC)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setUTCFullYear"):
+		tUTC := t.UTC()
+		year := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		month := tUTC.Month()
+		if len(args) > 1 {
+			month = time.Month(int(vm.jsToNumber(args[1]).Flt) + 1)
+		}
+		day := tUTC.Day()
+		if len(args) > 2 {
+			day = int(vm.jsToNumber(args[2]).Flt)
+		}
+		t = time.Date(year, month, day, tUTC.Hour(), tUTC.Minute(), tUTC.Second(), tUTC.Nanosecond(), time.UTC)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setUTCHours"):
+		tUTC := t.UTC()
+		hour := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		min := tUTC.Minute()
+		if len(args) > 1 {
+			min = int(vm.jsToNumber(args[1]).Flt)
+		}
+		sec := tUTC.Second()
+		if len(args) > 2 {
+			sec = int(vm.jsToNumber(args[2]).Flt)
+		}
+		ms := tUTC.Nanosecond() / int(time.Millisecond)
+		if len(args) > 3 {
+			ms = int(vm.jsToNumber(args[3]).Flt)
+		}
+		t = time.Date(tUTC.Year(), tUTC.Month(), tUTC.Day(), hour, min, sec, ms*int(time.Millisecond), time.UTC)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setUTCMilliseconds"):
+		tUTC := t.UTC()
+		ms := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		t = time.Date(tUTC.Year(), tUTC.Month(), tUTC.Day(), tUTC.Hour(), tUTC.Minute(), tUTC.Second(), ms*int(time.Millisecond), time.UTC)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setUTCMinutes"):
+		tUTC := t.UTC()
+		min := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		sec := tUTC.Second()
+		if len(args) > 1 {
+			sec = int(vm.jsToNumber(args[1]).Flt)
+		}
+		ms := tUTC.Nanosecond() / int(time.Millisecond)
+		if len(args) > 2 {
+			ms = int(vm.jsToNumber(args[2]).Flt)
+		}
+		t = time.Date(tUTC.Year(), tUTC.Month(), tUTC.Day(), tUTC.Hour(), min, sec, ms*int(time.Millisecond), time.UTC)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setUTCMonth"):
+		tUTC := t.UTC()
+		monthVal := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		day := tUTC.Day()
+		if len(args) > 1 {
+			day = int(vm.jsToNumber(args[1]).Flt)
+		}
+		t = time.Date(tUTC.Year(), time.Month(monthVal+1), day, tUTC.Hour(), tUTC.Minute(), tUTC.Second(), tUTC.Nanosecond(), time.UTC)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "setUTCSeconds"):
+		tUTC := t.UTC()
+		sec := int(vm.jsToNumber(jsArgOrUndefined(args, 0)).Flt)
+		ms := tUTC.Nanosecond() / int(time.Millisecond)
+		if len(args) > 1 {
+			ms = int(vm.jsToNumber(args[1]).Flt)
+		}
+		t = time.Date(tUTC.Year(), tUTC.Month(), tUTC.Day(), tUTC.Hour(), tUTC.Minute(), sec, ms*int(time.Millisecond), time.UTC)
+		vm.jsUpdateDateObject(target, t)
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+
+	case strings.EqualFold(member, "toString"):
+		tIn := t.In(loc)
+		res := fmt.Sprintf("%s %s %02d %02d:%02d:%02d %s %d",
+			tIn.Weekday().String()[:3], tIn.Month().String()[:3], tIn.Day(),
+			tIn.Hour(), tIn.Minute(), tIn.Second(),
+			formatJScriptTimezoneOffset(tIn), tIn.Year())
+		return NewString(res), true
+
+	case strings.EqualFold(member, "toTimeString"):
+		tIn := t.In(loc)
+		res := fmt.Sprintf("%02d:%02d:%02d %s", tIn.Hour(), tIn.Minute(), tIn.Second(), formatJScriptTimezoneOffset(tIn))
+		return NewString(res), true
+
+	case strings.EqualFold(member, "toDateString"):
+		tIn := t.In(loc)
+		res := fmt.Sprintf("%s %s %02d %d", tIn.Weekday().String()[:3], tIn.Month().String()[:3], tIn.Day(), tIn.Year())
+		return NewString(res), true
+
+	case strings.EqualFold(member, "toUTCString"), strings.EqualFold(member, "toGMTString"):
+		tUTC := t.UTC()
+		res := fmt.Sprintf("%s, %02d %s %d %02d:%02d:%02d UTC",
+			tUTC.Weekday().String()[:3], tUTC.Day(), tUTC.Month().String()[:3], tUTC.Year(),
+			tUTC.Hour(), tUTC.Minute(), tUTC.Second())
+		return NewString(res), true
+
+	case strings.EqualFold(member, "toISOString"):
+		return NewString(t.UTC().Format(time.RFC3339)), true
+
+	case strings.EqualFold(member, "toJSON"):
+		return NewString(t.UTC().Format(time.RFC3339)), true
+
+	case strings.EqualFold(member, "toLocaleString"):
+		dateStr := vm.jsDateToLocaleDateString(t)
+		timeStr := vm.jsDateToLocaleTimeString(t)
+		return NewString(dateStr + " " + timeStr), true
+
+	case strings.EqualFold(member, "toLocaleDateString"):
+		return NewString(vm.jsDateToLocaleDateString(t)), true
+
+	case strings.EqualFold(member, "toLocaleTimeString"):
+		return NewString(vm.jsDateToLocaleTimeString(t)), true
+
+	case strings.EqualFold(member, "valueOf"):
+		return NewInteger(t.UnixNano() / int64(time.Millisecond)), true
+	}
+
+	return Value{Type: VTJSUndefined}, false
+}
+
+func isDateMethodName(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "get") ||
+		strings.HasPrefix(lower, "set") ||
+		strings.HasPrefix(lower, "to") ||
+		lower == "valueof"
 }

@@ -333,10 +333,21 @@ func localizedCurrencyString(value float64, digits int, profile builtinLocalePro
 
 // parseLocalizedTimeValue parses text using locale-priority date layouts and localized month/day names.
 func parseLocalizedTimeValue(text string, location *time.Location, profile builtinLocaleProfile) time.Time {
-	if strings.TrimSpace(text) == "" {
+	text = strings.TrimSpace(text)
+	if text == "" {
 		return time.Time{}
 	}
+	text = rewriteJScriptTimezones(text)
 	layouts := []string{
+		"Mon Jan 02 15:04:05 -0700 2006",
+		"Mon Jan 02 15:04:05 MST 2006",
+		"Mon Jan 02 15:04:05 2006",
+		"Mon Jan 02 2006 15:04:05 -0700",
+		"Mon Jan 02 2006 15:04:05 MST",
+		"Mon Jan 02 2006 15:04:05",
+		"Mon, 02 Jan 2006 15:04:05 -0700",
+		"Mon, 02 Jan 2006 15:04:05 MST",
+		"Mon, 02 Jan 2006 15:04:05",
 		"2006-01-02 15:04:05",
 		"2006-01-02 15:04",
 		"2006-01-02",
@@ -373,4 +384,71 @@ func parseLocalizedTimeValue(text string, location *time.Location, profile built
 		}
 	}
 	return time.Time{}
+}
+
+func rewriteJScriptTimezones(text string) string {
+	var sb strings.Builder
+	sb.Grow(len(text))
+	i := 0
+	for i < len(text) {
+		if i <= len(text)-3 && (text[i:i+3] == "UTC" || text[i:i+3] == "GMT") {
+			prefix := text[i : i+3]
+			j := i + 3
+			if j < len(text) && (text[j] == '+' || text[j] == '-') {
+				sign := text[j]
+				j++
+				startOffset := j
+				hasColon := false
+				for j < len(text) {
+					c := text[j]
+					if c >= '0' && c <= '9' {
+						j++
+					} else if c == ':' && !hasColon {
+						hasColon = true
+						j++
+					} else {
+						break
+					}
+				}
+				if j > startOffset {
+					offsetPart := text[startOffset:j]
+					var hours, minutes int
+					if hasColon {
+						parts := strings.Split(offsetPart, ":")
+						if len(parts) == 2 {
+							hours, _ = strconv.Atoi(parts[0])
+							minutes, _ = strconv.Atoi(parts[1])
+						}
+					} else if len(offsetPart) == 4 {
+						hours, _ = strconv.Atoi(offsetPart[0:2])
+						minutes, _ = strconv.Atoi(offsetPart[2:4])
+					} else if len(offsetPart) == 3 {
+						hours, _ = strconv.Atoi(offsetPart[0:1])
+						minutes, _ = strconv.Atoi(offsetPart[1:3])
+					} else {
+						hours, _ = strconv.Atoi(offsetPart)
+					}
+					sb.WriteString(formatOffset(sign, hours, minutes))
+					i = j
+					continue
+				}
+			}
+			sb.WriteString(prefix)
+			i += 3
+		} else {
+			sb.WriteByte(text[i])
+			i++
+		}
+	}
+	return sb.String()
+}
+
+func formatOffset(sign byte, hours, minutes int) string {
+	res := make([]byte, 5)
+	res[0] = sign
+	res[1] = '0' + byte(hours/10)
+	res[2] = '0' + byte(hours%10)
+	res[3] = '0' + byte(minutes/10)
+	res[4] = '0' + byte(minutes%10)
+	return string(res)
 }

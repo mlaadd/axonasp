@@ -92,9 +92,6 @@ const (
 var sessionStorageDir = filepath.Join("temp", "session")
 
 var (
-	defaultSessionLCIDOnce   sync.Once
-	cachedDefaultSessionLCID = defaultSessionLCID
-
 	sessionRegistryMu sync.RWMutex
 	sessionRegistry   = make(map[string]*Session)
 
@@ -112,12 +109,10 @@ var sessionBufferPool = sync.Pool{
 
 // resolveDefaultSessionLCID reads the configured default LCID with safe fallbacks.
 func resolveDefaultSessionLCID() int {
-	defaultSessionLCIDOnce.Do(func() {
-		if configuredLCID := axonconfig.NewViper().GetInt("global.default_mslcid"); configuredLCID > 0 {
-			cachedDefaultSessionLCID = configuredLCID
-		}
-	})
-	return cachedDefaultSessionLCID
+	if configuredLCID := axonconfig.NewViper().GetInt("global.default_mslcid"); configuredLCID > 0 {
+		return configuredLCID
+	}
+	return defaultSessionLCID
 }
 
 // NewSession creates a new Session object with defaults.

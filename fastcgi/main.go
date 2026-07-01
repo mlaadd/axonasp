@@ -321,6 +321,7 @@ func applyRuntimeSettings() {
 	}
 	serverLocation = location
 	time.Local = location
+	axonvm.ReloadBuiltinDefaults()
 }
 
 // normalizeExtensions normalizes file extensions to lowercase ".ext" values.

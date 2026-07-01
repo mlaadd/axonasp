@@ -21,6 +21,7 @@
 package axonvm
 
 import (
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata"
@@ -33,5 +34,63 @@ func ResolveTimezoneLocation(name string) (*time.Location, error) {
 	if tz == "" {
 		return time.UTC, nil
 	}
+	if loc, ok := parseFixedZone(tz); ok {
+		return loc, nil
+	}
 	return time.LoadLocation(tz)
+}
+
+func parseFixedZone(tz string) (*time.Location, bool) {
+	var prefix string
+	if strings.HasPrefix(tz, "UTC") {
+		prefix = "UTC"
+	} else if strings.HasPrefix(tz, "GMT") {
+		prefix = "GMT"
+	} else {
+		return nil, false
+	}
+
+	offsetStr := strings.TrimSpace(tz[len(prefix):])
+	if offsetStr == "" {
+		return time.UTC, true
+	}
+
+	sign := 1
+	if offsetStr[0] == '+' {
+		sign = 1
+		offsetStr = offsetStr[1:]
+	} else if offsetStr[0] == '-' {
+		sign = -1
+		offsetStr = offsetStr[1:]
+	} else {
+		return nil, false
+	}
+
+	var hours, minutes int
+	var err error
+	if strings.Contains(offsetStr, ":") {
+		parts := strings.Split(offsetStr, ":")
+		if len(parts) == 2 {
+			hours, err = strconv.Atoi(parts[0])
+			if err == nil {
+				minutes, err = strconv.Atoi(parts[1])
+			}
+		} else {
+			return nil, false
+		}
+	} else if len(offsetStr) == 4 {
+		hours, err = strconv.Atoi(offsetStr[0:2])
+		if err == nil {
+			minutes, err = strconv.Atoi(offsetStr[2:4])
+		}
+	} else {
+		hours, err = strconv.Atoi(offsetStr)
+	}
+
+	if err != nil {
+		return nil, false
+	}
+
+	totalSeconds := sign * (hours*3600 + minutes*60)
+	return time.FixedZone(tz, totalSeconds), true
 }

@@ -45,8 +45,11 @@ type builtinDefaults struct {
 	location *time.Location
 }
 
-var builtinDefaultsOnce sync.Once
-var cachedBuiltinDefaults builtinDefaults
+var (
+	cachedBuiltinDefaults      builtinDefaults
+	cachedBuiltinDefaultsLock  sync.RWMutex
+	builtinDefaultsInitialized bool
+)
 
 // vbsCompatZeroDateSentinelNum returns the internal VTDate payload used when code
 // constructs NewDate(time.Time{}). This sentinel must not be treated as a valid
@@ -68,24 +71,40 @@ func vbsCompatCoerceSerialInt(vm *VM, v Value) (int, bool) {
 
 // loadBuiltinDefaults reads locale-related fallback values from config/axonasp.toml.
 func loadBuiltinDefaults() builtinDefaults {
-	builtinDefaultsOnce.Do(func() {
-		cfg := builtinDefaults{mslcid: int(EnglishUS), timezone: "UTC", charset: "UTF-8", location: time.UTC}
-		v := axonconfig.NewViper()
-		if m := v.GetInt("global.default_mslcid"); m > 0 {
-			cfg.mslcid = m
-		}
-		if tz := strings.TrimSpace(v.GetString("global.default_timezone")); tz != "" {
-			cfg.timezone = tz
-		}
-		if cs := strings.TrimSpace(v.GetString("global.default_charset")); cs != "" {
-			cfg.charset = cs
-		}
-		if loc, err := ResolveTimezoneLocation(cfg.timezone); err == nil {
-			cfg.location = loc
-		}
-		cachedBuiltinDefaults = cfg
-	})
-	return cachedBuiltinDefaults
+	cachedBuiltinDefaultsLock.RLock()
+	initialized := builtinDefaultsInitialized
+	defaults := cachedBuiltinDefaults
+	cachedBuiltinDefaultsLock.RUnlock()
+
+	if initialized {
+		return defaults
+	}
+
+	return ReloadBuiltinDefaults()
+}
+
+// ReloadBuiltinDefaults reloads the cached defaults from the active configuration.
+func ReloadBuiltinDefaults() builtinDefaults {
+	cachedBuiltinDefaultsLock.Lock()
+	defer cachedBuiltinDefaultsLock.Unlock()
+
+	cfg := builtinDefaults{mslcid: int(EnglishUS), timezone: "UTC", charset: "UTF-8", location: time.UTC}
+	v := axonconfig.NewViper()
+	if m := v.GetInt("global.default_mslcid"); m > 0 {
+		cfg.mslcid = m
+	}
+	if tz := strings.TrimSpace(v.GetString("global.default_timezone")); tz != "" {
+		cfg.timezone = tz
+	}
+	if cs := strings.TrimSpace(v.GetString("global.default_charset")); cs != "" {
+		cfg.charset = cs
+	}
+	if loc, err := ResolveTimezoneLocation(cfg.timezone); err == nil {
+		cfg.location = loc
+	}
+	cachedBuiltinDefaults = cfg
+	builtinDefaultsInitialized = true
+	return cfg
 }
 
 // builtinCurrentLCID resolves the effective LCID from session state or config fallback.
@@ -719,11 +738,22 @@ func resolveCallable(vm *VM, v Value) Value {
 
 // valueToTimeInLocale converts a value to time.Time using locale-aware parsing rules.
 func valueToTimeInLocale(vm *VM, v Value) time.Time {
+	loc := builtinCurrentLocation(vm)
 	if v.Type == VTDate {
 		if v.Num == vbsCompatZeroDateSentinelNum() {
 			return time.Time{}
 		}
-		return time.Unix(0, v.Num)
+		return time.Unix(0, v.Num).In(loc)
+	}
+	if v.Type == VTJSObject && vm.jsObjectStringProperty(v, "__js_type") == "Date" {
+		if obj, ok := vm.jsObjectItems[v.Num]; ok {
+			if val, exists := obj["__date_value"]; exists && val.Type == VTInteger {
+				if val.Num == vbsCompatZeroDateSentinelNum() {
+					return time.Time{}
+				}
+				return time.Unix(0, val.Num).In(loc)
+			}
+		}
 	}
 	text := strings.TrimSpace(v.String())
 	if text == "" {

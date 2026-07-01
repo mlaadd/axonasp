@@ -252,6 +252,7 @@ func applyRuntimeSettings() {
 		location = time.UTC
 	}
 	time.Local = location
+	axonvm.ReloadBuiltinDefaults()
 }
 
 // loadGlobalASA primes application and session static objects before the test suite starts.
