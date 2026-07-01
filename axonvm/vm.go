@@ -1149,7 +1149,7 @@ func opcodeOperandSize(op OpCode, bytecode []byte, ip int) int {
 			return 9
 		case ExtOpFilePrint, ExtOpFileWrite:
 			return 3
-		case ExtOpFileOpen, ExtOpFileClose, ExtOpFileLineInput, ExtOpFilePut, ExtOpFileGet, ExtOpFileFreeFile, ExtOpAxonASP:
+		case ExtOpFileOpen, ExtOpFileClose, ExtOpFileLineInput, ExtOpFilePut, ExtOpFileGet, ExtOpFileFreeFile, ExtOpAxonASP, ExtOpJSReThrow:
 			return 1
 		case ExtOpJSMathSin, ExtOpJSMathCos, ExtOpJSMathTan, ExtOpJSMathAbs, ExtOpJSMathFloor, ExtOpJSMathCeil, ExtOpJSMathRound, ExtOpJSMathSqrt, ExtOpJSMathMin, ExtOpJSMathMax:
 			return 1
@@ -1223,7 +1223,8 @@ func remapExecuteGlobalBytecode(bytecode []byte, constBase int, bytecodeBase int
 			case ExtOpInitRecord, ExtOpGetRecordMember, ExtOpSetRecordMember:
 				ip += 2
 			case ExtOpAxonASP, ExtOpJSMathSin, ExtOpJSMathCos, ExtOpJSMathTan, ExtOpJSMathAbs, ExtOpJSMathFloor, ExtOpJSMathCeil, ExtOpJSMathRound, ExtOpJSMathSqrt, ExtOpJSMathMin, ExtOpJSMathMax,
-				ExtOpFileOpen, ExtOpFileClose, ExtOpFileLineInput, ExtOpFilePut, ExtOpFileGet, ExtOpFileFreeFile:
+				ExtOpFileOpen, ExtOpFileClose, ExtOpFileLineInput, ExtOpFilePut, ExtOpFileGet, ExtOpFileFreeFile,
+				ExtOpJSReThrow:
 				// No operands to remap or skip
 			case ExtOpFilePrint, ExtOpFileWrite:
 				ip += 2
@@ -3722,6 +3723,14 @@ aspExecLoop:
 			case ExtOpAxonASP:
 				// vm.ip points to next instruction. No operands to skip.
 				vm.push(NewString("G3pix AxonASP VBScript Engine"))
+
+			case ExtOpJSReThrow:
+				// vm.ip points to next instruction. No operands to skip.
+				if len(vm.jsErrStack) > 0 {
+					errVal := vm.jsErrStack[len(vm.jsErrStack)-1]
+					vm.jsErrStack = vm.jsErrStack[:len(vm.jsErrStack)-1]
+					vm.jsThrow(errVal)
+				}
 
 			case ExtOpRegisterClassEvent:
 				classNameIdx := binary.BigEndian.Uint16(vm.bytecode[vm.ip:])

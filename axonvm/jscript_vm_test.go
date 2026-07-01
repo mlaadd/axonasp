@@ -695,6 +695,74 @@ func TestJScriptTryCatchThrow(t *testing.T) {
 	}
 }
 
+func TestJScriptTryFinallyNoCatch(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`try { Response.Write("hi"); } finally { Response.Write("bye"); }` +
+		`</script>`
+	out := runASPSourceForTest(t, source)
+	expected := "hibye"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestJScriptTryFinallyThrows(t *testing.T) {
+	// When an exception is thrown inside try/finally without catch,
+	// the finally block must execute before the exception propagates.
+	source := `<script runat="server" language="JScript">` +
+		`try { throw "err"; } finally { Response.Write("finally"); }` +
+		`</script>`
+	out, err := runASPSourceForTestWithErr(t, source)
+	// Output should contain the finally block text
+	if out != "finally" {
+		t.Fatalf("expected output %q, got %q", "finally", out)
+	}
+	// An error must be returned (the exception propagates after finally)
+	if err == nil {
+		t.Fatal("expected an unhandled exception error after finally")
+	}
+}
+
+func TestJScriptTryCatchFinally(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`try { Response.Write("hi"); } catch (e) { Response.Write("catch"); } finally { Response.Write("bye"); }` +
+		`</script>`
+	out := runASPSourceForTest(t, source)
+	expected := "hibye"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestJScriptTryCatchFinallyThrows(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`try { throw "boom"; } catch (e) { Response.Write("catch"); } finally { Response.Write("finally"); }` +
+		`</script>`
+	out := runASPSourceForTest(t, source)
+	expected := "catchfinally"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+// TestJScriptTryFinallyFullExample reproduces the user's exact bug report scenario.
+func TestJScriptTryFinallyFullExample(t *testing.T) {
+	source := `<script runat="server" language="JScript">` +
+		`Response.Clear();` +
+		`Response.Status = 200;` +
+		`Response.ContentType = "text/plain";` +
+		`Response.CharSet = "utf-8";` +
+		`Response.CacheControl = "max-age=0, no-cache, no-store";` +
+		`try { Response.Write("hi"); }` +
+		`finally { Response.Write("\r\nbye"); }` +
+		`</script>`
+	out := runASPSourceForTest(t, source)
+	expected := "hi\r\nbye"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
 // TestJScriptLegacyLanguageHeaderCompatibility ensures legacy <% @Language = JScript %>
 // does not break server-side JScript output execution.
 func TestJScriptLegacyLanguageHeaderCompatibility(t *testing.T) {

@@ -586,6 +586,12 @@ const (
 	ExtOpFilePut       // [OpExtPrefix, ExtOpFilePut] (num, pos, value on stack)
 	ExtOpFileGet       // [OpExtPrefix, ExtOpFileGet] (num, pos on stack)
 	ExtOpFileFreeFile  // [OpExtPrefix, ExtOpFileFreeFile] (pushes result to stack)
+
+	// ExtOpJSReThrow re-throws a pending exception from jsErrStack after a finally
+	// block has been executed.  If no exception is pending (normal path), it is a
+	// no-op and execution continues at the next instruction.
+	// [OpExtPrefix, ExtOpJSReThrow] (0 operand bytes beyond ext opcode)
+	ExtOpJSReThrow
 )
 
 func (op OpCode) String() string {
@@ -1135,6 +1141,8 @@ func (op ExtOpCode) String() string {
 		return "ExtOpFileGet"
 	case ExtOpFileFreeFile:
 		return "ExtOpFileFreeFile"
+	case ExtOpJSReThrow:
+		return "ExtOpJSReThrow"
 	default:
 		return "ExtOpUnknown"
 	}

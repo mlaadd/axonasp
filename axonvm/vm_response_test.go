@@ -344,3 +344,613 @@ func TestVMResponseBinaryWriteSuppressesFormattingWhitespace(t *testing.T) {
 		t.Fatalf("unexpected binary output with ASP block formatting: %v", output.Bytes())
 	}
 }
+
+// TestVMResponseRedirectBareCall verifies that Response.Redirect terminates script execution
+// even when inside a sub called without call keyword or parens (bare call).
+func TestVMResponseRedirectBareCall(t *testing.T) {
+	sourceBare := `<%
+Response.Write "before"
+RedirectMsg "index", "success"
+Response.Write "after (should NOT appear)"
+
+Sub RedirectMsg(msg, status)
+    Response.Redirect msg & ".asp?status=" & status
+End Sub
+%>`
+
+	compilerBare := NewASPCompiler(sourceBare)
+	if err := compilerBare.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	vmBare := NewVM(compilerBare.Bytecode(), compilerBare.Constants(), compilerBare.GlobalsCount())
+	hostBare := NewMockHost()
+	var outputBare bytes.Buffer
+	hostBare.SetOutput(&outputBare)
+	vmBare.SetHost(hostBare)
+
+	if err := vmBare.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+	hostBare.Response().Flush()
+
+	if outputBare.String() != "" {
+		t.Fatalf("unexpected output: %q (expected empty because Response.Redirect clears the buffer and terminates)", outputBare.String())
+	}
+	// Verify the redirect status was set.
+	if status := hostBare.Response().GetStatus(); status != "302 Found" {
+		t.Fatalf("expected 302 Found status after Response.Redirect, got %q", status)
+	}
+}
+
+// TestVMResponseEndBareSubCall verifies that Response.End inside a bare Sub call (no Call keyword)
+// terminates script execution immediately and no subsequent code runs.
+func TestVMResponseEndBareSubCall(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub Inner()
+    Response.End
+End Sub
+
+Inner
+afterFlag = True
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	// Find the index of afterFlag
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	// If execution continued past the bare call, afterFlag would be True
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: bare Sub call did NOT terminate execution — afterFlag was set to True after Response.End")
+	}
+}
+
+// TestVMResponseRedirectBareSubCallWithOneArg verifies that a bare Sub call with 1 argument
+// correctly propagates ResponseEndSignal.
+func TestVMResponseRedirectBareSubCallWithOneArg(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub Inner(target)
+    Response.Redirect target
+End Sub
+
+Inner "test.asp"
+afterFlag = True
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	// If execution continued past the bare call, afterFlag would be True
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: bare Sub call with 1 arg did NOT terminate execution")
+	}
+
+	// Verify the redirect status was set.
+	if status := host.Response().GetStatus(); status != "302 Found" {
+		t.Fatalf("expected 302 Found status after Response.Redirect, got %q", status)
+	}
+}
+
+// TestVMResponseRedirectBareSubCallWithTwoArgs verifies that a bare Sub call with 2 arguments
+// correctly propagates ResponseEndSignal.
+func TestVMResponseRedirectBareSubCallWithTwoArgs(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub Inner(target, msg)
+    Response.Redirect target & ".asp?status=" & msg
+End Sub
+
+Inner "index", "success"
+afterFlag = True
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	// If execution continued past the bare call, afterFlag would be True
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: bare Sub call with 2 args did NOT terminate execution")
+	}
+
+	// Verify the redirect status was set.
+	if status := host.Response().GetStatus(); status != "302 Found" {
+		t.Fatalf("expected 302 Found status after Response.Redirect, got %q", status)
+	}
+}
+
+// TestVMResponseEndBareFunctionCall verifies that Response.End inside a bare Function call
+// (no Call keyword, no parentheses) terminates script execution immediately.
+func TestVMResponseEndBareFunctionCall(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Function Inner()
+    Response.End
+End Function
+
+Inner
+afterFlag = True
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	// If execution continued past the bare call, afterFlag would be True
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: bare Function call did NOT terminate execution")
+	}
+}
+
+// TestVMResponseEndCallKeyword verifies that Call with parentheses works correctly (for comparison).
+func TestVMResponseEndCallKeyword(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub Inner()
+    Response.End
+End Sub
+
+Call Inner()
+afterFlag = True
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	// Call keyword should always work correctly
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("Call keyword also failed to terminate execution")
+	}
+}
+
+// TestVMResponseEndNestedBareCalls verifies the exact bug report pattern: Outer (bare zero-arg call)
+// calls InnerRedirect (bare call with 2 args) which calls Response.Redirect.
+func TestVMResponseEndNestedBareCalls(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub InnerRedirect(target, msg)
+    Response.Redirect target
+End Sub
+
+Sub Outer()
+    InnerRedirect "target.asp", "success"
+    afterFlag = True
+End Sub
+
+Outer
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	// afterFlag is set inside Outer AFTER the InnerRedirect call.
+	// If ResponseEndSignal propagated correctly, afterFlag should remain False.
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: nested bare calls did NOT terminate execution — afterFlag was set to True")
+	}
+
+	// Verify the redirect status.
+	if status := host.Response().GetStatus(); status != "302 Found" {
+		t.Fatalf("expected 302 Found status after Response.Redirect, got %q", status)
+	}
+}
+
+// TestVMResponseEndBareCallForwardRef tests a bare Sub call where the Sub is defined after the call site.
+func TestVMResponseEndBareCallForwardRef(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Inner "test.asp"
+afterFlag = True
+
+Sub Inner(target)
+    Response.Redirect target
+End Sub
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: forward reference bare call did NOT terminate execution")
+	}
+}
+
+// TestVMResponseEndBareCallInsideIfBlock tests a bare Sub call with args inside an If block.
+func TestVMResponseEndBareCallInsideIfBlock(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub Inner(target)
+    Response.Redirect target
+End Sub
+
+If True Then
+    Inner "test.asp"
+    afterFlag = True
+End If
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: bare call inside If block did NOT terminate execution")
+	}
+
+	if status := host.Response().GetStatus(); status != "302 Found" {
+		t.Fatalf("expected 302 Found status after Response.Redirect, got %q", status)
+	}
+}
+
+// TestVMResponseRedirectBareMemberCall tests Response.Redirect as a bare member call (no parens).
+func TestVMResponseRedirectBareMemberCall(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+Response.Redirect "test.asp"
+afterFlag = True
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: bare member call Response.Redirect did NOT terminate execution")
+	}
+
+	if status := host.Response().GetStatus(); status != "302 Found" {
+		t.Fatalf("expected 302 Found status after Response.Redirect, got %q", status)
+	}
+}
+
+// TestVMResponseEndBareMemberCall tests Response.End as a bare member call (no parens).
+func TestVMResponseEndBareMemberCall(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+Response.End
+afterFlag = True
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: bare member call Response.End did NOT terminate execution")
+	}
+}
+
+// TestVMResponseEndDeeplyNestedBareCalls tests 3 levels of nested bare calls.
+func TestVMResponseEndDeeplyNestedBareCalls(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub Level3()
+    Response.End
+End Sub
+
+Sub Level2()
+    Level3
+End Sub
+
+Sub Level1()
+    Level2
+End Sub
+
+Level1
+afterFlag = True
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: deeply nested bare calls did NOT terminate execution")
+	}
+}
+
+// TestVMResponseEndBareCallInLoop tests a bare Sub call with args inside a loop.
+func TestVMResponseEndBareCallInLoop(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub Inner()
+    Response.End
+End Sub
+
+Dim i
+For i = 1 To 3
+    Inner
+    afterFlag = True
+Next
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: bare call in loop did NOT terminate execution")
+	}
+}
+
+// TestVMResponseEndBareCallOnErrorResumeNext tests bare call termination with On Error Resume Next active.
+func TestVMResponseEndBareCallOnErrorResumeNext(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub Inner()
+    Response.End
+End Sub
+
+On Error Resume Next
+Inner
+afterFlag = True
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	// Response.End should still terminate even with On Error Resume Next
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: bare call with On Error Resume Next did NOT terminate execution")
+	}
+}
+
+// TestVMResponseRedirectMixedCallAndBare tests a top-level Call with parens that internally
+// calls a Sub via bare call that does Response.Redirect.
+func TestVMResponseRedirectMixedCallAndBare(t *testing.T) {
+	source := `<%
+Dim afterFlag
+afterFlag = False
+
+Sub Inner(target)
+    Response.Redirect target
+End Sub
+
+Sub Outer()
+    Inner "test.asp"
+    afterFlag = True
+End Sub
+
+Call Outer()
+%>`
+
+	compiler := NewASPCompiler(source)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	afterFlagIdx, afterFlagExists := compiler.Globals.Get("afterFlag")
+	if !afterFlagExists {
+		t.Fatal("afterFlag global not found")
+	}
+
+	vm := NewVM(compiler.Bytecode(), compiler.Constants(), compiler.GlobalsCount())
+	host := NewMockHost()
+	vm.SetHost(host)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("vm run failed: %v", err)
+	}
+
+	if vm.Globals[afterFlagIdx].Type == VTBool && vm.Globals[afterFlagIdx].Num != 0 {
+		t.Fatal("BUG CONFIRMED: mixed Call/bare did NOT terminate execution")
+	}
+
+	if status := host.Response().GetStatus(); status != "302 Found" {
+		t.Fatalf("expected 302 Found status after Response.Redirect, got %q", status)
+	}
+}

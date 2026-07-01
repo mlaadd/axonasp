@@ -626,9 +626,14 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 		tryPos := c.emit(OpJSTryEnter, 0)
 		c.compileJScriptStatement(node.Body)
 		c.emit(OpJSTryLeave)
-		jumpEnd := c.emitJSJump(OpJSJump)
-		c.patchJSJumpTo(tryPos+1, len(c.bytecode))
-		if node.Catch != nil {
+
+		if node.Catch != nil && node.Finally != nil {
+			// try/catch/finally
+			// Normal path: try body -> OpJSJump -> [finally]
+			// Exception path: jsThrow -> [catch] -> fall-through -> [finally]
+			jumpToFinally := c.emitJSJump(OpJSJump)
+			c.patchJSJumpTo(tryPos+1, len(c.bytecode))
+
 			if id, ok := node.Catch.Parameter.(*jsast.Identifier); ok {
 				if c.jsLocalEnabled {
 					c.jsPushLocalScope(false)
@@ -645,12 +650,44 @@ func (c *Compiler) compileJScriptStatement(stmt jsast.Statement) {
 			} else {
 				c.compileJScriptStatement(node.Catch.Body)
 			}
-		}
-		if node.Finally != nil {
+
+			// Exception path falls through; normal path jumps here
+			c.patchJSJump(jumpToFinally)
 			c.compileJScriptStatement(node.Finally)
+
+		} else if node.Catch != nil {
+			// try/catch (no finally)
+			jumpEnd := c.emitJSJump(OpJSJump)
+			c.patchJSJumpTo(tryPos+1, len(c.bytecode))
+
+			if id, ok := node.Catch.Parameter.(*jsast.Identifier); ok {
+				if c.jsLocalEnabled {
+					c.jsPushLocalScope(false)
+					c.jsAddLocalBarrier(id.Name.String())
+				}
+				nameIdx := c.addConstant(NewString(id.Name.String()))
+				c.emit(OpJSDeclareName, nameIdx)
+				c.emit(OpJSLoadCatchError)
+				c.emit(OpJSSetName, nameIdx)
+				c.compileJScriptStatement(node.Catch.Body)
+				if c.jsLocalEnabled {
+					c.jsPopLocalScope()
+				}
+			} else {
+				c.compileJScriptStatement(node.Catch.Body)
+			}
+			c.patchJSJump(jumpEnd)
+
+		} else if node.Finally != nil {
+			// try/finally (no catch)
+			// Both normal and exception paths converge on the same finally block.
+			// Normal: try body -> OpJSTryLeave -> [finally] -> ExtOpJSReThrow (no-op)
+			// Exception: jsThrow -> [finally] -> ExtOpJSReThrow (re-throws)
+			c.patchJSJumpTo(tryPos+1, len(c.bytecode))
+			c.compileJScriptStatement(node.Finally)
+			c.emitExt(ExtOpJSReThrow)
 		}
 		c.jsTryDepth--
-		c.patchJSJump(jumpEnd)
 	case *jsast.IfStatement:
 		c.compileJScriptExpression(node.Test)
 		jumpFalse := c.emitJSJump(OpJSJumpIfFalse)
