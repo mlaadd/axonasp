@@ -89,6 +89,7 @@ func (g *GlobalASA) LoadAndCompile(webRoot string, app *asp.Application) error {
 
 	compiler := NewASPCompiler(string(content))
 	compiler.SetSourceName(globalASAPath)
+	compiler.SetIncludeSiteRoot(webRoot)
 
 	if err := compiler.Compile(); err != nil {
 		return fmt.Errorf("failed to compile global.asa: %w", err)

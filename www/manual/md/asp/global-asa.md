@@ -73,7 +73,7 @@ The following Classic ASP `global.asa` features are not supported in AxonASP:
 
 - **TypeLib declarations** — `<METADATA TYPE="TypeLib" ...>` directives are ignored.
 - **Request and Response access in Application events** — `Request` and `Response` objects are not available inside `Application_OnStart` and `Application_OnEnd`. The server suppresses all response output from `global.asa` handlers to match IIS behavior.
-- **#include directives** — File includes are not processed inside `global.asa`.
+- **#include directives** — File includes are processed inside `global.asa` using the same SSI include rules as ASP page.
 - **ObjectContext** — The `ObjectContext` intrinsic object is not available in event handlers.
 - **On Error Resume Next suppressing compile errors** — A compile error in `global.asa` aborts server startup.
 

@@ -1,0 +1,2 @@
+<% ' SSI include test for global.asa - the includes are expanded before compilation %>
+<!--#include virtual="/tests/ssi_global_asa/includes/projectAsa.asp" -->

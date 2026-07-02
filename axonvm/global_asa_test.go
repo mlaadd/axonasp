@@ -333,3 +333,353 @@ Response.Write(val);
 		t.Fatalf("expected page output '1', got %q", output)
 	}
 }
+
+// TestGlobalASAIncludeFile verifies that <!--#include file="..." --> inside global.asa
+// is expanded before compilation, so Sub/Function declarations from the included file
+// are visible to the ASP engine.
+func TestGlobalASAIncludeFile(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Write the included file with the Application_OnStart handler.
+	incDir := filepath.Join(tempDir, "inc")
+	if err := os.MkdirAll(incDir, 0o755); err != nil {
+		t.Fatalf("mkdir inc dir failed: %v", err)
+	}
+	incPath := filepath.Join(incDir, "appstart.inc")
+	incCode := `<script runat="server" language="VBScript">
+Sub Application_OnStart
+    Application("IsStarted") = True
+End Sub
+</script>`
+	if err := os.WriteFile(incPath, []byte(incCode), 0644); err != nil {
+		t.Fatalf("write include failed: %v", err)
+	}
+
+	// Write global.asa that includes the file using a relative "file" include.
+	asaCode := `<!--#include file="inc/appstart.inc"-->`
+	asaPath := filepath.Join(tempDir, "global.asa")
+	if err := os.WriteFile(asaPath, []byte(asaCode), 0644); err != nil {
+		t.Fatalf("write global.asa failed: %v", err)
+	}
+
+	app := asp.NewApplication()
+	globalASA := &GlobalASA{}
+	if err := globalASA.LoadAndCompile(tempDir, app); err != nil {
+		t.Fatalf("LoadAndCompile failed: %v", err)
+	}
+
+	if !globalASA.IsLoaded() {
+		t.Fatal("expected global.asa to be marked as loaded")
+	}
+
+	host := NewMockHost()
+	host.SetApplication(app)
+	host.SetOutput(new(bytes.Buffer))
+
+	if err := globalASA.ExecuteApplicationOnStart(host); err != nil {
+		t.Fatalf("ExecuteApplicationOnStart failed: %v", err)
+	}
+
+	val, ok := app.Get("isstarted")
+	if !ok {
+		t.Fatal("expected Application(\"IsStarted\") to be set after include expansion")
+	}
+	if val.Type != asp.ApplicationValueBool || val.Num == 0 {
+		t.Fatalf("expected Application(\"IsStarted\") to be True, got %#v", val)
+	}
+}
+
+// TestGlobalASAIncludeVirtual verifies that <!--#include virtual="/..." --> inside global.asa
+// is expanded by the SSI preprocessor, using the configured site root to resolve the path.
+func TestGlobalASAIncludeVirtual(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Write the included file under a virtual "includes" subdirectory.
+	incDir := filepath.Join(tempDir, "includes")
+	if err := os.MkdirAll(incDir, 0o755); err != nil {
+		t.Fatalf("mkdir includes dir failed: %v", err)
+	}
+	incPath := filepath.Join(incDir, "projectAsa.asp")
+	incCode := `<%
+Sub Application_OnStart()
+    Application("ProjectID") = "12345"
+End Sub
+%>`
+	if err := os.WriteFile(incPath, []byte(incCode), 0644); err != nil {
+		t.Fatalf("write include failed: %v", err)
+	}
+
+	// Write global.asa with a virtual include anchored at the site root.
+	asaCode := `<!--#include virtual="/includes/projectAsa.asp" -->`
+	asaPath := filepath.Join(tempDir, "global.asa")
+	if err := os.WriteFile(asaPath, []byte(asaCode), 0644); err != nil {
+		t.Fatalf("write global.asa failed: %v", err)
+	}
+
+	app := asp.NewApplication()
+	globalASA := &GlobalASA{}
+	if err := globalASA.LoadAndCompile(tempDir, app); err != nil {
+		t.Fatalf("LoadAndCompile failed: %v", err)
+	}
+
+	if !globalASA.IsLoaded() {
+		t.Fatal("expected global.asa to be marked as loaded")
+	}
+
+	host := NewMockHost()
+	host.SetApplication(app)
+	host.SetOutput(new(bytes.Buffer))
+
+	if err := globalASA.ExecuteApplicationOnStart(host); err != nil {
+		t.Fatalf("ExecuteApplicationOnStart failed: %v", err)
+	}
+
+	val, ok := app.Get("projectid")
+	if !ok {
+		t.Fatal("expected Application(\"ProjectID\") to be set via virtual include")
+	}
+	if val.Type != asp.ApplicationValueString || val.Str != "12345" {
+		t.Fatalf("expected Application(\"ProjectID\") = \"12345\", got %#v", val)
+	}
+}
+
+// TestGlobalASANestedIncludes verifies that nested SSI includes inside global.asa are
+// expanded recursively: global.asa includes a file that itself includes another file.
+// The deepest file defines a helper function called by Application_OnStart.
+func TestGlobalASANestedIncludes(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Deepest include — defines InitGlobalConfig().
+	commonDir := filepath.Join(tempDir, "common")
+	if err := os.MkdirAll(commonDir, 0o755); err != nil {
+		t.Fatalf("mkdir common dir failed: %v", err)
+	}
+	commonPath := filepath.Join(commonDir, "globalAsaFunctions.asp")
+	commonCode := `<script language="VBScript" runat="server">
+Sub InitGlobalConfig()
+    If Application("ProjectID") <> "" Then
+        Application("ConfigLoaded") = True
+    End If
+End Sub
+</script>`
+	if err := os.WriteFile(commonPath, []byte(commonCode), 0644); err != nil {
+		t.Fatalf("write common include failed: %v", err)
+	}
+
+	// Middle include — defines Application_OnStart and includes the common file.
+	incDir := filepath.Join(tempDir, "includes")
+	if err := os.MkdirAll(incDir, 0o755); err != nil {
+		t.Fatalf("mkdir includes dir failed: %v", err)
+	}
+	incPath := filepath.Join(incDir, "projectAsa.asp")
+	incCode := `<!--#include virtual="/common/globalAsaFunctions.asp" -->
+<%
+Sub Application_OnStart()
+    Application("ProjectID") = "12345"
+    InitGlobalConfig()
+End Sub
+%>`
+	if err := os.WriteFile(incPath, []byte(incCode), 0644); err != nil {
+		t.Fatalf("write include failed: %v", err)
+	}
+
+	// Top-level global.asa — includes the middle file.
+	asaCode := `<!--#include virtual="/includes/projectAsa.asp" -->`
+	asaPath := filepath.Join(tempDir, "global.asa")
+	if err := os.WriteFile(asaPath, []byte(asaCode), 0644); err != nil {
+		t.Fatalf("write global.asa failed: %v", err)
+	}
+
+	app := asp.NewApplication()
+	globalASA := &GlobalASA{}
+	if err := globalASA.LoadAndCompile(tempDir, app); err != nil {
+		t.Fatalf("LoadAndCompile failed: %v", err)
+	}
+
+	if !globalASA.IsLoaded() {
+		t.Fatal("expected global.asa to be marked as loaded")
+	}
+
+	host := NewMockHost()
+	host.SetApplication(app)
+	host.SetOutput(new(bytes.Buffer))
+
+	if err := globalASA.ExecuteApplicationOnStart(host); err != nil {
+		t.Fatalf("ExecuteApplicationOnStart failed: %v", err)
+	}
+
+	// Verify ProjectID was set by Application_OnStart.
+	val, ok := app.Get("projectid")
+	if !ok {
+		t.Fatal("expected Application(\"ProjectID\") to be set via nested includes")
+	}
+	if val.Type != asp.ApplicationValueString || val.Str != "12345" {
+		t.Fatalf("expected Application(\"ProjectID\") = \"12345\", got %#v", val)
+	}
+
+	// Verify ConfigLoaded was set by InitGlobalConfig() from the nested include.
+	val, ok = app.Get("configloaded")
+	if !ok {
+		t.Fatal("expected Application(\"ConfigLoaded\") to be set via nested include")
+	}
+	if val.Type != asp.ApplicationValueBool || val.Num == 0 {
+		t.Fatalf("expected Application(\"ConfigLoaded\") to be True, got %#v", val)
+	}
+}
+
+// TestGlobalASACyclicInclude verifies that a circular include chain in global.asa
+// is detected and rejected with an error instead of causing infinite recursion.
+func TestGlobalASACyclicInclude(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Include A -> Include B
+	incDir := filepath.Join(tempDir, "inc")
+	if err := os.MkdirAll(incDir, 0o755); err != nil {
+		t.Fatalf("mkdir inc dir failed: %v", err)
+	}
+	aPath := filepath.Join(incDir, "a.inc")
+	if err := os.WriteFile(aPath, []byte(`<!--#include file="b.inc"-->`), 0644); err != nil {
+		t.Fatalf("write a.inc failed: %v", err)
+	}
+	bPath := filepath.Join(incDir, "b.inc")
+	if err := os.WriteFile(bPath, []byte(`<!--#include file="a.inc"-->`), 0644); err != nil {
+		t.Fatalf("write b.inc failed: %v", err)
+	}
+
+	asaCode := `<!--#include file="inc/a.inc"-->`
+	asaPath := filepath.Join(tempDir, "global.asa")
+	if err := os.WriteFile(asaPath, []byte(asaCode), 0644); err != nil {
+		t.Fatalf("write global.asa failed: %v", err)
+	}
+
+	app := asp.NewApplication()
+	globalASA := &GlobalASA{}
+	err := globalASA.LoadAndCompile(tempDir, app)
+	if err == nil {
+		t.Fatal("expected cyclic include to produce an error")
+	}
+	if !globalASA.IsLoaded() {
+		// The global.asa was NOT loaded because compilation failed — that's expected.
+		t.Logf("global.asa correctly rejected with error: %v", err)
+	}
+}
+
+// TestGlobalASASSIIncludeEndToEnd simulates the full multi-file SSI include scenario:
+//
+//	global.asa → includes/projectAsa.asp → common/globalAsaFunctions.asp
+//
+// It then compiles and runs an .asp page that reads the Application values set by
+// Application_OnStart and verifies the exact output matches IIS-compatible behavior.
+func TestGlobalASASSIIncludeEndToEnd(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// --- Level 3 (deepest): /common/globalAsaFunctions.asp ---
+	commonDir := filepath.Join(tempDir, "common")
+	if err := os.MkdirAll(commonDir, 0o755); err != nil {
+		t.Fatalf("mkdir common dir failed: %v", err)
+	}
+	commonPath := filepath.Join(commonDir, "globalAsaFunctions.asp")
+	commonCode := `<script language="VBScript" runat="server">
+Sub InitGlobalConfig()
+    If Application("ProjectID") <> "" Then
+        Application("ConfigLoaded") = True
+    End If
+End Sub
+</script>`
+	if err := os.WriteFile(commonPath, []byte(commonCode), 0644); err != nil {
+		t.Fatalf("write common include failed: %v", err)
+	}
+
+	// --- Level 2 (middle): /includes/projectAsa.asp ---
+	incDir := filepath.Join(tempDir, "includes")
+	if err := os.MkdirAll(incDir, 0o755); err != nil {
+		t.Fatalf("mkdir includes dir failed: %v", err)
+	}
+	incPath := filepath.Join(incDir, "projectAsa.asp")
+	incCode := `<!--#include virtual="/common/globalAsaFunctions.asp" -->
+<%
+Sub Application_OnStart()
+    Application("ProjectID") = "12345"
+    InitGlobalConfig()
+End Sub
+%>`
+	if err := os.WriteFile(incPath, []byte(incCode), 0644); err != nil {
+		t.Fatalf("write include failed: %v", err)
+	}
+
+	// --- Level 1 (entry): /global.asa ---
+	asaCode := `<!--#include virtual="/includes/projectAsa.asp" -->`
+	asaPath := filepath.Join(tempDir, "global.asa")
+	if err := os.WriteFile(asaPath, []byte(asaCode), 0644); err != nil {
+		t.Fatalf("write global.asa failed: %v", err)
+	}
+
+	// --- Load and compile global.asa ---
+	app := asp.NewApplication()
+	globalASA := &GlobalASA{}
+	if err := globalASA.LoadAndCompile(tempDir, app); err != nil {
+		t.Fatalf("LoadAndCompile failed: %v", err)
+	}
+	if !globalASA.IsLoaded() {
+		t.Fatal("expected global.asa to be marked as loaded")
+	}
+
+	// --- Execute Application_OnStart ---
+	asaHost := NewMockHost()
+	asaHost.SetApplication(app)
+	asaHost.SetOutput(new(bytes.Buffer))
+	if err := globalASA.ExecuteApplicationOnStart(asaHost); err != nil {
+		t.Fatalf("ExecuteApplicationOnStart failed: %v", err)
+	}
+
+	// --- Verify Application values set by the chain ---
+	pid, ok := app.Get("projectid")
+	if !ok {
+		t.Fatal("Application(\"ProjectID\") not set after Application_OnStart")
+	}
+	if pid.Type != asp.ApplicationValueString || pid.Str != "12345" {
+		t.Fatalf("expected Application(\"ProjectID\") = \"12345\", got %#v", pid)
+	}
+	cl, ok := app.Get("configloaded")
+	if !ok {
+		t.Fatal("Application(\"ConfigLoaded\") not set after Application_OnStart")
+	}
+	if cl.Type != asp.ApplicationValueBool || cl.Num == 0 {
+		t.Fatalf("expected Application(\"ConfigLoaded\") = True, got %#v", cl)
+	}
+
+	// --- Compile and run the test .asp page that reads the values ---
+	aspSource := `<%@ Language="VBScript" %>
+<%
+Response.Write "ProjectID: " & Application("ProjectID") & " | ConfigLoaded: " & Application("ConfigLoaded")
+%>`
+	aspPath := filepath.Join(tempDir, "test_read_app.asp")
+	if err := os.WriteFile(aspPath, []byte(aspSource), 0644); err != nil {
+		t.Fatalf("write test .asp failed: %v", err)
+	}
+
+	compiler := NewASPCompiler(aspSource)
+	compiler.SetSourceName(aspPath)
+	if err := compiler.Compile(); err != nil {
+		t.Fatalf("compile test .asp failed: %v", err)
+	}
+
+	var buf bytes.Buffer
+	vm := AcquireVMFromCompiler(compiler)
+	defer vm.Release()
+
+	pageHost := NewMockHost()
+	pageHost.SetApplication(app)
+	pageHost.SetOutput(&buf)
+	vm.SetHost(pageHost)
+
+	if err := vm.Run(); err != nil {
+		t.Fatalf("test .asp execution failed: %v", err)
+	}
+
+	expected := "ProjectID: 12345 | ConfigLoaded: True"
+	output := buf.String()
+	if output != expected {
+		t.Fatalf("expected output %q, got %q", expected, output)
+	}
+}
