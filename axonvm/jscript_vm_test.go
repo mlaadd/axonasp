@@ -2115,3 +2115,90 @@ func TestJScriptDateIssueGitHub(t *testing.T) {
 		t.Fatalf("GitHub date timezone issue tests failed:\n%s", out)
 	}
 }
+
+func TestJScriptErrorMSProperties(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		expected string
+	}{
+		{
+			name: "two-arg Error(number, description) via throw/catch",
+			source: jscriptSrc(`
+				try {
+					throw new Error(1, "Hello I'm an error");
+				} catch (err) {
+					Response.Write("number=" + err.number);
+					Response.Write("|description=" + err.description);
+					Response.Write("|message=" + err.message);
+				}
+			`),
+			expected: "number=1|description=Hello I'm an error|message=Hello I'm an error",
+		},
+		{
+			name: "single-arg Error(message) unchanged",
+			source: jscriptSrc(`
+				try {
+					throw new Error("something broke");
+				} catch (err) {
+					Response.Write("message=" + err.message);
+					Response.Write("|desc=" + (err.description === undefined ? "undef" : err.description));
+					Response.Write("|num=" + (err.number === undefined ? "undef" : err.number));
+				}
+			`),
+			expected: "message=something broke|desc=undef|num=undef",
+		},
+		{
+			name: "TypeError with two args",
+			source: jscriptSrc(`
+				try {
+					throw new TypeError(42, "Type error description");
+				} catch (err) {
+					Response.Write("number=" + err.number);
+					Response.Write("|description=" + err.description);
+					Response.Write("|message=" + err.message);
+					Response.Write("|name=" + err.name);
+				}
+			`),
+			expected: "number=42|description=Type error description|message=Type error description|name=TypeError",
+		},
+		{
+			name: "RangeError with two args",
+			source: jscriptSrc(`
+				try {
+					throw new RangeError(99, "Range error!");
+				} catch (err) {
+					Response.Write("number=" + err.number);
+					Response.Write("|desc=" + err.description);
+					Response.Write("|msg=" + err.message);
+				}
+			`),
+			expected: "number=99|desc=Range error!|msg=Range error!",
+		},
+		{
+			name: "no-arg Error() has undefined MS properties",
+			source: jscriptSrc(`
+				try {
+					throw new Error();
+				} catch (err) {
+					Response.Write("n=" + (err.number === undefined ? "undef" : err.number));
+					Response.Write("|d=" + (err.description === undefined ? "undef" : err.description));
+					Response.Write("|m=" + err.message);
+				}
+			`),
+			expected: "n=undef|d=undef|m=",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runJScript2(t, tt.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out != tt.expected {
+				t.Errorf("got %q, want %q", out, tt.expected)
+			}
+		})
+	}
+}

@@ -7821,6 +7821,29 @@ func (vm *VM) jsCreateErrorObject(name string, msg string) Value {
 	return Value{Type: VTJSObject, Num: objID}
 }
 
+// jsApplyMSJScriptErrorProps sets Microsoft IIS Classic ASP JScript extension properties
+// (number and description) on an Error object. In IIS JScript:
+//
+//	new Error(number, description) -> .number = number, .description = description, .message = description
+//	new Error(message)			 -> standard ES behavior (no MS extensions)
+func (vm *VM) jsApplyMSJScriptErrorProps(errObj Value, args []Value) {
+	if errObj.Type != VTJSObject {
+		return
+	}
+	items, ok := vm.jsObjectItems[errObj.Num]
+	if !ok {
+		return
+	}
+	if len(args) > 1 && args[1].Type != VTJSUndefined {
+		// Two-argument form: new Error(number, description)
+		// IIS sets .number from arg[0], .description and .message from arg[1]
+		desc := vm.jsToString(args[1])
+		items["number"] = args[0]
+		items["description"] = NewString(desc)
+		items["message"] = NewString(desc)
+	}
+}
+
 // jsNumberToString formats a numeric primitive using JScript-compatible defaults.
 func (vm *VM) jsNumberToString(n float64) string {
 	if math.IsNaN(n) {
@@ -9697,7 +9720,9 @@ func (vm *VM) jsCall(callee Value, thisVal Value, args []Value) Value {
 			if len(args) > 0 && args[0].Type != VTJSUndefined {
 				msg = vm.jsToString(args[0])
 			}
-			return vm.jsCreateErrorObject(ctorName, msg)
+			errObj := vm.jsCreateErrorObject(ctorName, msg)
+			vm.jsApplyMSJScriptErrorProps(errObj, args)
+			return errObj
 		case "Symbol":
 			desc := ""
 			if len(args) > 0 && args[0].Type != VTJSUndefined {
@@ -10700,7 +10725,9 @@ func (vm *VM) jsConstruct(constructor Value, args []Value, newTarget Value, isSu
 			if len(args) > 0 && args[0].Type != VTJSUndefined {
 				msg = vm.jsToString(args[0])
 			}
-			return vm.jsCreateErrorObject(ctorName, msg)
+			errObj := vm.jsCreateErrorObject(ctorName, msg)
+			vm.jsApplyMSJScriptErrorProps(errObj, args)
+			return errObj
 		case "Proxy":
 			return vm.jsCreateProxy(args)
 		case "Date":

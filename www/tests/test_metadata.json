@@ -498,5 +498,10 @@
         "filename": "test_server_execute_end_parent.asp",
         "title": "Server.Execute Response.End Propagation",
         "description": "Verifies that Response.End inside Server.Execute terminates the parent page."
+    },
+    {
+        "filename": "test_jscript_error.asp",
+        "title": "JScript Error MS Properties Test",
+        "description": "Verifies that thrown Error objects populate .number, .description, and .message for IIS JScript compatibility."
     }
 ]
