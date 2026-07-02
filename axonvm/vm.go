@@ -122,6 +122,10 @@ const (
 	nativeObjectSessionStaticObjects
 	nativeObjectApplicationContents
 	nativeObjectApplicationStaticObjects
+	nativeObjectSessionContentsKeyMethod
+	nativeObjectSessionStaticObjectsKeyMethod
+	nativeObjectApplicationContentsKeyMethod
+	nativeObjectApplicationStaticObjectsKeyMethod
 )
 
 // VMError represents a VBScript runtime error.
@@ -5894,27 +5898,25 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 
 	if collectionValue, exists := vm.requestCollectionValueItems[objID]; exists {
 		switch {
-		case member == "":
+		case member == "" || strings.EqualFold(member, "Item"):
 			if len(args) >= 1 {
-				return NewString(collectionValue.Item(args[0].String()))
+				selector := args[0].String()
+				if index, err := strconv.Atoi(selector); err == nil {
+					if index < 1 || index > collectionValue.Count() {
+						vm.raiseASPIndexOutOfRange()
+						return Value{Type: VTEmpty}
+					}
+					return NewString(collectionValue.Values[index-1])
+				}
+				return NewString(collectionValue.Item(selector))
 			}
 			return NewString(collectionValue.Joined())
 		case strings.EqualFold(member, "Count"):
 			return NewInteger(int64(collectionValue.Count()))
-		case strings.EqualFold(member, "Item"):
-			if len(args) >= 1 {
-				return NewString(collectionValue.Item(args[0].String()))
-			}
-			return NewString(collectionValue.Joined())
-		case strings.EqualFold(member, "Key"):
-			if len(args) >= 1 {
-				if index := vm.asInt(args[0]); index >= 1 && index <= collectionValue.Count() {
-					return NewString(strconv.Itoa(index))
-				}
-			}
-			return NewString("")
+		default:
+			vm.raise(vbscript.ObjectDoesntSupportThisPropertyOrMethod, "Object doesn't support this property or method")
+			return Value{Type: VTEmpty}
 		}
-		return Value{Type: VTEmpty}
 	}
 
 	// Response cookie items: Response.Cookies(name)(subkey) = value (set) / get.
@@ -6529,11 +6531,9 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 			return NewString("")
 		}
 	case nativeRequestQueryString:
-		if member == "" && len(args) >= 1 {
-			if value, ok := vm.host.Request().QueryString.GetValue(args[0].String()); ok {
-				return vm.newRequestCollectionValueItem(value)
-			}
-			return Value{Type: VTEmpty}
+		if (member == "" || strings.EqualFold(member, "Item")) && len(args) >= 1 {
+			value, _ := vm.host.Request().QueryString.GetValue(args[0].String())
+			return vm.newRequestCollectionValueItem(value)
 		}
 		if strings.EqualFold(member, "Count") {
 			return NewInteger(int64(vm.host.Request().QueryString.Count()))
@@ -6543,36 +6543,66 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 		}
 		return Value{Type: VTEmpty}
 	case nativeRequestForm:
-		if member == "" && len(args) >= 1 {
+		if (member == "" || strings.EqualFold(member, "Item")) && len(args) >= 1 {
 			if vm.host.Request().IsBinaryReadUsed() {
-				return Value{Type: VTEmpty}
+				return vm.newRequestCollectionValueItem(asp.RequestCollectionValue{})
 			}
 			vm.host.Request().MarkFormUsed()
-			if value, ok := vm.host.Request().Form.GetValue(args[0].String()); ok {
-				return vm.newRequestCollectionValueItem(value)
+			value, _ := vm.host.Request().Form.GetValue(args[0].String())
+			return vm.newRequestCollectionValueItem(value)
+		}
+		if strings.EqualFold(member, "Count") {
+			if vm.host.Request().IsBinaryReadUsed() {
+				return NewInteger(0)
 			}
-			return Value{Type: VTEmpty}
+			vm.host.Request().MarkFormUsed()
+			return NewInteger(int64(vm.host.Request().Form.Count()))
+		}
+		if strings.EqualFold(member, "Key") && len(args) >= 1 {
+			if vm.host.Request().IsBinaryReadUsed() {
+				return NewString("")
+			}
+			vm.host.Request().MarkFormUsed()
+			return NewString(vm.host.Request().Form.Key(vm.asInt(args[0])))
 		}
 		return Value{Type: VTEmpty}
 	case nativeRequestCookies:
-		if member == "" && len(args) == 1 {
-			if value, ok := vm.host.Request().Cookies.GetValue(args[0].String()); ok {
-				return vm.newRequestCollectionValueItem(value)
-			}
-			return Value{Type: VTEmpty}
+		if (member == "" || strings.EqualFold(member, "Item")) && len(args) == 1 {
+			value, _ := vm.host.Request().Cookies.GetValue(args[0].String())
+			return vm.newRequestCollectionValueItem(value)
 		}
-		if member == "" && len(args) >= 2 {
+		if (member == "" || strings.EqualFold(member, "Item")) && len(args) >= 2 {
 			return NewString(vm.host.Request().GetCookieAttribute(args[0].String(), args[1].String()))
+		}
+		if strings.EqualFold(member, "Count") {
+			return NewInteger(int64(vm.host.Request().Cookies.Count()))
+		}
+		if strings.EqualFold(member, "Key") && len(args) >= 1 {
+			return NewString(vm.host.Request().Cookies.Key(vm.asInt(args[0])))
 		}
 		return Value{Type: VTEmpty}
 	case nativeRequestServerVariables:
-		if member == "" && len(args) >= 1 {
-			return NewString(vm.host.Request().GetCollectionValue("ServerVariables", args[0].String()))
+		if (member == "" || strings.EqualFold(member, "Item")) && len(args) >= 1 {
+			value, _ := vm.host.Request().ServerVars.GetValue(args[0].String())
+			return vm.newRequestCollectionValueItem(value)
+		}
+		if strings.EqualFold(member, "Count") {
+			return NewInteger(int64(vm.host.Request().ServerVars.Count()))
+		}
+		if strings.EqualFold(member, "Key") && len(args) >= 1 {
+			return NewString(vm.host.Request().ServerVars.Key(vm.asInt(args[0])))
 		}
 		return Value{Type: VTEmpty}
 	case nativeRequestClientCertificate:
-		if member == "" && len(args) >= 1 {
-			return NewString(vm.host.Request().GetCollectionValue("ClientCertificate", args[0].String()))
+		if (member == "" || strings.EqualFold(member, "Item")) && len(args) >= 1 {
+			value, _ := vm.host.Request().ClientCertificate.GetValue(args[0].String())
+			return vm.newRequestCollectionValueItem(value)
+		}
+		if strings.EqualFold(member, "Count") {
+			return NewInteger(int64(vm.host.Request().ClientCertificate.Count()))
+		}
+		if strings.EqualFold(member, "Key") && len(args) >= 1 {
+			return NewString(vm.host.Request().ClientCertificate.Key(vm.asInt(args[0])))
 		}
 		return Value{Type: VTEmpty}
 	case nativeRequestBinaryReadMethod:
@@ -7239,6 +7269,62 @@ func (vm *VM) dispatchNativeCall(objID int64, member string, args []Value) Value
 		case strings.EqualFold(member, "Count"):
 			return NewInteger(int64(len(application.GetStaticObjectsCopy())))
 		}
+	case nativeObjectSessionContentsKeyMethod:
+		if member == "" && len(args) >= 1 {
+			idx := vm.asInt(args[0]) - 1
+			keys := vm.host.Session().GetAllKeys()
+			sort.Strings(keys)
+			if idx >= 0 && idx < len(keys) {
+				return NewString(keys[idx])
+			}
+			return NewString("")
+		}
+		return NewString("")
+	case nativeObjectSessionStaticObjectsKeyMethod:
+		if member == "" && len(args) >= 1 {
+			idx := vm.asInt(args[0]) - 1
+			static := vm.host.Session().GetStaticObjectsCopy()
+			keys := make([]string, 0, len(static))
+			for k := range static {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			if idx >= 0 && idx < len(keys) {
+				return NewString(keys[idx])
+			}
+			return NewString("")
+		}
+		return NewString("")
+	case nativeObjectApplicationContentsKeyMethod:
+		if member == "" && len(args) >= 1 {
+			idx := vm.asInt(args[0]) - 1
+			contents := vm.host.Application().GetContentsCopy()
+			keys := make([]string, 0, len(contents))
+			for k := range contents {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			if idx >= 0 && idx < len(keys) {
+				return NewString(keys[idx])
+			}
+			return NewString("")
+		}
+		return NewString("")
+	case nativeObjectApplicationStaticObjectsKeyMethod:
+		if member == "" && len(args) >= 1 {
+			idx := vm.asInt(args[0]) - 1
+			static := vm.host.Application().GetStaticObjectsCopy()
+			keys := make([]string, 0, len(static))
+			for k := range static {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			if idx >= 0 && idx < len(keys) {
+				return NewString(keys[idx])
+			}
+			return NewString("")
+		}
+		return NewString("")
 	case nativeObjectObjectContext:
 		// ObjectContext provides transaction control for COM+ transactional ASP pages.
 		switch {
@@ -7655,12 +7741,16 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 		switch {
 		case strings.EqualFold(member, "Count"):
 			return NewInteger(int64(session.Count()))
+		case strings.EqualFold(member, "Key"):
+			return Value{Type: VTNativeObject, Num: nativeObjectSessionContentsKeyMethod}
 		}
 	case nativeObjectSessionStaticObjects:
 		session := vm.host.Session()
 		switch {
 		case strings.EqualFold(member, "Count"):
 			return NewInteger(int64(len(session.GetStaticObjectsCopy())))
+		case strings.EqualFold(member, "Key"):
+			return Value{Type: VTNativeObject, Num: nativeObjectSessionStaticObjectsKeyMethod}
 		}
 	case nativeObjectApplicationContents:
 		application := vm.host.Application()
@@ -7668,6 +7758,8 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 		switch {
 		case strings.EqualFold(member, "Count"):
 			return NewInteger(int64(len(application.GetContentsCopy())))
+		case strings.EqualFold(member, "Key"):
+			return Value{Type: VTNativeObject, Num: nativeObjectApplicationContentsKeyMethod}
 		}
 	case nativeObjectApplicationStaticObjects:
 		application := vm.host.Application()
@@ -7675,6 +7767,8 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 		switch {
 		case strings.EqualFold(member, "Count"):
 			return NewInteger(int64(len(application.GetStaticObjectsCopy())))
+		case strings.EqualFold(member, "Key"):
+			return Value{Type: VTNativeObject, Num: nativeObjectApplicationStaticObjectsKeyMethod}
 		}
 	case nativeResponseCookies:
 		switch {
@@ -7712,8 +7806,9 @@ func (vm *VM) dispatchMemberGet(target Value, member string) Value {
 			return NewBool(collectionValue.HasKeys())
 		case strings.EqualFold(member, "Item"):
 			return vm.newNativeObjectProxy(target.Num, "Item", nil)
-		case strings.EqualFold(member, "Key"):
-			return vm.newNativeObjectProxy(target.Num, "Key", nil)
+		default:
+			vm.raise(vbscript.ObjectDoesntSupportThisPropertyOrMethod, "Object doesn't support this property or method")
+			return Value{Type: VTEmpty}
 		}
 	}
 
@@ -8062,6 +8157,12 @@ func (vm *VM) valueToString(v Value) string {
 			return vm.host.Response().GetCookieValue(cookieName)
 		}
 		if collectionValue, exists := vm.requestCollectionValueItems[v.Num]; exists {
+			if len(collectionValue.Values) == 0 {
+				isJS := len(vm.jsCallStack) > 0 || vm.jsActiveEnvID != 0 || vm.jsRootEnvID != 0 || len(vm.jsTryStack) > 0 || len(vm.jsErrStack) > 0 || vm.engineMode == EngineModeJavaScript
+				if isJS {
+					return "undefined"
+				}
+			}
 			return collectionValue.Joined()
 		}
 		if errObj, exists := vm.aspErrorItems[v.Num]; exists {
@@ -8072,6 +8173,21 @@ func (vm *VM) valueToString(v Value) string {
 		}
 		if v.Num == nativeObjectErr {
 			return vm.errPropertyValue("Description").String()
+		}
+		if v.Num == nativeRequestQueryString {
+			return vm.host.Request().QueryString.String()
+		}
+		if v.Num == nativeRequestForm {
+			return vm.host.Request().Form.String()
+		}
+		if v.Num == nativeRequestCookies {
+			return vm.host.Request().Cookies.String()
+		}
+		if v.Num == nativeRequestServerVariables {
+			return vm.host.Request().ServerVars.String()
+		}
+		if v.Num == nativeRequestClientCertificate {
+			return vm.host.Request().ClientCertificate.String()
 		}
 		// ADODB.Field proxy: coerce to its default Value property in string context.
 		if adodbDefault, handled := vm.dispatchADODBFieldPropertyGet(v.Num, "__default__"); handled {
@@ -9848,6 +9964,24 @@ func (vm *VM) raiseVMError(vme *VMError) {
 	}
 
 	panic(vme)
+}
+
+func (vm *VM) raiseASPIndexOutOfRange() {
+	file, line, column := vm.mapRuntimeLocation(vm.lastLine, vm.lastColumn)
+	vme := &VMError{
+		Code:           vbscript.SubscriptOutOfRange,
+		Line:           line,
+		Column:         column,
+		File:           file,
+		Msg:            "007~ASP 0105~Index out of range~An array index is out of range.",
+		ASPCode:        105,
+		ASPDescription: "An array index is out of range.",
+		Category:       "ASP",
+		Description:    "Index out of range",
+		Number:         -2147467259,
+		Source:         "ASP",
+	}
+	vm.raiseVMError(vme)
 }
 
 func (vm *VM) asFloat(v Value) float64 {

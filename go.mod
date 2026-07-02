@@ -20,7 +20,7 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/joho/godotenv v1.5.1
 	github.com/kardianos/service v1.2.4
-	github.com/klauspost/compress v1.18.7
+	github.com/klauspost/compress v1.19.0
 	github.com/klauspost/reedsolomon v1.14.1
 	github.com/lib/pq v1.12.3
 	github.com/mark3labs/mcp-go v0.55.1

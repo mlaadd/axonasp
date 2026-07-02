@@ -899,6 +899,12 @@ func newCLIHost(out *bytes.Buffer, requestPath string, tuiMode bool) *axonvm.Moc
 		host.Request().ServerVars.Add("AXONASP_CLI_TUI", "1")
 	}
 
+	queryString := os.Getenv("QUERY_STRING")
+	if queryString != "" {
+		host.Request().QueryString.SetLazyPayload([]byte(queryString))
+		host.Request().ServerVars.Add("QUERY_STRING", queryString)
+	}
+
 	return host
 }
 

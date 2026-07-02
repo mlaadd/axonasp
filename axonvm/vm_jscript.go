@@ -2850,6 +2850,8 @@ func (vm *VM) jsTruthy(v Value) bool {
 }
 
 func (vm *VM) jsStrictEquals(a Value, b Value) bool {
+	a = resolveCallable(vm, a)
+	b = resolveCallable(vm, b)
 	if a.Type == VTEmpty {
 		a.Type = VTJSUndefined
 	}
@@ -8358,6 +8360,17 @@ func (vm *VM) jsEnumeratorItem(obj Value) Value {
 				return Value{Type: VTJSUndefined}
 			}
 			return dict.keys[idx]
+		}
+		keyMethod := vm.dispatchMemberGet(source, "Key")
+		if keyMethod.Type != VTJSUndefined && keyMethod.Type != VTEmpty {
+			key := vm.dispatchNativeCall(keyMethod.Num, "", []Value{NewInteger(int64(idx + 1))})
+			if key.Type != VTJSUndefined && key.Type != VTEmpty {
+				return key
+			}
+			key = vm.dispatchNativeCall(keyMethod.Num, "", []Value{NewInteger(int64(idx))})
+			if key.Type != VTJSUndefined && key.Type != VTEmpty {
+				return key
+			}
 		}
 		zeroBased := vm.dispatchNativeCall(source.Num, "Item", []Value{NewInteger(int64(idx))})
 		if zeroBased.Type != VTJSUndefined && zeroBased.Type != VTEmpty {

@@ -718,8 +718,19 @@ func resolveCallable(vm *VM, v Value) Value {
 		if v.Num == nativeObjectErr {
 			return vm.errPropertyValue("Number")
 		}
-		if collectionValue, exists := vm.requestCollectionValueItems[v.Num]; exists {
-			return NewString(collectionValue.Joined())
+		if proxy, exists := vm.nativeObjectProxies[v.Num]; exists {
+			v = vm.dispatchNativeCall(proxy.ParentID, proxy.Member, proxy.CallArgs)
+		}
+		if v.Type == VTNativeObject {
+			if collectionValue, exists := vm.requestCollectionValueItems[v.Num]; exists {
+				if len(collectionValue.Values) == 0 {
+					isJS := len(vm.jsCallStack) > 0 || vm.jsActiveEnvID != 0 || vm.jsRootEnvID != 0 || len(vm.jsTryStack) > 0 || len(vm.jsErrStack) > 0 || vm.engineMode == EngineModeJavaScript
+					if isJS {
+						return Value{Type: VTJSUndefined}
+					}
+				}
+				return NewString(collectionValue.Joined())
+			}
 		}
 	}
 	if v.Type != VTBuiltin {

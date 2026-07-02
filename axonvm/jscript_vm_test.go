@@ -1170,7 +1170,7 @@ func TestJScriptEnumeratorDictionaryKeysAndFormValues(t *testing.T) {
 		`</script>`
 
 	out := runASPSourceForTestWithHost(t, source, host)
-	if out != "[first][second]|[A][B]" {
+	if out != "[first][second]|[alpha][beta]" {
 		t.Fatalf("unexpected dictionary/form enumeration output: %q", out)
 	}
 }

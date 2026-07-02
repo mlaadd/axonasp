@@ -32,6 +32,19 @@ The `-m` or `--mode` flag allows you to specify how the input file should be pro
 .\axonasp-cli.exe -m javascript -r scripts/utils.js
 ```
 
+### Environment Variables
+
+The CLI reads environment variables to populate ASP request collections:
+
+*   **QUERY_STRING**: Supply raw query parameters to the executed script (populating the `Request.QueryString` collection).
+
+**Example: Running a script with Query String parameters in PowerShell**
+```powershell
+$env:QUERY_STRING="category=books&tag=scifi&tag=thriller"
+.\axonasp-cli.exe -r tests/test_jscript_collection.asp
+Remove-Item Env:\QUERY_STRING
+```
+
 ## Interactive REPL
 
 Starting the CLI without the `-r` flag enters the interactive REPL. You can type ASP code directly and see the results immediately.

@@ -479,6 +479,14 @@ The following codes are defined by the AxonASP JScript engine in `jscript/jscrip
 | 5037 | Proxy 'setPrototypeOf' trap invariant violation: cannot change prototype of non-extensible target |
 | 5038 | Proxy 'preventExtensions' trap invariant violation: trap returned true but target is still extensible |
 
+### ASP Intrinsic
+
+The following standard ASP execution errors can be raised by ASP intrinsic objects and collections:
+
+| Error | HRESULT | Description | Possible Cause |
+|-------|---------|-------------|----------------|
+| ASP 0105 | 0x80004005 (-2147467259) | Index out of range | An array or collection index lookup (e.g., on `Request.QueryString` or `Request.Form` collections) is out of bounds. |
+
 ### JScript Remarks
 
 - JScript errors are distinct from VBScript errors even when some decimal values overlap.

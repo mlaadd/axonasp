@@ -132,6 +132,27 @@ func (c *RequestCollection) Add(key string, value string) {
 	c.AddValues(key, []string{value})
 }
 
+// String returns the raw payload or a reconstructed query/form string.
+func (c *RequestCollection) String() string {
+	c.notifyAccess()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ensureLazyParsedLocked()
+
+	if len(c.lazyData) > 0 {
+		return string(c.lazyData)
+	}
+
+	var parts []string
+	for _, key := range c.keys {
+		val := c.data[strings.ToLower(key)]
+		for _, v := range val.Values {
+			parts = append(parts, key+"="+v)
+		}
+	}
+	return strings.Join(parts, "&")
+}
+
 // AddValues stores one key with one or many values.
 func (c *RequestCollection) AddValues(key string, values []string) {
 	c.mu.Lock()
