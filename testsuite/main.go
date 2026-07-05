@@ -59,6 +59,7 @@ var (
 	ExecuteAsJavaScriptExtensions = []string{".js", ".mjs"}
 	SuiteEngineMode               = axonvm.EngineModeDefault
 	CLIServerRoot                 = "./www"
+	TempDir                       = filepath.Join(".", "temp")
 	scriptCache                   *axonvm.ScriptCache
 
 	sharedApplication = asp.NewApplication()
@@ -97,7 +98,7 @@ func main() {
 	workingDir, _ := os.Getwd()
 	scriptCache = axonvm.NewScriptCache(
 		axonvm.ParseBytecodeCacheMode(BytecodeCachingMode),
-		filepath.Join("temp", "cache"),
+		filepath.Join(TempDir, "cache"),
 		CacheMaxSizeMB,
 	)
 	scriptCache.SetWatchedExtensions(ExecuteAsASPExtensions)
@@ -204,6 +205,9 @@ func loadConfig() {
 	}
 	if cacheSizeMB := v.GetInt("global.cache_max_size_mb"); cacheSizeMB > 0 {
 		CacheMaxSizeMB = cacheSizeMB
+	}
+	if tempDir := strings.TrimSpace(v.GetString("global.temp_dir")); tempDir != "" {
+		TempDir = filepath.Clean(tempDir)
 	}
 	if executeAsASP := v.GetStringSlice("global.execute_as_asp"); len(executeAsASP) > 0 {
 		ExecuteAsASPExtensions = normalizeExtensions(executeAsASP)

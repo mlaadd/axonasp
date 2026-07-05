@@ -85,6 +85,7 @@ var (
 	CacheMaxSizeMB                = 128
 	SessionAutoFlushSeconds       = 15
 	G3AxonLiveActive              = false
+	TempDir                       = filepath.Join(".", "temp")
 	serverLocation                = time.UTC
 	blockedDirPrefixes            = []string{}
 	scriptCache                   *axonvm.ScriptCache
@@ -217,6 +218,9 @@ func loadServerConfig() {
 	if flushSeconds := v.GetInt("global.session_flush_interval_seconds"); flushSeconds > 0 {
 		SessionAutoFlushSeconds = flushSeconds
 	}
+	if tempDir := strings.TrimSpace(v.GetString("global.temp_dir")); tempDir != "" {
+		TempDir = filepath.Clean(tempDir)
+	}
 	axonvm.SetVMPoolSizeLimit(VMPoolSize)
 
 	axonvm.InitGlobalAxonFunctions(v.GetBool("axfunctions.enable_global_ax"))
@@ -303,7 +307,7 @@ func (d *dummyResponseWriter) WriteHeader(statusCode int)  {}
 
 // cleanupSessionFiles removes all files and folders from temp/session.
 func cleanupSessionFiles() {
-	sessionDir := filepath.Join("temp", "session")
+	sessionDir := filepath.Join(TempDir, "session")
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
 		return
@@ -321,7 +325,7 @@ func cleanupSessionFiles() {
 
 // cleanupCacheFiles removes all files and folders from temp/cache.
 func cleanupCacheFiles() {
-	cacheDir := filepath.Join("temp", "cache")
+	cacheDir := filepath.Join(TempDir, "cache")
 	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
 		return
@@ -370,7 +374,7 @@ func main() {
 	}
 	scriptCache = axonvm.NewScriptCache(
 		axonvm.ParseBytecodeCacheMode(BytecodeCachingMode),
-		filepath.Join("temp", "cache"),
+		filepath.Join(TempDir, "cache"),
 		CacheMaxSizeMB,
 	)
 	scriptCache.SetEngineConfig(ServerEngineMode, ExecuteAsASPExtensions, ExecuteAsVBScriptExtensions, ExecuteAsJavaScriptExtensions)
@@ -756,7 +760,7 @@ func executeASPWithStatus(w http.ResponseWriter, r *http.Request, filePath strin
 
 	cache := scriptCache
 	if cache == nil {
-		cache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join("temp", "cache"), 1)
+		cache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join(TempDir, "cache"), 1)
 	}
 	program, err := cache.LoadOrCompileWithOptions(filePath, axonvm.ScriptCompileOptions{IncludeSiteRoot: host.Server().MapPath("/")})
 	if err != nil {

@@ -643,7 +643,7 @@ type G3Counters struct {
 
 func (vm *VM) newG3CountersObject() Value {
 	countersOnce.Do(func() {
-		countersFile = filepath.Join("temp", "counters.txt")
+		countersFile = filepath.Join(resolveConfiguredTempDir(), "counters.txt")
 		loadCounters()
 	})
 	obj := &G3Counters{vm: vm}
@@ -672,7 +672,7 @@ func loadCounters() {
 }
 
 func saveCounters() {
-	os.MkdirAll("temp", 0755)
+	os.MkdirAll(filepath.Dir(countersFile), 0755)
 	file, err := os.Create(countersFile)
 	if err != nil {
 		return
@@ -914,7 +914,7 @@ func (vm *VM) newG3PageCounterObject() Value {
 		pageCounterEnabled = v.GetBool("mswc.pagecounter_enabled")
 		pageCounterFile = v.GetString("mswc.pagecounter_file")
 		if pageCounterFile == "" {
-			pageCounterFile = filepath.Join("temp", "pagecounts.cnt")
+			pageCounterFile = filepath.Join(resolveConfiguredTempDir(), "pagecounts.cnt")
 		}
 		pageCounterSaveInterval = v.GetInt("mswc.pagecounter_save_interval_seconds")
 		if pageCounterSaveInterval <= 0 {

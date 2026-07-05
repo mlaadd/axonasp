@@ -842,7 +842,7 @@ func (f *G3FileUploader) processUpload(fieldName, targetDir, newFileName string)
 
 	os.MkdirAll(mappedDir, 0755)
 
-	tempDir := f.vm.host.Server().MapPath("/temp/uploads")
+	tempDir := filepath.Join(resolveConfiguredTempDir(), "uploads")
 	if tempDir == "" {
 		tempDir = os.TempDir()
 	}
@@ -990,7 +990,7 @@ func (f *G3FileUploader) processAllUploads(targetDir string) Value {
 
 			os.MkdirAll(mappedDir, 0755)
 
-			tempDir := f.vm.host.Server().MapPath("/temp/uploads")
+			tempDir := filepath.Join(resolveConfiguredTempDir(), "uploads")
 			if tempDir == "" {
 				tempDir = os.TempDir()
 			}

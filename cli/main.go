@@ -62,6 +62,7 @@ var (
 	ExecuteAsJavaScriptExtensions = []string{".js", ".mjs"}
 	CLIEngineMode                 = axonvm.EngineModeDefault
 	CLIServerRoot                 = "./www"
+	TempDir                       = filepath.Join(".", "temp")
 	serverLocation                = time.UTC
 	mouseEnabled                  = false
 	scriptCache                   *axonvm.ScriptCache
@@ -190,6 +191,9 @@ func loadCLIConfig() {
 	if cacheSizeMB := v.GetInt("global.cache_max_size_mb"); cacheSizeMB > 0 {
 		CacheMaxSizeMB = cacheSizeMB
 	}
+	if tempDir := strings.TrimSpace(v.GetString("global.temp_dir")); tempDir != "" {
+		TempDir = filepath.Clean(tempDir)
+	}
 	axonvm.SetVMPoolSizeLimit(VMPoolSize)
 	ScriptTimeout = v.GetInt("global.default_script_timeout")
 	if ScriptTimeout <= 0 {
@@ -262,7 +266,7 @@ func main() {
 
 	scriptCache = axonvm.NewScriptCache(
 		cacheMode,
-		filepath.Join("temp", "cache"),
+		filepath.Join(TempDir, "cache"),
 		cacheMaxSizeMB,
 	)
 	scriptCache.SetEngineConfig(CLIEngineMode, ExecuteAsASPExtensions, ExecuteAsVBScriptExtensions, ExecuteAsJavaScriptExtensions)
@@ -821,7 +825,7 @@ func executeCLICode(code string, virtualPath string, tuiMode bool) cliExecutionR
 func executeCLIFile(filePath string, virtualPath string, tuiMode bool) cliExecutionResult {
 	result := cliExecutionResult{}
 	if scriptCache == nil {
-		scriptCache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join("temp", "cache"), 1)
+		scriptCache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join(TempDir, "cache"), 1)
 	}
 	scriptCache.SetEngineConfig(CLIEngineMode, ExecuteAsASPExtensions, ExecuteAsVBScriptExtensions, ExecuteAsJavaScriptExtensions)
 

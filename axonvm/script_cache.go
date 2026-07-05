@@ -509,7 +509,7 @@ func NewScriptCache(mode BytecodeCacheMode, cacheDir string, maxSizeMB int) *Scr
 		maxSizeMB = 1
 	}
 	if strings.TrimSpace(cacheDir) == "" {
-		cacheDir = filepath.Join("temp", "cache")
+		cacheDir = filepath.Join(resolveConfiguredTempDir(), "cache")
 	}
 	return &ScriptCache{
 		mode:                mode,
@@ -1462,7 +1462,8 @@ func shouldSkipScriptWatchDir(path string, dirName string) bool {
 	if strings.EqualFold(dirName, ".git") || strings.EqualFold(dirName, "node_modules") {
 		return true
 	}
-	if strings.EqualFold(dirName, "temp") {
+	configuredTempDirName := strings.TrimSpace(filepath.Base(resolveConfiguredTempDir()))
+	if configuredTempDirName != "" && strings.EqualFold(dirName, configuredTempDirName) {
 		return true
 	}
 	if strings.EqualFold(dirName, "logs") {

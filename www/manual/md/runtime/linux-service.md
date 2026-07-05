@@ -24,6 +24,8 @@ The script builds the following binaries for the current platform:
 - `axonasp-cli` — Command-line interpreter
 - `axonasp-mcp` — MCP server
 - `axonasp-service` — service wrapper helper
+- `axonasp-fpm` — FastCGI process manager
+- `axonasp-admin` — administrative interface
 
 For cross-compilation to a specific platform/architecture:
 
@@ -88,6 +90,17 @@ For the **FastCGI server**, replace `ExecStart` with:
 
 ```ini
 ExecStart=/opt/axonasp/axonasp-fastcgi
+```
+
+For the **FastCGI FPM**, replace `ExecStart` and User/Group with:
+It is necessary to run FPM as root to allow it to bind to low-numbered ports and manage child processes. Also you need to disable `PrivateTmp` and `NoNewPrivileges` for FPM to allow it to share the `/tmp` directory with child processes.
+
+```ini
+ExecStart=/opt/axonasp/axonasp-fpm
+User=root
+Group=root
+PrivateTmp=false
+NoNewPrivileges=false
 ```
 
 ## Enabling and Starting the Service
@@ -166,6 +179,6 @@ server {
 
 - Use `sudo journalctl -u axonasp` for real-time log monitoring instead of separate log files.
 - The `PrivateTmp=true` directive gives the service its own isolated `/tmp` directory, preventing conflicts with other processes.
-- If AxonASP writes session files or cache to `./temp/`, ensure that directory is owned by the `axonasp` user and writable.
+- If AxonASP by default writes session files or cache to `./temp/`, ensure that directory is owned by the `axonasp` user and is writable. You can also configure a different temp directory in `axonasp.toml` or by setting the `GLOBAL_TEMP_DIR` environment variable in the unit file.
 - To update the binary, stop the service, replace the file, and restart: `sudo systemctl restart axonasp`.
-- For high availability, multiple AxonASP instances can be run on different ports and load-balanced by the front-end proxy.
+- For high availability, multiple AxonASP instances can be run on different ports and load-balanced by the FastCGI FPM.

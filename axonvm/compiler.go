@@ -2525,7 +2525,7 @@ func dumpPreprocessedSource(sourceCode, sourceName string) {
 		return
 	}
 
-	dumpDir := filepath.Join(".", "temp")
+	dumpDir := resolveConfiguredTempDir()
 
 	// Build a safe file-system name from the source identifier.
 	name := strings.TrimSpace(sourceName)

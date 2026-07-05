@@ -272,12 +272,7 @@ func (r *Response) AppendToLog(message string) {
 
 // appendRuntimeLogLine writes one log line to temp/<runtime>.log using best-effort semantics.
 func appendRuntimeLogLine(message string) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-
-	tempDir := filepath.Join(cwd, "temp")
+	tempDir := resolveConfiguredTempDir()
 	if mkErr := os.MkdirAll(tempDir, 0o755); mkErr != nil {
 		return
 	}

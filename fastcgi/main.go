@@ -84,6 +84,7 @@ var (
 	CacheMaxSizeMB                = 128
 	SessionAutoFlushSeconds       = 15
 	G3AxonLiveActive              = false
+	TempDir                       = filepath.Join(".", "temp")
 	serverLocation                = time.UTC
 	scriptCache                   *axonvm.ScriptCache
 )
@@ -106,6 +107,9 @@ func loadFastCGIConfig() {
 	}
 	if pflag.Lookup("config.global_asa") == nil {
 		pflag.String("config.global_asa", "", "Optional directory containing global.asa (overrides server.web_root and CWD fallback)")
+	}
+	if pflag.Lookup("global.temp_dir") == nil {
+		pflag.String("global.temp_dir", "", "Optional override for the global temporary directory used by FastCGI runtime files")
 	}
 
 	pflag.Parse()
@@ -209,6 +213,10 @@ func loadFastCGIConfig() {
 	if flushSeconds := v.GetInt("global.session_flush_interval_seconds"); flushSeconds > 0 {
 		SessionAutoFlushSeconds = flushSeconds
 	}
+	if tempDir := strings.TrimSpace(v.GetString("global.temp_dir")); tempDir != "" {
+		TempDir = filepath.Clean(tempDir)
+	}
+	asp.SetSessionStorageDir(filepath.Join(TempDir, "session"))
 	axonvm.SetVMPoolSizeLimit(VMPoolSize)
 
 	axonvm.InitGlobalAxonFunctions(v.GetBool("axfunctions.enable_global_ax"))
@@ -440,7 +448,7 @@ func resolveGlobalASARoot() (string, bool, error) {
 
 // cleanupSessionFiles removes all files and folders from temp/session.
 func cleanupSessionFiles() {
-	sessionDir := filepath.Join("temp", "session")
+	sessionDir := filepath.Join(TempDir, "session")
 	entries, err := os.ReadDir(sessionDir)
 	if err != nil {
 		return
@@ -458,7 +466,7 @@ func cleanupSessionFiles() {
 
 // cleanupCacheFiles removes all files and folders from temp/cache.
 func cleanupCacheFiles() {
-	cacheDir := filepath.Join("temp", "cache")
+	cacheDir := filepath.Join(TempDir, "cache")
 	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
 		return
@@ -508,7 +516,7 @@ func main() {
 	}
 	scriptCache = axonvm.NewScriptCache(
 		axonvm.ParseBytecodeCacheMode(BytecodeCachingMode),
-		filepath.Join("temp", "cache"),
+		filepath.Join(TempDir, "cache"),
 		CacheMaxSizeMB,
 	)
 	scriptCache.SetEngineConfig(ServerEngineMode, ExecuteAsASPExtension, ExecuteAsVBScriptExtensions, ExecuteAsJavaScriptExtensions)
@@ -826,7 +834,7 @@ func executeASPWithStatus(w http.ResponseWriter, r *http.Request, filePath strin
 
 	cache := scriptCache
 	if cache == nil {
-		cache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join("temp", "cache"), 1)
+		cache = axonvm.NewScriptCache(axonvm.BytecodeCacheDisabled, filepath.Join(TempDir, "cache"), 1)
 	}
 	program, err := cache.LoadOrCompileWithOptions(filePath, axonvm.ScriptCompileOptions{IncludeSiteRoot: host.Server().MapPath("/")})
 	if err != nil {

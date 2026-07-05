@@ -89,7 +89,20 @@ const (
 	defaultSessionCodePage       = 65001
 )
 
-var sessionStorageDir = filepath.Join("temp", "session")
+// resolveConfiguredTempDir returns global.temp_dir with a safe fallback.
+func resolveConfiguredTempDir() string {
+	tempDir := strings.TrimSpace(axonconfig.NewViper().GetString("global.temp_dir"))
+	if tempDir == "" {
+		tempDir = filepath.Join(".", "temp")
+	}
+	return filepath.Clean(tempDir)
+}
+
+func defaultSessionStorageDir() string {
+	return filepath.Join(resolveConfiguredTempDir(), "session")
+}
+
+var sessionStorageDir = defaultSessionStorageDir()
 
 var (
 	sessionRegistryMu sync.RWMutex
@@ -864,7 +877,7 @@ func persistedSessionFileExpired(path string, now time.Time) (bool, error) {
 // SetSessionStorageDir changes session persistence directory.
 func SetSessionStorageDir(path string) {
 	if strings.TrimSpace(path) == "" {
-		sessionStorageDir = filepath.Join("temp", "session")
+		sessionStorageDir = defaultSessionStorageDir()
 		return
 	}
 	sessionStorageDir = path

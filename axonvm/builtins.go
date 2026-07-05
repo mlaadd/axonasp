@@ -1009,14 +1009,11 @@ func vbArrayUpperBounds(array *VBArray) []int {
 		return nil
 	}
 
-	dims := array.Dims
-	if dims < 1 {
-		dims = 1
-	}
+	dims := max(array.Dims, 1)
 
 	bounds := make([]int, 0, dims)
 	current := array
-	for dim := 0; dim < dims; dim++ {
+	for dim := range dims {
 		bounds = append(bounds, current.Upper())
 		if dim == dims-1 {
 			break

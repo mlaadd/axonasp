@@ -98,7 +98,7 @@ func main() {
 
 	// 2. Setup Signal Handling for Graceful Reload (SIGHUP) and shutdown (SIGINT/SIGTERM)
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR2)
 
 	// 3. Periodic scan allows new pool files to be detected without requiring SIGHUP.
 	//rescanTicker := time.NewTicker(5 * time.Second)
@@ -116,6 +116,9 @@ func main() {
 			log.Printf("%s received.\n Shutting down G3pix ❖ AxonASP FPM manager...", sig.String())
 			shutdownAllPools()
 			return
+		case syscall.SIGUSR2:
+			log.Println("SIGUSR2 (reload) received. Rescanning configuration directory for new applications...")
+			scanAndLoadConfigs()
 		}
 	}
 }
@@ -230,7 +233,7 @@ func superviseWorker(ctx context.Context, configPath string) {
 
 		// Use CommandContext so the process can be killed cleanly if the context is cancelled, we still need to support it in the fastcgi implementation
 
-		cmd := exec.CommandContext(ctx, WorkerExec, "--fastcgi.server_port", listenEndpoint, "--config.config_file", conf.ConfigFile)
+		cmd := exec.CommandContext(ctx, WorkerExec, "--fastcgi.server_port", listenEndpoint, "--config.config_file", conf.ConfigFile, "--global.temp_dir", conf.TmpDir)
 
 		cmd.Dir = conf.AppPath
 		log.Printf("[%s] Executing: %s", conf.SiteName, strings.Join(cmd.Args, " "))

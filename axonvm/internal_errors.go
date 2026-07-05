@@ -266,7 +266,11 @@ func writeInternalErrorLog(message string) {
 		return
 	}
 
-	logFilePath := filepath.Join(currentInternalErrorLogRootPath(), "temp", "error.log")
+	tempDir := resolveConfiguredTempDir()
+	if !filepath.IsAbs(tempDir) {
+		tempDir = filepath.Join(currentInternalErrorLogRootPath(), tempDir)
+	}
+	logFilePath := filepath.Join(tempDir, "error.log")
 
 	internalErrorLogFileMu.Lock()
 	defer internalErrorLogFileMu.Unlock()
@@ -295,7 +299,11 @@ func writeConsoleLogToFile(logFileName string, level string, message string, tim
 		return
 	}
 
-	logFilePath := filepath.Join(currentInternalErrorLogRootPath(), "temp", logFileName)
+	tempDir := resolveConfiguredTempDir()
+	if !filepath.IsAbs(tempDir) {
+		tempDir = filepath.Join(currentInternalErrorLogRootPath(), tempDir)
+	}
+	logFilePath := filepath.Join(tempDir, logFileName)
 
 	internalErrorLogFileMu.Lock()
 	defer internalErrorLogFileMu.Unlock()
