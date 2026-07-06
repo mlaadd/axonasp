@@ -60,16 +60,16 @@ contents:
   # Directories
   - src: ./www/
     dst: /opt/axonasp/www/
-    type: noreplace|tree
+    type: tree
   - src: ./config/
     dst: /opt/axonasp/config/
-    type: config|tree
+    type: config|noreplace
   - src: ./mcp/
     dst: /opt/axonasp/mcp/
     type: tree
   - src: ./fpm/fpm.d/
     dst: /opt/axonasp/fpm/fpm.d/
-    type: config|noreplace|tree
+    type: config|noreplace
 
 # Empty Folders
   - dst: /opt/axonasp/temp/
