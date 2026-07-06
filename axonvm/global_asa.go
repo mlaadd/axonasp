@@ -3,6 +3,7 @@
  * Copyright (C) 2026 G3pix Ltda. All rights reserved.
  *
  * Developed by Lucas Guimarães - G3pix Ltda
+ * Updated by @mlaadd 06/05/2026
  * Contact: https://g3pix.com.br
  * Project URL: https://g3pix.com.br/axonasp
  *
